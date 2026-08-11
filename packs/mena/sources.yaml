@@ -1,0 +1,102 @@
+# The source registry — every dataset this pack draws on becomes a Source
+# node, and every ingested node and edge cites one (build-spec section 17).
+# All open.
+
+sources:
+  # ── deep tier ──────────────────────────────────────────────────────────────
+  - id: source:cow-mid
+    name: COW Militarized Interstate Disputes v5.0
+    kind: dataset
+    url: https://correlatesofwar.org/data-sets/mids/
+    citation: Palmer et al., "The MID5 Dataset, 2011-2014", CMPS 39(4).
+  - id: source:cow-nmc
+    name: COW National Material Capabilities v6.0 (CINC)
+    kind: dataset
+    url: https://correlatesofwar.org/data-sets/national-material-capabilities/
+    citation: Singer, Bremer & Stuckey (1972), updated NMC 6.0.
+  - id: source:cow-alliances
+    name: COW Formal Alliances v4.1
+    kind: dataset
+    url: https://correlatesofwar.org/data-sets/formal-alliances/
+    citation: Gibler (2009), International Military Alliances 1648-2008.
+  - id: source:cow-igo
+    name: COW Intergovernmental Organizations v3
+    kind: dataset
+    url: https://correlatesofwar.org/data-sets/IGOs/
+    citation: Pevehouse et al. (2020), IGO Version 3.0.
+  - id: source:cow-states
+    name: COW State System Membership
+    kind: dataset
+    url: https://correlatesofwar.org/data-sets/state-system-membership/
+    citation: Correlates of War Project, States 2016.
+  - id: source:icow-territory
+    name: ICOW Territorial Claims
+    kind: dataset
+    url: https://www.paulhensel.org/icowterr.html
+    citation: Frederick, Hensel & Macaulay (2017), JPR 54(1).
+  - id: source:icb
+    name: International Crisis Behavior v15
+    kind: dataset
+    url: https://sites.duke.edu/icbdata/
+    citation: Brecher & Wilkenfeld, A Study of Crisis.
+  - id: source:vdem
+    name: V-Dem
+    kind: dataset
+    url: https://v-dem.net/
+    citation: Coppedge et al., V-Dem Dataset.
+  - id: source:jst
+    name: Jordà-Schularick-Taylor Macrohistory Database
+    kind: dataset
+    url: https://www.macrohistory.net/database/
+    citation: Jordà, Schularick & Taylor (2017), "Macrofinancial History and the New Business Cycle Facts".
+  - id: source:shiller
+    name: Shiller long-run US data
+    kind: dataset
+    url: http://www.econ.yale.edu/~shiller/data.htm
+    citation: Shiller, Irrational Exuberance data appendix.
+
+  # ── modern tier ────────────────────────────────────────────────────────────
+  - id: source:gdelt
+    name: GDELT v2 events (BigQuery)
+    kind: feed
+    url: https://console.cloud.google.com/bigquery?p=gdelt-bd&d=gdeltv2
+    citation: Leetaru & Schrodt (2013), GDELT.
+  - id: source:ucdp
+    name: UCDP Georeferenced Event Dataset
+    kind: dataset
+    url: https://ucdp.uu.se/downloads/
+    citation: Sundberg & Melander (2013), JPR 50(4).
+  - id: source:acled
+    name: ACLED
+    kind: dataset
+    url: https://acleddata.com/
+    citation: Raleigh et al. (2010), JPR 47(5).
+  - id: source:gpr
+    name: Geopolitical Risk Index (Caldara-Iacoviello)
+    kind: dataset
+    url: https://www.matteoiacoviello.com/gpr.htm
+    citation: Caldara & Iacoviello (2022), AER 112(4).
+  - id: source:yfinance
+    name: Yahoo Finance daily/intraday prices
+    kind: feed
+    url: https://finance.yahoo.com/
+    citation: Accessed via yfinance; depth verified per ticker at ingest.
+  - id: source:fred
+    name: FRED (DGS2, DGS10)
+    kind: feed
+    url: https://fred.stlouisfed.org/
+    citation: Board of Governors via FRED.
+  - id: source:edgar-13f
+    name: SEC EDGAR 13F filings
+    kind: feed
+    url: https://www.sec.gov/cgi-bin/browse-edgar
+    citation: Quarterly 13F-HR information tables.
+
+  # ── this pack ──────────────────────────────────────────────────────────────
+  - id: source:mena-marquee
+    name: MENA marquee event spine (curated)
+    kind: pack
+    url: packs/mena/marquee_events.yaml
+    citation: >-
+      Curated by the GeoGraph authors; each event's own provenance is the
+      public record, dates cross-checked against ICB/UCDP where covered.

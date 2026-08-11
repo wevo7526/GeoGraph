@@ -1,0 +1,46 @@
+# Harmonizes the archive's three escalation scales onto one axis — a
+# Goldstein-equivalent in [-10, +10] — so classifier Head B can maintain ONE
+# per-dyad EWMA baseline across 120 years (build-spec sections 9 and 10).
+#
+# THESE MAPPINGS ARE APPROXIMATIONS AND SAY SO. A COW hostility level is a
+# categorical summary of a whole dispute; a Goldstein score is a per-event
+# weight. The crosswalk buys comparability at the cost of precision, which is
+# why every deep-tier record carries `source_scale` and the reasoning layer
+# treats deep-tier escalation as coarser (build-spec section 19).
+#
+# Anchors chosen against the Goldstein table itself: "threaten with military
+# force" (CAMEO 138) is -5.8, "exhibit military posture" (15x) is around -7.2,
+# conventional military force (19x) is -9 to -10.
+
+cow_hostility:
+  # COW MID hostility levels 1-5.
+  "1":
+    label: No militarized action
+    goldstein_equivalent: 0.0
+  "2":
+    label: Threat to use force
+    goldstein_equivalent: -5.8
+  "3":
+    label: Display of force
+    goldstein_equivalent: -7.2
+  "4":
+    label: Use of force
+    goldstein_equivalent: -9.0
+  "5":
+    label: Interstate war
+    goldstein_equivalent: -10.0
+
+icb_severity:
+  # ICB violence (sevvio) categories.
+  "1":
+    label: No violence (crisis without military hostilities)
+    goldstein_equivalent: -4.0
+  "2":
+    label: Minor clashes
+    goldstein_equivalent: -7.0
+  "3":
+    label: Serious clashes
+    goldstein_equivalent: -9.0
+  "4":
+    label: Full-scale war
+    goldstein_equivalent: -10.0

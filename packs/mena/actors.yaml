@@ -1,0 +1,103 @@
+# MENA pack — the actor roster (build-spec section 16). Region one: proves
+# the model. COW ccodes anchor state actors to the deep tier; SWFs are the
+# actors whose 13F FLOW edges tie geopolitics to the market layer.
+#
+# Deep-tier ingestion (Phase 3) EXTENDS this roster from COW state-system
+# membership — this file seeds the modern network, it does not bound the
+# archive.
+
+actors:
+  # ── states ─────────────────────────────────────────────────────────────────
+  - id: actor:cow-2
+    name: United States
+    actor_type: state
+    cow_ccode: 2
+    iso3: USA
+  - id: actor:cow-365
+    name: Russia
+    actor_type: state
+    cow_ccode: 365
+    iso3: RUS
+  - id: actor:cow-630
+    name: Iran
+    actor_type: state
+    cow_ccode: 630
+    iso3: IRN
+  - id: actor:cow-640
+    name: Turkey
+    actor_type: state
+    cow_ccode: 640
+    iso3: TUR
+  - id: actor:cow-645
+    name: Iraq
+    actor_type: state
+    cow_ccode: 645
+    iso3: IRQ
+  - id: actor:cow-651
+    name: Egypt
+    actor_type: state
+    cow_ccode: 651
+    iso3: EGY
+  - id: actor:cow-666
+    name: Israel
+    actor_type: state
+    cow_ccode: 666
+    iso3: ISR
+  - id: actor:cow-670
+    name: Saudi Arabia
+    actor_type: state
+    cow_ccode: 670
+    iso3: SAU
+  - id: actor:cow-679
+    name: Yemen
+    actor_type: state
+    cow_ccode: 679
+    iso3: YEM
+  - id: actor:cow-690
+    name: Kuwait
+    actor_type: state
+    cow_ccode: 690
+    iso3: KWT
+  - id: actor:cow-694
+    name: Qatar
+    actor_type: state
+    cow_ccode: 694
+    iso3: QAT
+  - id: actor:cow-696
+    name: United Arab Emirates
+    actor_type: state
+    cow_ccode: 696
+    iso3: ARE
+
+  # ── organizations ──────────────────────────────────────────────────────────
+  - id: actor:opec
+    name: OPEC
+    actor_type: org
+    note: Production quotas are the single most market-coupled lever in the region.
+  - id: actor:gcc
+    name: Gulf Cooperation Council
+    actor_type: org
+  - id: actor:ansar-allah
+    name: Ansar Allah (Houthis)
+    actor_type: org
+    note: Non-state; Red Sea shipping attacks make it a market-relevant actor.
+  - id: actor:hezbollah
+    name: Hezbollah
+    actor_type: org
+  - id: actor:hamas
+    name: Hamas
+    actor_type: org
+  - id: actor:al-qaeda
+    name: al-Qaeda
+    actor_type: org
+
+  # ── sovereign wealth funds ─────────────────────────────────────────────────
+  - id: actor:swf-pif
+    name: Public Investment Fund (Saudi Arabia)
+    actor_type: swf
+  - id: actor:swf-mubadala
+    name: Mubadala Investment Company (Abu Dhabi)
+    actor_type: swf
+  - id: actor:swf-adia
+    name: Abu Dhabi Investment Authority
+    actor_type: swf

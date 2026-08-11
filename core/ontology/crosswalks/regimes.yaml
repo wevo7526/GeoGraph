@@ -1,0 +1,56 @@
+# The structural segmentation of the 120-year archive, loaded as Regime nodes
+# (build-spec sections 8.1 and 9). Reasoning conditions on these and NEVER
+# matches analogues across them — a 1912 crisis under the classical gold
+# standard in a multipolar concert is not evidence about 2026 except through
+# regime-aware comparison.
+#
+# BOUNDARIES ARE JUDGMENT CALLS, documented here so they are arguable in one
+# place. `end: null` means the regime is current. Dates are ISO-8601 strings;
+# the archive starts 1905 so the first segment of each kind starts there even
+# where the regime itself is older.
+
+monetary_order:
+  - id: classical-gold-standard
+    name: Classical gold standard
+    start: "1905-01-01"
+    end: "1914-07-28"
+    note: Pre-war convertibility; ends with the outbreak of WWI.
+  - id: interwar-instability
+    name: Interwar instability
+    start: "1914-07-28"
+    end: "1944-07-22"
+    note: Wartime suspension, gold-exchange standard, competitive devaluations.
+  - id: bretton-woods
+    name: Bretton Woods
+    start: "1944-07-22"
+    end: "1971-08-15"
+    note: Dollar-gold peg; ends with the Nixon shock.
+  - id: fiat-floating
+    name: Fiat floating (petrodollar era)
+    start: "1971-08-15"
+    end: null
+    note: Floating rates, dollar reserve system, oil priced in dollars from 1974.
+
+polarity_epoch:
+  - id: multipolar-concert
+    name: Multipolar great-power system
+    start: "1905-01-01"
+    end: "1945-08-15"
+    note: European balance, two world wars.
+  - id: bipolar-cold-war
+    name: Bipolar Cold War
+    start: "1945-08-15"
+    end: "1991-12-26"
+    note: US–Soviet duopoly; ends with the Soviet dissolution.
+  - id: unipolar-moment
+    name: Unipolar moment
+    start: "1991-12-26"
+    end: "2008-09-15"
+    note: >-
+      US primacy. The 2008 end date (Lehman) marks the financial-crisis hinge
+      commonly used for the shift toward renewed great-power competition; it is
+      the most arguable boundary in this file.
+  - id: multipolar-drift
+    name: Multipolar drift / great-power competition
+    start: "2008-09-15"
+    end: null

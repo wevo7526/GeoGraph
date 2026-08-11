@@ -1,0 +1,167 @@
+# The curated marquee spine (build-spec decision 9): the episodes a reader
+# will look for first, hand-coded so the archive's backbone does not depend on
+# GDELT coverage or the LLM. CAMEO codes here are curated approximations;
+# quad_class follows the code. Every event cites source:mena-marquee (its
+# per-event public-record provenance lives in the note).
+#
+# `phase0_candidate: true` marks the episode the first end-to-end case study
+# works: the 2025 twelve-day war, carried as TWO spine events — Rising Lion
+# opens it (a Friday: the US session prices it while the Gulf waits for
+# Sunday), the US strike on the nuclear sites closes it (a Sunday: Tadawul
+# prices it a full session before New York). first_mover flips between the
+# two events, and their event windows OVERLAP — the flag-don't-average case
+# (build-spec §19). Abqaiq remains the canonical calendar unit-test shape.
+
+events:
+  - id: event:mena-1973-embargo
+    date: "1973-10-17"
+    name: OPEC oil embargo begins
+    cameo: "163"          # impose embargo/boycott
+    initiator: actor:opec
+    target: actor:cow-2
+    quad_class: material_conflict
+    note: Posted prices quadruple by January; the founding case of oil-as-weapon.
+  - id: event:mena-1979-revolution
+    date: "1979-01-16"
+    name: Iranian Revolution — the Shah departs
+    cameo: "080"          # yield/regime change (approx.)
+    initiator: actor:cow-630
+    target: actor:cow-630
+    quad_class: material_conflict
+    note: Second oil shock; the region's alignment map redrawn in one year.
+  - id: event:mena-1980-iran-iraq
+    date: "1980-09-22"
+    name: Iraq invades Iran
+    cameo: "190"
+    initiator: actor:cow-645
+    target: actor:cow-630
+    quad_class: material_conflict
+    note: Eight years; tanker war couples the conflict to shipping and crude.
+  - id: event:mena-1990-kuwait
+    date: "1990-08-02"
+    name: Iraq invades Kuwait
+    cameo: "190"
+    initiator: actor:cow-645
+    target: actor:cow-690
+    quad_class: material_conflict
+    note: Brent roughly doubles in two months — the classic modern oil-shock event study.
+  - id: event:mena-2001-sept11
+    date: "2001-09-11"
+    name: September 11 attacks
+    cameo: "195"
+    initiator: actor:al-qaeda
+    target: actor:cow-2
+    quad_class: material_conflict
+    note: NYSE closed four sessions — the calendar edge case the engine must survive.
+  - id: event:mena-2003-iraq
+    date: "2003-03-20"
+    name: US-led invasion of Iraq
+    cameo: "190"
+    initiator: actor:cow-2
+    target: actor:cow-645
+    quad_class: material_conflict
+    note: The war-priced-in case — crude FELL on the invasion; expectation vs realization.
+  - id: event:mena-2011-egypt
+    date: "2011-01-25"
+    name: Egyptian revolution begins
+    cameo: "145"          # protest/riot band
+    initiator: actor:cow-651
+    target: actor:cow-651
+    quad_class: material_conflict
+    note: Arab Spring's market-relevant peak; Suez transit fears.
+  - id: event:mena-2015-yemen
+    date: "2015-03-26"
+    name: Saudi-led intervention in Yemen begins
+    cameo: "190"
+    initiator: actor:cow-670
+    target: actor:ansar-allah
+    quad_class: material_conflict
+  - id: event:mena-2015-jcpoa
+    date: "2015-07-14"
+    name: JCPOA agreed
+    cameo: "057"          # sign formal agreement
+    initiator: actor:cow-630
+    target: actor:cow-2
+    quad_class: material_cooperation
+    note: Cooperation-side anchor — the archive is not only shocks.
+  - id: event:mena-2018-jcpoa-exit
+    date: "2018-05-08"
+    name: US withdraws from the JCPOA
+    cameo: "161"          # reduce or break relations
+    initiator: actor:cow-2
+    target: actor:cow-630
+    quad_class: verbal_conflict
+  - id: event:mena-2019-abqaiq
+    date: "2019-09-14"
+    name: Abqaiq–Khurais drone and missile attack
+    cameo: "190"
+    initiator: actor:ansar-allah   # claimed; attribution contested (Iran) — the note carries it
+    target: actor:cow-670
+    quad_class: material_conflict
+    note: >-
+      Half of Saudi output offline in one strike, on a SATURDAY: Tadawul's
+      Sunday session reacts a full business day before any US market, Brent
+      gaps ~15% at Monday's open — first_mover, calendar handling and daily
+      CAR all in one worked example.
+  - id: event:mena-2020-soleimani
+    date: "2020-01-03"
+    name: US strike kills Qasem Soleimani
+    cameo: "186"          # assassinate
+    initiator: actor:cow-2
+    target: actor:cow-630
+    quad_class: material_conflict
+  - id: event:mena-2020-accords
+    date: "2020-09-15"
+    name: Abraham Accords signed
+    cameo: "057"
+    initiator: actor:cow-696
+    target: actor:cow-666
+    quad_class: material_cooperation
+  - id: event:mena-2023-oct7
+    date: "2023-10-07"
+    name: Hamas attack on Israel
+    cameo: "195"
+    initiator: actor:hamas
+    target: actor:cow-666
+    quad_class: material_conflict
+    note: Saturday again — Tadawul and EGX price it a full session before New York.
+  - id: event:mena-2024-redsea
+    date: "2024-01-12"
+    name: US–UK strikes on Houthi targets begin
+    cameo: "190"
+    initiator: actor:cow-2
+    target: actor:ansar-allah
+    quad_class: material_conflict
+    note: Red Sea reroutings — the shipping-cost transmission channel.
+  - id: event:mena-2024-iran-strike
+    date: "2024-04-13"
+    name: Iran's direct missile and drone strike on Israel
+    cameo: "190"
+    initiator: actor:cow-630
+    target: actor:cow-666
+    quad_class: material_conflict
+    note: First direct state-on-state strike of the shadow war; Saturday again — Gulf leads.
+  - id: event:mena-2025-rising-lion
+    date: "2025-06-13"
+    name: Operation Rising Lion — Israeli strike campaign against Iran begins
+    cameo: "190"
+    initiator: actor:cow-666
+    target: actor:cow-630
+    quad_class: material_conflict
+    phase0_candidate: true
+    note: >-
+      The twelve-day war opens in Friday's pre-dawn hours: Brent gaps on the
+      Friday US/Europe session while Tadawul waits for Sunday — the reverse
+      of the Abqaiq first_mover shape.
+  - id: event:mena-2025-midnight-hammer
+    date: "2025-06-22"
+    name: Operation Midnight Hammer — US strikes Fordow, Natanz and Esfahan
+    cameo: "195"          # employ aerial weapons
+    initiator: actor:cow-2
+    target: actor:cow-630
+    quad_class: material_conflict
+    phase0_candidate: true
+    note: >-
+      ~2am Sunday local: Tadawul prices it that morning, a full session before
+      New York — then crude FALLS Monday as Iran's telegraphed reply reads as
+      de-escalation. Its window overlaps Rising Lion's: flag, never average.

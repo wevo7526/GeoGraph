@@ -1,0 +1,23 @@
+# The contested questions actors hold positions on. Each carries a `scale` so
+# a position number is interpretable — a position without a stated axis is a
+# number pretending to be a fact.
+
+issues:
+  - id: issue:hormuz-transit
+    name: Strait of Hormuz transit security
+    scale: "0 = closure/denial of transit, 100 = fully open and guaranteed"
+  - id: issue:iran-nuclear
+    name: Iran nuclear program
+    scale: "0 = unconstrained weapons program, 100 = verified full dismantlement"
+  - id: issue:oil-quotas
+    name: OPEC+ production quotas
+    scale: "0 = deep coordinated cuts, 100 = unconstrained production"
+  - id: issue:yemen-war
+    name: Yemen war and Red Sea shipping security
+    scale: "0 = full interdiction of Red Sea transit, 100 = secure transit"
+  - id: issue:normalization
+    name: Israel–Arab normalization (Abraham Accords track)
+    scale: "0 = full rejection, 100 = full normalization including Saudi Arabia"
+  - id: issue:israel-iran
+    name: Israel–Iran direct confrontation
+    scale: "0 = open interstate war, 100 = stable mutual deterrence"

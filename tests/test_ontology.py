@@ -1,0 +1,108 @@
+"""The ontology is the source of truth — these tests are the spec's section 8
+made executable. If one fails, the YAML and the build spec have diverged."""
+
+from __future__ import annotations
+
+from core.ontology import kuzu_schema as ontology
+
+SPEC_NODE_TABLES = {
+    "Actor", "Issue", "Event", "Market", "Source", "AttributeEstimate",
+    "Regime", "Forecast", "Analogue", "NetworkMetric", "Dyad",
+}
+SPEC_RELS = {
+    "INITIATED_BY", "DIRECTED_AT", "RELATES_TO", "AFFECTED", "HAS_ESTIMATE",
+    "OCCURRED_IN", "DERIVED_FROM", "FLOW", "OF_DYAD",
+}
+
+
+def test_spec_node_tables_all_present():
+    assert set(ontology.nodes()) >= SPEC_NODE_TABLES
+
+
+def test_spec_rel_tables_all_present():
+    assert set(ontology.edges()) >= SPEC_RELS
+
+
+def test_ddl_generates_nodes_before_rels():
+    statements = ontology.ddl()
+    kinds = ["NODE" if "NODE TABLE" in s else "REL" for s in statements]
+    assert kinds == sorted(kinds, key=lambda k: k != "NODE"), "rel DDL before node DDL"
+
+
+def test_every_sourced_edge_requires_source_id():
+    for rel in ontology.sourced_edges():
+        assert "source_id" in ontology.edges()[rel].required_props, (
+            f"{rel} is sourced but does not require source_id — the provenance "
+            "invariant has a hole"
+        )
+
+
+def test_the_factual_edges_are_sourced():
+    # The edges that assert facts about the world. A new factual edge class
+    # must appear here AND carry sourced: true.
+    assert set(ontology.sourced_edges()) == {
+        "INITIATED_BY", "DIRECTED_AT", "RELATES_TO", "AFFECTED", "FLOW",
+    }
+
+
+def test_classification_edges_are_not_traversable():
+    traversable = set(ontology.traversable_edges())
+    assert "OCCURRED_IN" not in traversable, (
+        "every Event points at the same few Regime nodes — leaving OCCURRED_IN "
+        "traversable makes any two events two hops apart"
+    )
+    assert "DERIVED_FROM" not in traversable
+    assert {"RELATES_TO", "AFFECTED", "INITIATED_BY"} <= traversable
+
+
+def test_affected_carries_the_fidelity_gradient():
+    affected = ontology.edges()["AFFECTED"]
+    assert {"window", "resolution", "method", "source_id"} <= set(affected.required_props)
+    assert affected.key_slots == ("window",), (
+        "window must be edge identity: one event, several windows, several edges"
+    )
+
+
+def test_flow_two_quarters_are_two_edges():
+    assert ontology.edges()["FLOW"].key_slots == ("as_of",)
+
+
+def test_relates_to_windows_are_identity():
+    assert set(ontology.edges()["RELATES_TO"].key_slots) == {"relation_type", "valid_from"}
+
+
+def test_event_carries_fidelity_tags():
+    props = {p.name for p in ontology.nodes()["Event"].props}
+    assert {"fidelity_tier", "temporal_resolution", "source_scale"} <= props
+
+
+def test_market_requires_inception_date():
+    market = ontology.nodes()["Market"]
+    required = {p.name for p in market.props if p.required}
+    assert {"ticker", "market_type", "trading_calendar", "inception_date"} <= required
+
+
+def test_escalation_slots_are_derived():
+    event = ontology.nodes()["Event"]
+    derived = {p.name for p in event.props if p.derived}
+    assert {"escalation_baseline", "escalation_direction", "escalation_magnitude"} <= derived
+
+
+def test_embedding_is_a_vector_column():
+    event = ontology.nodes()["Event"]
+    embedding = next(p for p in event.props if p.name == "embedding")
+    assert embedding.kuzu_type == "FLOAT[1024]"
+
+
+def test_validate_edge_refuses_missing_source():
+    import pytest
+
+    with pytest.raises(ontology.OntologyError, match="provenance"):
+        ontology.validate_edge("INITIATED_BY", {})
+
+
+def test_validate_edge_refuses_unknown_rel():
+    import pytest
+
+    with pytest.raises(ontology.OntologyError):
+        ontology.validate_edge("MADE_UP", {"source_id": "source:x"})

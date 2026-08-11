@@ -1,0 +1,115 @@
+[project]
+name = "geograph"
+version = "0.0.1"
+description = "An applied-history engine for geopolitics and markets: a 120-year network archive, a measured transmission layer, and a reasoning layer with two forecasting modes."
+requires-python = ">=3.12"
+authors = [{ name = "Will Evans" }]
+
+# Deliberately small at the core. Every dependency here is load-bearing:
+#   httpx           HTTP client for GPR, flat-file downloads, and the EDGAR client
+#   kuzu            embedded graph database — Cypher, graph algorithms, and the
+#                   vector index the analogy engine needs; no server, no account
+#   linkml-runtime  reads core/ontology/geograph.linkml.yaml at runtime; the Kuzu
+#                   DDL and the write-time validators are DERIVED from it
+#   pydantic        parsed-fact shapes, so a bad parse fails at the boundary
+#   pyyaml          crosswalks, regime segmentation, and region packs are YAML
+dependencies = [
+    "httpx>=0.27",
+    "kuzu>=0.11",
+    "linkml-runtime>=1.8",
+    "pydantic>=2.7",
+    "python-dotenv>=1.0",
+    "pyyaml>=6.0",
+]
+
+[project.optional-dependencies]
+# The HTTP API behind the explorer. Separate: a data job needs no web stack.
+api = ["fastapi>=0.115", "uvicorn[standard]>=0.30"]
+# The Postgres panel (market_observations, market_intraday, event-study set).
+# Separate because reading the GRAPH needs no Postgres at all.
+panel = ["psycopg[binary]>=3.2"]
+# The numeric core: the transmission engine and network analytics. Heavy, and
+# only the compute jobs need it — the API serves what these layers persisted.
+analysis = [
+    "pandas>=2.2",
+    "numpy>=1.26",
+    "statsmodels>=0.14",
+    "scipy>=1.13",
+    "networkx>=3.3",
+]
+# Ingestion clients for the modern tier. The deep tier (COW, ICB, JST, Shiller)
+# is flat files and needs nothing beyond the core.
+ingest = [
+    "yfinance>=0.2.40",
+    "fredapi>=0.5",
+    "google-cloud-bigquery>=3.25",
+    "lxml>=5.2",
+]
+# The reasoning layer's LLM: CAMEO coding of non-GDELT text, the agent, and
+# analogy retrieval. NEVER for numbers — see docs/build-spec.md section 17.
+reasoning = ["anthropic>=0.40"]
+# The MCP server (agent surface).
+mcp = ["mcp>=1.2"]
+# LinkML generators (gen-pydantic, gen-json-schema) for scripts/generate_ontology.py.
+# Separate from linkml-runtime: the full toolchain is heavy and only generation
+# needs it; everything at runtime reads the YAML through linkml-runtime.
+gen = ["linkml>=1.8"]
+dev = [
+    "pytest>=8.2",
+    "pytest-asyncio>=0.23",
+    "ruff>=0.5",
+    "mypy>=1.10",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+# `core/mcp` is safe where a top-level `mcp/` was not (the MarketGraph lesson):
+# `core.mcp` is a subpackage, so `import mcp` inside it still resolves the MCP
+# SDK from site-packages under Python 3's absolute imports.
+packages = ["core"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+# The graph driver returns Any from result rows by design; strict mode would
+# otherwise force a cast at every read site and teach nothing.
+disallow_any_expr = false
+
+[[tool.mypy.overrides]]
+# linkml-runtime ships no py.typed marker. Its SchemaView surface is used
+# narrowly (all_classes, class_slots, induced_slot) and wrapped by typed
+# dataclasses in core/ontology/kuzu_schema.py, so the untyped boundary stops there.
+module = ["linkml_runtime.*"]
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = ["yaml.*", "kuzu.*", "yfinance.*", "fredapi.*", "statsmodels.*", "scipy.*"]
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+# Tests are checked, but not for return annotations: `-> None` on dozens of
+# test functions is ceremony that catches nothing.
+module = ["tests.*"]
+disallow_untyped_defs = false
+disallow_incomplete_defs = false
+
+[[tool.mypy.overrides]]
+# Query layers hand dicts straight from the driver to the HTTP and MCP
+# boundaries where they are serialised as JSON. Re-declaring each row shape as
+# a TypedDict would duplicate the Cypher RETURN clause and drift from it.
+module = ["core.graph.*", "core.ontology.*", "core.api.*", "core.mcp.*"]
+warn_return_any = false
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]

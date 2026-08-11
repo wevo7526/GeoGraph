@@ -1,0 +1,16 @@
+# Secondary instruments for finer transmission stories — sector and country
+# ETFs whose responses decompose an index move. Modern era only; every ticker
+# depth-verified on ingest like the markets themselves.
+
+assets:
+  - ticker: XLE
+    name: Energy Select Sector SPDR
+    note: US energy — the first place an oil-supply shock shows inside US equities.
+  - ticker: ITA
+    name: iShares US Aerospace & Defense
+    note: The conflict-persistence read.
+  - ticker: KSA
+    name: iShares MSCI Saudi Arabia
+    note: US-hours Saudi exposure — trades while Tadawul sleeps, useful for lead-lag.
+  - ticker: UAE
+    name: iShares MSCI UAE

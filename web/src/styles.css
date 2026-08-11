@@ -1,0 +1,31 @@
+@import "tailwindcss";
+
+/* Restrained, serious visual language (build-spec section 15): near-black
+   ground, parchment text, one restrained accent. The palette lives here as
+   variables AND is duplicated where canvas/SVG cannot read CSS custom
+   properties — keep the two in step. */
+:root {
+  --ink: #0b0e14;
+  --panel: #11151f;
+  --line: #232a3a;
+  --text: #d9d4c5;
+  --muted: #7d8598;
+  --accent: #b08d57; /* old gold — the one flourish */
+  --alert: #a44a3f;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  background: var(--ink);
+  color: var(--text);
+  font-family: Georgia, 'Times New Roman', serif;
+}
+
+.mono {
+  font-family: ui-monospace, 'Cascadia Code', Consolas, monospace;
+}

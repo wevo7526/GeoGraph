@@ -1,0 +1,752 @@
+id: https://qosai.app/geograph
+name: geograph
+title: GeoGraph — 120 years of geopolitics and markets as a knowledge graph
+description: >-
+  THE SOURCE OF TRUTH FOR THE ONTOLOGY (build-spec section 8.1). Everything
+  downstream is generated from or validated against this file: the Kuzu DDL,
+  the write-time validators, the generated Pydantic models and JSON Schema, and
+  the sourced/traversable edge lists.
+
+  This is the MarketGraph pattern carried over whole: one definition, the rest
+  derived, so nothing downstream can drift. Kuzu enforces node primary keys but
+  has no NOT NULL on relationship properties, so the provenance rule "every
+  ingested edge cites a Source" is declared HERE (`required: true` on
+  `source_id`, `sourced: true` on the edge class) and enforced by the validator
+  generated from this file, which every write passes through.
+
+  THE FIDELITY GRADIENT IS FIRST-CLASS (build-spec section 5.3). Every Event
+  carries `fidelity_tier`, `temporal_resolution` and `source_scale`; every
+  AFFECTED edge carries the `resolution` it was measured at. A 1912 annual
+  effect is not a 2012 daily CAR, and the schema is where that distinction is
+  made unforgettable rather than smoothed over.
+
+license: MIT
+default_range: string
+default_prefix: gg
+
+prefixes:
+  gg: https://qosai.app/geograph/
+  linkml: https://w3id.org/linkml/
+
+imports:
+  - linkml:types
+
+settings:
+  # Edges that mean something in "how does A connect to B". Classification
+  # edges are excluded — the MarketGraph lesson: every Event points at the same
+  # few Regime and Source nodes, so leaving OCCURRED_IN and DERIVED_FROM in
+  # pathfinding makes any two events two hops apart, true and uninformative.
+  traversable_edges: INITIATED_BY, DIRECTED_AT, RELATES_TO, AFFECTED, FLOW, OF_DYAD, HAS_ESTIMATE
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Enums — closed vocabularies. Closed on purpose: an open string field is how
+# "swf", "SWF" and "sovereign wealth fund" end up as three actor types.
+# ─────────────────────────────────────────────────────────────────────────────
+
+enums:
+  ActorType:
+    permissible_values:
+      state:
+        description: A sovereign state, keyed to COW state-system membership where possible.
+      org:
+        description: >-
+          A non-state organization — IGO, alliance bloc, armed non-state actor,
+          cartel. OPEC and the GCC live here, and so do the Houthis.
+      person:
+        description: A named individual whose decisions move the network.
+      swf:
+        description: >-
+          Sovereign wealth fund (PIF, Mubadala, ADIA). Separate from `org`
+          because SWFs are the actors whose 13F FLOW edges tie the geopolitical
+          network to the market layer.
+
+  QuadClass:
+    description: The CAMEO quad class — the coarsest useful event taxonomy.
+    permissible_values:
+      verbal_cooperation:
+      material_cooperation:
+      verbal_conflict:
+      material_conflict:
+
+  RelationType:
+    description: The durable relationships that make the network a network.
+    permissible_values:
+      alliance:
+        description: Formal alliance (COW Formal Alliances in the deep past).
+      rivalry:
+        description: Sustained adversarial dyad.
+      membership:
+        description: IGO or bloc membership (COW IGO data in the deep past).
+      trade:
+        description: Material trade dependence worth modeling as structure.
+
+  Attribute:
+    description: >-
+      The latent variables of the bargaining model (build-spec section 4). Held
+      as distributions, never point estimates — the true values are private
+      information we estimate from observable proxies.
+    permissible_values:
+      position:
+        description: Where the actor stands on an issue, on the issue's scale.
+      salience:
+        description: How much the actor cares. Deep-past seed from ICOW claim salience.
+      clout:
+        description: Capability to move the outcome. Deep-past seed from COW CINC.
+      resolve:
+        description: Willingness to bear cost. The least observable; widest std.
+
+  EscalationDirection:
+    permissible_values:
+      escalating:
+      stable:
+      deescalating:
+
+  MarketType:
+    permissible_values:
+      equity_index:
+      sovereign_yield:
+      commodity:
+
+  TradingCalendar:
+    description: >-
+      LOAD-BEARING for the modern era (build-spec section 11): Gulf markets
+      trade Sunday–Thursday, US Monday–Friday, no shared session. The first
+      session per market is resolved independently and `first_mover` recorded.
+    permissible_values:
+      us:
+        description: Monday–Friday.
+      gulf:
+        description: Sunday–Thursday (Tadawul, DFM, ADX).
+      global_futures:
+        description: Near-continuous futures sessions (Brent, gold); daily bars Monday–Friday.
+
+  EffectWindow:
+    description: The measurement window of an AFFECTED edge, named not numeric.
+    permissible_values:
+      intraday_open_close:
+      car_0_1:
+      car_0_3:
+      car_0_5:
+      monthly:
+      annual:
+
+  # ── archive enums — the fidelity gradient, stated in the schema ────────────
+
+  FidelityTier:
+    permissible_values:
+      deep_structured:
+        description: >-
+          ~1905–1979. Structured historical datasets (COW, ICB) entering
+          through deterministic crosswalks, crisis-and-dispute resolution.
+      modern_coded:
+        description: ~1979–present. Daily CAMEO-coded events (GDELT), machine-coded.
+      live:
+        description: Current events, coded by the classifier on arrival.
+
+  TemporalResolution:
+    permissible_values:
+      year:
+      month:
+      day:
+      intraday:
+
+  SourceScale:
+    description: >-
+      Which native scale a record's escalation score arrived on. Goldstein is
+      the common currency; COW hostility and ICB severity are harmonized to a
+      Goldstein-equivalent through crosswalks/escalation_scale_map.yaml — an
+      approximation, and tagged as one.
+    permissible_values:
+      goldstein:
+      cow_hostility:
+      icb_severity:
+
+  RegimeKind:
+    description: >-
+      The two structural segmentations reasoning conditions on. NEVER reason
+      by analogy naively across the 120-year span — only within comparable
+      regimes (build-spec sections 3.5 and 19).
+    permissible_values:
+      monetary_order:
+      polarity_epoch:
+
+  ForecastMode:
+    permissible_values:
+      near_term:
+        description: 0–3 years, calibrated probabilistic (temporal-graph + game-theoretic).
+      long_horizon:
+        description: >-
+          5–20 years, structural. Scenario space with crisis-probability
+          windows — never dated point predictions, and every output states
+          that boundary.
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Slots — defined once, reused. `required` here is what the validator enforces.
+# ─────────────────────────────────────────────────────────────────────────────
+
+slots:
+  node_id:
+    description: >-
+      Typed, stable identifier used across the API and the explorer —
+      `actor:cow-670`, `event:gdelt-123456789`. Not a rowid: a rowid changes
+      when the graph is rebuilt, breaking every shared URL.
+    identifier: true
+
+  name:
+    description: Display name.
+
+  source_id:
+    description: >-
+      The node_id of the Source this fact came from. REQUIRED on every sourced
+      edge — an edge asserting that two states allied, or that a fund moved
+      money, is a factual claim about the world; if it cannot name its source
+      it is not a fact, it is a rumour with a schema.
+
+  region_pack:
+    description: Which region pack (packs/<name>/) introduced this record. `mena`, `china`.
+
+  as_of:
+    description: ISO-8601 date a snapshot describes. Part of edge identity where noted.
+    range: date
+
+  valid_from:
+    range: date
+  valid_to:
+    range: date
+
+  fidelity_tier:
+    range: FidelityTier
+  temporal_resolution:
+    range: TemporalResolution
+  source_scale:
+    range: SourceScale
+
+  # ── derived slots — computed by the deterministic core, never ingested ─────
+
+  centrality:
+    description: Eigenvector/PageRank centrality over the actor network. DERIVED.
+    range: float
+    annotations:
+      derived: true
+  community:
+    description: Community/coalition id from the network analytics. DERIVED.
+    range: integer
+    annotations:
+      derived: true
+  brokerage:
+    description: >-
+      Betweenness — the Square-and-the-Tower payload: who sits in the
+      structural holes. DERIVED.
+    range: float
+    annotations:
+      derived: true
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Node classes — one Kuzu node table each.
+# ─────────────────────────────────────────────────────────────────────────────
+
+classes:
+  Source:
+    description: >-
+      Where a fact came from — a dataset (COW MID 5.0), a document, a feed
+      partition (GDELT day), or a pack's marquee list. Every ingested node and
+      edge links to one (build-spec section 17).
+    annotations:
+      graph_element: node
+      kuzu_table: Source
+      id_prefix: source
+    slots: [node_id, name]
+    attributes:
+      kind:
+        description: dataset | document | feed | pack
+      url: {}
+      retrieved_at:
+        range: datetime
+      citation:
+        description: How to cite it, verbatim.
+
+  Actor:
+    description: >-
+      A state, organization, person, or SWF. THE ACTOR SET IS TIME-VARYING:
+      empires and states appear and dissolve across 120 years, so state actors
+      carry their COW state-system membership window and every query that walks
+      actors at a date must respect it.
+    annotations:
+      graph_element: node
+      kuzu_table: Actor
+      id_prefix: actor
+    slots: [node_id, name, region_pack, centrality, community, brokerage]
+    attributes:
+      actor_type:
+        range: ActorType
+        required: true
+      cow_ccode:
+        description: COW country code, for state actors. Identity anchor for the deep tier.
+        range: integer
+      iso3: {}
+      state_from:
+        description: COW state-system membership start (states only).
+        range: date
+      state_to:
+        description: Membership end; empty means still in the system.
+        range: date
+
+  Issue:
+    description: A contested question actors hold positions on (Strait of Hormuz transit, quotas).
+    annotations:
+      graph_element: node
+      kuzu_table: Issue
+      id_prefix: issue
+    slots: [node_id, name, region_pack]
+    attributes:
+      description_text: {}
+      scale:
+        description: What the position axis means, so a position number is interpretable.
+
+  AttributeEstimate:
+    description: >-
+      A latent-variable estimate AS A DISTRIBUTION (build-spec section 4):
+      mean, std, method, date. Deep-past clout is seeded from CINC, salience
+      from ICOW; the market-as-sensor loop updates these from realized
+      residuals only. LABELED an estimate — never presented as a measurement.
+    annotations:
+      graph_element: node
+      kuzu_table: AttributeEstimate
+      id_prefix: estimate
+    slots: [node_id, as_of]
+    attributes:
+      attribute:
+        range: Attribute
+        required: true
+      value_mean:
+        range: float
+        required: true
+      value_std:
+        range: float
+        required: true
+      method:
+        description: cinc_seed | icow_seed | prior | sensor_update | agent_reasoning
+        required: true
+      issue_id:
+        description: The Issue this estimate is scoped to, where attribute is position/salience.
+
+  Event:
+    description: >-
+      Something that happened between actors. The CAMEO action vocabulary is
+      the common currency across the whole archive — modern events arrive
+      coded (GDELT), deep-tier events map through crosswalks/cow_to_cameo.yaml
+      deterministically. The EventEscalation head (classifier Head B) writes
+      its result ONTO this node — see the escalation_* slots — plus an OF_DYAD
+      link to the dyad whose EWMA baseline it was measured against.
+    annotations:
+      graph_element: node
+      kuzu_table: Event
+      id_prefix: event
+    slots: [node_id, name, region_pack, fidelity_tier, temporal_resolution, source_scale]
+    attributes:
+      action_cameo_code:
+        description: CAMEO code as a string ("138", "190") — codes have leading zeros.
+        required: true
+      event_time:
+        description: >-
+          When it happened, at the resolution the era allows — a deep-tier
+          event may only know its year. ISO-8601, truncated to what is known.
+        required: true
+      goldstein:
+        description: >-
+          Goldstein score, or the harmonized equivalent for deep-tier records
+          (source_scale says which). The escalation baseline input.
+        range: float
+      quad_class:
+        range: QuadClass
+      location: {}
+      geo_lat:
+        range: float
+      geo_lng:
+        range: float
+      # ── EventEscalation (classifier Head B) — derived, deterministic ───────
+      escalation_baseline:
+        description: The per-dyad EWMA baseline at event time. DERIVED.
+        range: float
+        annotations:
+          derived: true
+      escalation_direction:
+        range: EscalationDirection
+        annotations:
+          derived: true
+      escalation_magnitude:
+        description: abs(goldstein − baseline). Always relational, never an absolute label.
+        range: float
+        annotations:
+          derived: true
+      embedding:
+        description: >-
+          Vector for the analogy engine, over Kuzu's vector index. Written by
+          the analogy layer (Phase 5), null until then.
+        annotations:
+          kuzu_type: "FLOAT[1024]"
+
+  Dyad:
+    description: >-
+      An ordered actor pair with escalation state. The EWMA baseline lives
+      here so escalation is always measured against THIS relationship's
+      normal, not a global normal — a US–Iran threat and a US–UK threat are
+      not the same event.
+    annotations:
+      graph_element: node
+      kuzu_table: Dyad
+      id_prefix: dyad
+    slots: [node_id, name]
+    attributes:
+      actor_a_id:
+        required: true
+      actor_b_id:
+        required: true
+      ewma_baseline:
+        description: Current per-dyad Goldstein EWMA. DERIVED by classifier Head B.
+        range: float
+        annotations:
+          derived: true
+      ewma_as_of:
+        range: date
+        annotations:
+          derived: true
+
+  Market:
+    description: >-
+      A price series that can be affected. Carries its own inception date —
+      Tadawul 1985, DFM and ADX 2000 — because the deep past has no Gulf data
+      and the transmission engine must SKIP a market that did not exist rather
+      than emit a null-effect row (build-spec section 5.3).
+    annotations:
+      graph_element: node
+      kuzu_table: Market
+      id_prefix: market
+    slots: [node_id, name, region_pack]
+    attributes:
+      ticker:
+        required: true
+      market_type:
+        range: MarketType
+        required: true
+      trading_calendar:
+        range: TradingCalendar
+        required: true
+      inception_date:
+        description: First date any data exists for this market.
+        range: date
+        required: true
+      native_frequency:
+        description: >-
+          Era-keyed native frequency as compact JSON, e.g.
+          '{"1871": "month", "1957": "day"}' — the year a frequency becomes
+          available maps to a TemporalResolution value. The panel stores the
+          per-row frequency; this is the market's own capability statement.
+
+  Regime:
+    description: >-
+      A structural era — a monetary order (Bretton Woods 1944–1971) or a
+      polarity epoch (bipolar 1945–1991). Loaded from
+      crosswalks/regimes.yaml; analogy and forecasting condition on these and
+      never match across them.
+    annotations:
+      graph_element: node
+      kuzu_table: Regime
+      id_prefix: regime
+    slots: [node_id, name]
+    attributes:
+      kind:
+        range: RegimeKind
+        required: true
+      # `start_date`/`end_date`, NOT `start`/`end`: bare `end` is a Kuzu
+      # parser reserved word (like `when`) and fails the DDL loudly.
+      start_date:
+        range: date
+        required: true
+      end_date:
+        description: Empty means the regime is current.
+        range: date
+
+  Forecast:
+    description: >-
+      A reasoned forward assessment — scenarios with their logic on display,
+      NOT a single number. FROZEN AT GENERATION TIME with its inputs
+      (build-spec section 17) so a past call can be scored (near-term, Brier)
+      or retrodicted (long-horizon) honestly later.
+    annotations:
+      graph_element: node
+      kuzu_table: Forecast
+      id_prefix: forecast
+    slots: [node_id, region_pack]
+    attributes:
+      mode:
+        range: ForecastMode
+        required: true
+      question:
+        required: true
+      generated_at:
+        range: datetime
+        required: true
+      horizon_end:
+        range: date
+      scenarios_json:
+        description: >-
+          The embedded scenario list (Scenario class), serialized. Each
+          scenario carries likelihood, market implication, analogues, and a
+          rationale traced to graph evidence.
+        required: true
+      frozen_inputs_json:
+        description: The inputs as of generation, for honest later scoring.
+        required: true
+      boundary_statement:
+        description: >-
+          REQUIRED for long_horizon mode by the reasoning layer: the sentence
+          stating this maps pressure and probability over a window and does
+          not call dates or events.
+      brier_score:
+        description: Filled by calibration.py once outcomes resolve. DERIVED.
+        range: float
+        annotations:
+          derived: true
+
+  Scenario:
+    description: >-
+      One branch of a Forecast. NOT a graph node — embedded in
+      Forecast.scenarios_json; this class exists so the generated Pydantic
+      model types the embedded list.
+    attributes:
+      scenario_name:
+        required: true
+      likelihood:
+        description: 0–1 where the horizon allows one; null for long-horizon structural branches.
+        range: float
+      market_implication:
+        description: Direction per affected market, with the reasoning.
+        required: true
+      rationale:
+        description: The logic, traced to graph evidence (node_ids inline).
+        required: true
+      analogue_ids:
+        multivalued: true
+
+  Analogue:
+    description: >-
+      A structurally similar past situation retrieved for a present question —
+      matched on actor roles, escalation trajectory, network position, and
+      regime, ONLY within comparable regimes.
+    annotations:
+      graph_element: node
+      kuzu_table: Analogue
+      id_prefix: analogue
+    slots: [node_id]
+    attributes:
+      query_ref:
+        description: What present situation this analogue was retrieved for.
+        required: true
+      event_id:
+        description: The past Event (or episode anchor) matched.
+        required: true
+      similarity:
+        range: float
+        required: true
+      regime_matched:
+        description: The RegimeKind windows within which the match was made.
+        required: true
+      rationale:
+        required: true
+
+  NetworkMetric:
+    description: >-
+      One computed structural measure for one subject over one time window —
+      persisted, dated, and derived only by graph/analytics.py. The AI never
+      originates these numbers.
+    annotations:
+      graph_element: node
+      kuzu_table: NetworkMetric
+      id_prefix: metric
+    slots: [node_id]
+    attributes:
+      subject_id:
+        description: The node this measures — usually an Actor.
+        required: true
+      metric_name:
+        description: degree | betweenness | eigenvector | constraint | community | coreness
+        required: true
+      value:
+        range: float
+        required: true
+      window_start:
+        range: date
+        required: true
+      window_end:
+        range: date
+        required: true
+      method:
+        description: Library + algorithm + parameters, so the number is reproducible.
+        required: true
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Edge classes — one Kuzu rel table each. `sourced: true` + `required: true`
+# on source_id is the provenance invariant; `key_slots` name the properties
+# that IDENTIFY an edge (two values = two edges), the MarketGraph `as_of`
+# lesson applied from day one.
+# ─────────────────────────────────────────────────────────────────────────────
+
+  InitiatedBy:
+    description: Event → its initiating Actor (CAMEO Actor1).
+    annotations:
+      graph_element: edge
+      kuzu_rel: INITIATED_BY
+      from: Event
+      to: Actor
+      sourced: "true"
+    slots: [source_id]
+    slot_usage:
+      source_id:
+        required: true
+
+  DirectedAt:
+    description: Event → the Actor it was directed at (CAMEO Actor2).
+    annotations:
+      graph_element: edge
+      kuzu_rel: DIRECTED_AT
+      from: Event
+      to: Actor
+      sourced: "true"
+    slots: [source_id]
+    slot_usage:
+      source_id:
+        required: true
+
+  RelatesTo:
+    description: >-
+      The durable network: alliances, rivalries, memberships, trade. Populated
+      from COW Formal Alliances and IGO membership over the deep past and from
+      event flow throughout. Time-bounded — the 120-year story IS the shifting
+      of these edges, so validity windows are part of edge identity.
+    annotations:
+      graph_element: edge
+      kuzu_rel: RELATES_TO
+      from: Actor
+      to: Actor
+      sourced: "true"
+      key_slots: relation_type, valid_from
+    slots: [valid_from, valid_to, source_id]
+    slot_usage:
+      source_id:
+        required: true
+    attributes:
+      relation_type:
+        range: RelationType
+        required: true
+
+  Affected:
+    description: >-
+      THE MONEY EDGE. Event → Market, numbers written ONLY by the transmission
+      engine (deterministic event study), carrying the resolution they were
+      measured at so the reasoning layer can down-weight coarse deep-past
+      effects. `window` is identity: one event measures several windows on one
+      market and each is its own edge. Honesty rule — measured effects only,
+      never asserted signs.
+    annotations:
+      graph_element: edge
+      kuzu_rel: AFFECTED
+      from: Event
+      to: Market
+      sourced: "true"
+      key_slots: window
+    attributes:
+      window:
+        range: EffectWindow
+        required: true
+      resolution:
+        range: TemporalResolution
+        required: true
+      raw_return:
+        range: float
+      expected_return:
+        range: float
+      abnormal_return:
+        range: float
+      t_stat:
+        range: float
+      p_value:
+        range: float
+      first_mover:
+        description: >-
+          True when this market's first tradable session after the event
+          preceded the other affected markets' — the Gulf/US calendar offset
+          makes this a real lead-lag signal, not a curiosity.
+        range: boolean
+      overlapping:
+        description: >-
+          True when another event's window overlaps this one. Flagged, never
+          averaged away (build-spec section 19).
+        range: boolean
+      method:
+        description: Estimation window, model, and frequency — the reproducibility line.
+        required: true
+    slots: [source_id]
+    slot_usage:
+      source_id:
+        description: The Source of the PRICE SERIES the effect was computed from.
+        required: true
+
+  HasEstimate:
+    description: Actor → AttributeEstimate. The estimate node carries date and method.
+    annotations:
+      graph_element: edge
+      kuzu_rel: HAS_ESTIMATE
+      from: Actor
+      to: AttributeEstimate
+
+  OccurredIn:
+    description: >-
+      Event → Regime, so analogy and forecasting condition on regime with one
+      hop. CLASSIFICATION edge — excluded from traversable_edges: every event
+      points at the same few regimes.
+    annotations:
+      graph_element: edge
+      kuzu_rel: OCCURRED_IN
+      from: Event
+      to: Regime
+
+  DerivedFrom:
+    description: >-
+      Event → Source. Provenance as structure. Classification-shaped for
+      pathfinding purposes (excluded from traversable_edges) but load-bearing
+      for citations.
+    annotations:
+      graph_element: edge
+      kuzu_rel: DERIVED_FROM
+      from: Event
+      to: Source
+
+  Flow:
+    description: >-
+      Actor (SWF) → Market exposure from 13F filings, reusing MarketGraph's
+      EDGAR ingestion. A coarse, lagged, US-long-only view — the description
+      says so and so must every surface that serves it. `as_of` is identity:
+      two quarters are two edges.
+    annotations:
+      graph_element: edge
+      kuzu_rel: FLOW
+      from: Actor
+      to: Market
+      sourced: "true"
+      key_slots: as_of
+    slots: [as_of, source_id]
+    slot_usage:
+      source_id:
+        required: true
+    attributes:
+      value_usd:
+        range: integer
+
+  OfDyad:
+    description: Event → the Dyad whose EWMA baseline its escalation was measured against.
+    annotations:
+      graph_element: edge
+      kuzu_rel: OF_DYAD
+      from: Event
+      to: Dyad

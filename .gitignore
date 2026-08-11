@@ -1,0 +1,36 @@
+# The graph is BUILT, not source. Reproducible from the packs, the crosswalks
+# and the open datasets; large; the app rebuilds it.
+data/*.kuzu
+data/*.kuzu.wal
+data/cache/
+data/raw/
+
+# Generated ontology artifacts (Pydantic + JSON Schema) are BUILD OUTPUTS of
+# scripts/generate_ontology.py. The LinkML YAML is the source of truth; two
+# committed copies of one model drift.
+core/ontology/generated/*
+!core/ontology/generated/__init__.py
+!core/ontology/generated/README.md
+
+.venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# Secrets. `.env.example` IS committed — it documents what can be set, and is a
+# checklist somebody can diff against.
+.env
+!.env.example
+
+node_modules/
+web/dist/
+web/.vite/
+
+.DS_Store
+.idea/
+.vscode/

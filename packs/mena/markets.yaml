@@ -1,0 +1,69 @@
+# The market universe (build-spec decision 7): US equities and rates, TASI,
+# ADX, DFM, Brent and gold. EVERY MARKET CARRIES ITS INCEPTION DATE — Gulf
+# markets have NO pre-founding data and the transmission engine skips a market
+# that did not exist at event time rather than emitting a null row.
+#
+# `native_frequency` is era-keyed (year a resolution becomes available →
+# TemporalResolution): the fidelity gradient per market. Deep-past US equity
+# runs monthly on Shiller from 1871; the daily era starts with the modern
+# index. VERIFY EACH TICKER'S DEPTH ON INGEST — yfinance history for Gulf
+# indices starts later than the exchange's founding, and the verified depth is
+# recorded at ingest, not assumed from this file.
+
+markets:
+  - id: market:gspc
+    name: S&P 500
+    ticker: "^GSPC"
+    market_type: equity_index
+    trading_calendar: us
+    inception_date: "1871-01-01"   # Shiller monthly series; daily index from 1927
+    native_frequency: '{"1871": "month", "1927": "day"}'
+  - id: market:tasi
+    name: Tadawul All Share Index (Saudi Arabia)
+    ticker: "^TASI.SR"
+    market_type: equity_index
+    trading_calendar: gulf
+    inception_date: "1985-01-01"   # Tadawul founded 1985; NO earlier data exists
+    native_frequency: '{"1985": "day"}'
+  - id: market:dfmgi
+    name: Dubai Financial Market General Index
+    ticker: "DFMGI.AE"
+    market_type: equity_index
+    trading_calendar: gulf
+    inception_date: "2000-03-26"
+    native_frequency: '{"2000": "day"}'
+  - id: market:adx
+    name: FTSE ADX General Index (Abu Dhabi)
+    ticker: "FADX15.FGI"
+    market_type: equity_index
+    trading_calendar: gulf
+    inception_date: "2000-11-15"
+    native_frequency: '{"2000": "day"}'
+  - id: market:brent
+    name: Brent crude
+    ticker: "BZ=F"
+    market_type: commodity
+    trading_calendar: global_futures
+    inception_date: "1861-01-01"   # long-run annual oil series; futures from 1988
+    native_frequency: '{"1861": "year", "1988": "day"}'
+  - id: market:gold
+    name: Gold
+    ticker: "GC=F"
+    market_type: commodity
+    trading_calendar: global_futures
+    inception_date: "1905-01-01"   # long-run annual gold price; futures from 1974
+    native_frequency: '{"1905": "year", "1974": "day"}'
+  - id: market:dgs2
+    name: US 2-Year Treasury yield
+    ticker: DGS2
+    market_type: sovereign_yield
+    trading_calendar: us
+    inception_date: "1976-06-01"
+    native_frequency: '{"1976": "day"}'
+  - id: market:dgs10
+    name: US 10-Year Treasury yield
+    ticker: DGS10
+    market_type: sovereign_yield
+    trading_calendar: us
+    inception_date: "1871-01-01"   # Shiller long-rate proxy monthly; FRED daily from 1962
+    native_frequency: '{"1871": "month", "1962": "day"}'

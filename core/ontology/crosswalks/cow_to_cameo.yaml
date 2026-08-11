@@ -1,0 +1,52 @@
+# Maps deep-tier structured event categories (COW, ICB) to CAMEO-equivalent
+# action codes, so the whole 120-year archive shares ONE action vocabulary
+# (build-spec section 9). Deep-tier events flow through THIS FILE
+# deterministically — never through the LLM coder (section 10).
+#
+# APPROXIMATE BY CONSTRUCTION, like the escalation map: a MID's hostility level
+# summarizes a dispute, a CAMEO code names a single act. The mapping targets
+# the CAMEO root that best matches the dispute's highest action. Refine in
+# Phase 3 when the COW loaders land; every change here re-derives the deep
+# tier, which is the point of keeping it in one file.
+#
+# CAMEO codes are STRINGS with leading zeros preserved.
+
+cow_mid_hostility:
+  # Highest hostility level reached in the dispute → CAMEO code.
+  "1":
+    cameo: null          # no militarized action → no Event emitted for this side
+    label: No militarized action
+  "2":
+    cameo: "138"         # Threaten with military force
+    label: Threat to use force
+  "3":
+    cameo: "150"         # Exhibit military posture (demonstrate force)
+    label: Display of force
+  "4":
+    cameo: "190"         # Use conventional military force
+    label: Use of force
+  "5":
+    cameo: "190"         # Use conventional military force; `war: true` marks the distinction
+    label: Interstate war
+    war: true
+
+cow_war_onset:
+  # Interstate/intra-state/extra-state war onsets from the COW war datasets.
+  cameo: "190"
+  quad_class: material_conflict
+
+icb_crisis:
+  # ICB crises map by violence category; the crisis ONSET is the event.
+  "1":
+    cameo: "130"         # Threaten (unspecified)
+    label: Crisis without violence
+  "2":
+    cameo: "180"         # Use unconventional violence / clashes below war
+    label: Minor clashes
+  "3":
+    cameo: "190"
+    label: Serious clashes
+  "4":
+    cameo: "190"
+    label: Full-scale war
+    war: true

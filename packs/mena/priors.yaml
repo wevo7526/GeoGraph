@@ -1,0 +1,44 @@
+# Starter latent-variable priors (build-spec section 4): DISTRIBUTIONS, not
+# points — mean and std on the issue's own scale (position) or 0–1 (salience,
+# clout, resolve). These are PRIORS, method='prior': honest guesses to give
+# the sensor loop something to update, wide where knowledge is thin. Deep-past
+# seeding (CINC → clout, ICOW → salience) replaces nothing here — it runs on
+# the deep tier; these cover the live end until updated by realized outcomes.
+
+priors:
+  - actor: actor:cow-670        # Saudi Arabia
+    issue: issue:oil-quotas
+    attribute: clout
+    mean: 0.80
+    std: 0.10
+    rationale: Swing producer; spare capacity is the lever no other actor holds.
+  - actor: actor:cow-670
+    issue: issue:normalization
+    attribute: position
+    mean: 55
+    std: 20
+    rationale: Post-2023 the price rose; direction intact, timing hostage to Gaza.
+  - actor: actor:cow-630        # Iran
+    issue: issue:iran-nuclear
+    attribute: resolve
+    mean: 0.75
+    std: 0.15
+    rationale: Program survived sabotage, sanctions and strikes; resolve is the fact to beat.
+  - actor: actor:cow-630
+    issue: issue:hormuz-transit
+    attribute: clout
+    mean: 0.60
+    std: 0.15
+    rationale: Credible interdiction threat, never yet fully executed — hence the std.
+  - actor: actor:cow-666        # Israel
+    issue: issue:israel-iran
+    attribute: resolve
+    mean: 0.85
+    std: 0.10
+    rationale: June 2025 demonstrated willingness to strike directly at scale.
+  - actor: actor:ansar-allah
+    issue: issue:yemen-war
+    attribute: resolve
+    mean: 0.80
+    std: 0.15
+    rationale: Sustained Red Sea campaign under repeated strikes.
