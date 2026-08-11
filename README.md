@@ -79,4 +79,4 @@ tested. The build proceeds by the phased milestones in
 `docs/build-spec.md` §18 — next: the marquee spine end to end, then the
 transmission engine on one modern episode (the twelve-day war, 2025).
 
-Built by Will Evans and a colleague from the William & Mary MBA.
+Built by two William & Mary MBAs
