@@ -80,6 +80,31 @@ events:
     target: actor:cow-630
     quad_class: material_conflict
     note: Second oil shock; the region's alignment map redrawn in one year.
+  - id: event:mena-1979-camp-david
+    date: "1979-03-26"
+    name: Egypt–Israel peace treaty signed
+    quad_class: verbal_cooperation
+    cameo: "057"          # sign formal agreement
+    initiator: actor:cow-651
+    target: actor:cow-666
+    note: >-
+      The Camp David outcome — the region's first Arab–Israeli peace, the
+      cooperative pole the escalation baselines measure everything against.
+  - id: event:mena-1981-gcc-founding
+    date: "1981-05-25"
+    name: Gulf Cooperation Council founded
+    quad_class: verbal_cooperation
+    cameo: "057"
+    initiator: actor:cow-670
+    target: actor:gcc
+    note: The Gulf's institutional answer to the Iran–Iraq war's first year.
+  - id: event:mena-1994-israel-jordan
+    date: "1994-10-26"
+    name: Israel–Jordan peace treaty signed
+    quad_class: verbal_cooperation
+    cameo: "057"
+    initiator: actor:cow-666
+    target: actor:cow-663
   - id: event:mena-1980-iran-iraq
     date: "1980-09-22"
     name: Iraq invades Iran
@@ -146,6 +171,16 @@ events:
     # 16x is MATERIAL conflict in CAMEO: breaking off relations does something
     # rather than says something.
     quad_class: material_conflict
+  - id: event:mena-2017-qatar-rift
+    date: "2017-06-05"
+    name: Qatar blockade begins
+    quad_class: material_conflict
+    cameo: "163"          # impose embargo, boycott, or sanctions
+    initiator: actor:cow-670
+    target: actor:cow-694
+    note: >-
+      A material rupture INSIDE the GCC — the dyad the Al-Ula declaration
+      later reverses, which is what makes the pair a baseline story.
   - id: event:mena-2019-abqaiq
     date: "2019-09-14"
     name: Abqaiq–Khurais drone and missile attack
@@ -172,6 +207,24 @@ events:
     initiator: actor:cow-696
     target: actor:cow-666
     quad_class: verbal_cooperation
+  - id: event:mena-2021-alula
+    date: "2021-01-05"
+    name: Al-Ula declaration ends the Qatar rift
+    quad_class: verbal_cooperation
+    cameo: "057"
+    initiator: actor:cow-670
+    target: actor:cow-694
+  - id: event:mena-2023-beijing
+    date: "2023-03-10"
+    name: Iran–Saudi normalization agreed in Beijing
+    quad_class: verbal_cooperation
+    cameo: "057"
+    initiator: actor:cow-630
+    target: actor:cow-670
+    note: >-
+      A cooperative rupture on the region's defining rivalry — the same
+      |score − baseline| arithmetic that flags war flags THIS, in the other
+      direction.
   - id: event:mena-2023-oct7
     date: "2023-10-07"
     name: Hamas attack on Israel
