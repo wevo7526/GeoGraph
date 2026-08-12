@@ -43,6 +43,10 @@ ingest = [
     "fredapi>=0.5",
     "google-cloud-bigquery>=3.25",
     "lxml>=5.2",
+    # The deep-tier flat files: Shiller ships a legacy .xls (xlrd), JST a
+    # Stata .dta (pandas reads natively).
+    "xlrd>=2.0",
+    "pandas>=2.2",
 ]
 # The reasoning layer's LLM: CAMEO coding of non-GDELT text, the agent, and
 # analogy retrieval. NEVER for numbers — see docs/build-spec.md section 17.
@@ -101,7 +105,10 @@ module = ["linkml_runtime.*"]
 ignore_missing_imports = true
 
 [[tool.mypy.overrides]]
-module = ["yaml.*", "kuzu.*", "yfinance.*", "fredapi.*", "statsmodels.*", "scipy.*", "networkx.*"]
+module = [
+    "yaml.*", "kuzu.*", "yfinance.*", "fredapi.*", "statsmodels.*", "scipy.*",
+    "networkx.*", "pandas.*",
+]
 ignore_missing_imports = true
 
 [[tool.mypy.overrides]]

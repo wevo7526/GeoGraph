@@ -254,3 +254,33 @@ UKG,200,United Kingdom,1816,1,1,2016,12,31,2016
     assert modern["direction"] == "escalating"
     assert modern["goldstein"] is not None
     assert kuzu_store.check_provenance(conn) == []
+
+
+# ── Shiller monthly (the 1871 era of ^GSPC and DGS10) ────────────────────────
+
+
+def test_shiller_parse_survives_the_float_date_trap():
+    from core.ingestion import shiller
+
+    rows, dropped = shiller.parse_monthly([
+        {"Date": 1880.01, "P": 5.11, "Rate GS10": 4.02},   # January
+        {"Date": 1880.1, "P": 5.35, "Rate GS10": 3.79},    # OCTOBER, not January
+        {"Date": None, "P": "Sept price is Sept 1st close", "Rate GS10": "prose"},
+    ])
+    assert dropped == 1  # the footnote row, once
+    by_key = {(r["market_ticker"], r["obs_date"]): r["value"] for r in rows}
+    assert by_key[("^GSPC", "1880-01-01")] == 5.11
+    assert by_key[("^GSPC", "1880-10-01")] == 5.35  # .1 read as month 10
+    assert by_key[("DGS10", "1880-10-01")] == 3.79
+    for r in rows:
+        assert r["frequency"] == "monthly"
+        assert r["source_ref"] == shiller.SOURCE_SHILLER
+
+
+def test_shiller_a_missing_series_cell_drops_only_that_cell():
+    from core.ingestion import shiller
+
+    rows, dropped = shiller.parse_monthly([{"Date": 1990.05, "P": 330.0, "Rate GS10": None}])
+    assert dropped == 1
+    assert len(rows) == 1
+    assert rows[0]["market_ticker"] == "^GSPC"
