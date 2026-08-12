@@ -1,141 +1,129 @@
 import { useEffect, useState } from 'react'
-import { getCaseStudies, getHealth, getStats } from '../api'
+import { getCaseStudies, getHealth, getPacks, getStats } from '../api'
 import type { CaseStudyIndexEntry, Health, Stats } from '../types'
 
-/** The front door. One claim, one way in, and an honest account of how much of
- *  the archive is actually built — the coverage statement belongs where the
- *  reader arrives, not buried in an endpoint. */
+/** The front door, set as a broadsheet front page: masthead, headline,
+ *  standfirst, and the archive's figures as a ledger. Paper outside,
+ *  instrument inside — the app behind this door stays dark. The coverage
+ *  statement stays honest and current: it names what the archive holds and
+ *  what is still a later phase. */
 export default function Landing({ onEnter }: { onEnter: (route: string) => void }) {
   const [health, setHealth] = useState<Health | null>(null)
   const [stats, setStats] = useState<Stats | null>(null)
   const [studies, setStudies] = useState<CaseStudyIndexEntry[]>([])
+  const [packs, setPacks] = useState<string[]>([])
 
   useEffect(() => {
     getHealth().then(setHealth)
     getStats().then(setStats)
     getCaseStudies().then((r) => setStudies(r?.rows ?? []))
+    getPacks().then((r) => setPacks(r?.packs ?? []))
   }, [])
 
-  const events = stats?.nodes.Event ?? 0
-  const actors = stats?.nodes.Actor ?? 0
-  const effects = stats?.edges.AFFECTED ?? 0
   const live = health?.graph === 'open'
+  const figure = (v: number | undefined) =>
+    live && v !== undefined ? v.toLocaleString('en-US') : '—'
+
+  const ledger: Array<[string, string]> = [
+    ['Coded events', figure(stats?.nodes.Event)],
+    ['Actors', figure(stats?.nodes.Actor)],
+    ['Measured market effects', figure(stats?.edges.AFFECTED)],
+    ['Worked case studies', live ? String(studies.length) : '—'],
+    ['Region lenses', live ? String(packs.length) : '—'],
+  ]
 
   return (
-    <div className="min-h-full flex flex-col">
-      <main className="flex-1 flex items-center justify-center px-6 py-16">
-        <div className="w-full max-w-3xl">
-          <p
-            className="mono text-xs uppercase tracking-[0.35em] mb-8"
-            style={{ color: 'var(--muted)' }}
-          >
-            An applied-history engine
-          </p>
-
-          <h1
-            className="text-6xl sm:text-8xl leading-none tracking-tight"
-            style={{ color: 'var(--text)' }}
-          >
-            Geo<span style={{ color: 'var(--accent)' }}>Graph</span>
-          </h1>
-
-          <p className="mt-8 text-xl sm:text-2xl leading-snug" style={{ maxWidth: '46ch' }}>
-            A hundred and twenty years of geopolitics, measured against the
-            markets that priced it.
-          </p>
-
-          <p
-            className="mt-6 text-base leading-relaxed"
-            style={{ color: 'var(--muted)', maxWidth: '62ch' }}
-          >
-            Actors, relationships and events from 1905 to the present, held as a
-            network. A deterministic transmission layer that measures what each
-            event actually did to prices — never asserts it. And a reasoning
-            layer that argues from the record without ever originating a number.
-          </p>
-
-          <div className="mt-12 flex flex-wrap items-center gap-4">
-            <button
-              type="button"
-              onClick={() => onEnter('/explore')}
-              className="px-8 py-3 text-lg transition-colors"
-              style={{
-                border: '1px solid var(--accent)',
-                color: 'var(--accent)',
-                background: 'transparent',
-              }}
-              onMouseEnter={(e) => {
-                e.currentTarget.style.background = 'var(--accent)'
-                e.currentTarget.style.color = 'var(--ink)'
-              }}
-              onMouseLeave={(e) => {
-                e.currentTarget.style.background = 'transparent'
-                e.currentTarget.style.color = 'var(--accent)'
-              }}
+    <div className="broadsheet min-h-full flex flex-col">
+      <main className="flex-1 px-6 py-10 sm:py-14">
+        <div className="w-full max-w-3xl mx-auto">
+          {/* Masthead */}
+          <div className="masthead pb-3 flex flex-wrap items-baseline justify-between gap-3">
+            <span
+              className="text-2xl tracking-[0.18em]"
+              style={{ fontVariantCaps: 'small-caps' }}
             >
-              Enter the archive
-            </button>
+              GeoGraph
+            </span>
+            <span className="mono text-[11px] tracking-[0.2em]" style={{ color: 'var(--paper-muted)' }}>
+              AN APPLIED-HISTORY ENGINE · 1905 — PRESENT
+            </span>
+          </div>
 
+          {/* Headline and standfirst */}
+          <h1 className="mt-10 text-5xl sm:text-6xl leading-[1.05] tracking-tight">
+            A hundred and twenty years of geopolitics, priced.
+          </h1>
+          <p
+            className="mt-6 text-lg leading-relaxed"
+            style={{ color: 'var(--paper-muted)', maxWidth: '58ch' }}
+          >
+            Actors, relationships and events held as a network; a deterministic
+            transmission layer that measures what each event actually did to
+            markets — never asserts it; and a reasoning layer that argues from
+            the record without ever originating a number.
+          </p>
+
+          {/* The ledger */}
+          <section className="mt-12 border-t border-b py-5" style={{ borderColor: 'var(--paper-rule)' }}>
+            <p className="mono text-[11px] tracking-[0.25em] mb-4" style={{ color: 'var(--paper-muted)' }}>
+              THE ARCHIVE TODAY
+            </p>
+            <dl className="space-y-2 max-w-xl">
+              {ledger.map(([label, value]) => (
+                <div key={label} className="ledger-row text-base">
+                  <dt>{label}</dt>
+                  <span className="ledger-leader" aria-hidden="true" />
+                  <dd className="ledger-figure text-lg">{value}</dd>
+                </div>
+              ))}
+            </dl>
+            <p className="mt-5 text-sm leading-relaxed" style={{ color: 'var(--paper-muted)', maxWidth: '62ch' }}>
+              {live ? (
+                <>
+                  The record runs from the Correlates-of-War deep tier through
+                  the GDELT wire (1979–2005), read through {packs.length || 'its'}{' '}
+                  regional lens{packs.length === 1 ? '' : 'es'}
+                  {packs.length ? ` (${packs.map((p) => p.toUpperCase()).join(', ')})` : ''}.
+                  The daily wire era and further lenses are later phases —
+                  absence here is not evidence that nothing happened.
+                </>
+              ) : (
+                <>
+                  The API is not answering, so the figures are unavailable. The
+                  archive still opens, and will say what it cannot show.
+                </>
+              )}
+            </p>
+          </section>
+
+          {/* The way in */}
+          <div className="mt-10 flex flex-wrap items-center gap-x-8 gap-y-4">
+            <button type="button" className="ink-button text-lg" onClick={() => onEnter('/explore')}>
+              Enter the archive →
+            </button>
             {studies.map((study) => (
               <button
                 key={study.slug}
                 type="button"
+                className="article-link text-base"
                 onClick={() => onEnter(`/case/${study.slug}`)}
-                className="px-5 py-3 text-base underline decoration-1 underline-offset-4"
-                style={{ color: 'var(--text)', background: 'transparent', border: 'none' }}
               >
-                Read the case study: {study.title}
+                {study.title}
               </button>
             ))}
           </div>
-
-          {/* What is actually here. A reader who is not told the archive holds
-              one region pack will read absence as evidence. */}
-          <dl
-            className="mt-16 grid grid-cols-2 sm:grid-cols-4 gap-6 pt-8 border-t"
-            style={{ borderColor: 'var(--line)' }}
-          >
-            {[
-              ['Actors', actors],
-              ['Coded events', events],
-              ['Measured effects', effects],
-              ['Region packs', stats ? new Set(['mena']).size : 0],
-            ].map(([label, value]) => (
-              <div key={String(label)}>
-                <dt className="mono text-xs uppercase tracking-widest" style={{ color: 'var(--muted)' }}>
-                  {label}
-                </dt>
-                <dd className="text-3xl mt-1" style={{ color: 'var(--text)' }}>
-                  {live ? value : '—'}
-                </dd>
-              </div>
-            ))}
-          </dl>
-
-          <p className="mt-6 text-sm leading-relaxed" style={{ color: 'var(--muted)' }}>
-            {live ? (
-              <>
-                The archive currently holds the MENA pack's curated marquee spine
-                and one worked episode. Deep history (1905–1979) and the GDELT
-                backfill are later phases — absence here is not evidence that
-                nothing happened.
-              </>
-            ) : (
-              <>
-                The API is not answering, so these figures are unavailable. The
-                explorer still opens, and will say what it cannot show.
-              </>
-            )}
-          </p>
         </div>
       </main>
 
       <footer
-        className="px-6 py-5 border-t flex flex-wrap items-baseline justify-between gap-3 text-sm"
-        style={{ borderColor: 'var(--line)', color: 'var(--muted)' }}
+        className="px-6 py-4 border-t flex flex-wrap items-baseline justify-between gap-3"
+        style={{ borderColor: 'var(--paper-rule)', color: 'var(--paper-muted)' }}
       >
-        <span className="mono text-xs">
-          graph: {health ? health.graph : 'offline'}
+        <span className="mono text-[11px] tracking-[0.15em]">
+          GRAPH: {(health ? health.graph : 'offline').toUpperCase()}
+        </span>
+        <span className="mono text-[11px] tracking-[0.15em]">
+          MEASURED, NEVER ASSERTED
         </span>
       </footer>
     </div>

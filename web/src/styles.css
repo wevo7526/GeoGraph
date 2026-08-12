@@ -79,6 +79,72 @@ body {
   overflow-y: auto;
 }
 
+/* ── The broadsheet landing: paper outside, instrument inside ────────────────
+   The front door is set like a serious financial-history paper — warm
+   parchment, black ink, hairline and double rules, ledger figures — and the
+   app behind it keeps the dark instrument room. The contrast is the design:
+   print announces, the instrument measures. Tokens are SCOPED here; nothing
+   inside the app frame reads them. */
+.broadsheet {
+  --paper: #f2ecdd;
+  --paper-ink: #1a1610;
+  --paper-muted: #6d6353;
+  --paper-rule: #1a1610;
+  --paper-accent: #8a2d1c; /* oxblood — links and one hover, nothing else */
+  background: var(--paper);
+  color: var(--paper-ink);
+  min-height: 100%;
+}
+
+.broadsheet .masthead {
+  border-bottom: 4px double var(--paper-rule);
+}
+
+.broadsheet .ledger-row {
+  display: flex;
+  align-items: baseline;
+}
+.broadsheet .ledger-leader {
+  flex: 1;
+  margin: 0 0.6rem;
+  border-bottom: 2px dotted rgba(26, 22, 16, 0.4);
+  transform: translateY(-0.28em);
+}
+.broadsheet .ledger-figure {
+  font-variant-numeric: tabular-nums;
+}
+
+.broadsheet .ink-button {
+  background: var(--paper-ink);
+  color: var(--paper);
+  padding: 0.8rem 2.2rem;
+  border: 1px solid var(--paper-ink);
+  cursor: pointer;
+  transition: background 120ms ease;
+}
+.broadsheet .ink-button:hover {
+  background: var(--paper-accent);
+  border-color: var(--paper-accent);
+}
+.broadsheet .ink-button:focus-visible {
+  outline: 2px solid var(--paper-accent);
+  outline-offset: 3px;
+}
+
+.broadsheet .article-link {
+  background: transparent;
+  border: none;
+  padding: 0;
+  color: var(--paper-accent);
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 4px;
+  text-decoration-thickness: 1px;
+}
+.broadsheet .article-link:hover {
+  color: var(--paper-ink);
+}
+
 /* ── The explorer workspace: everything visible, nothing scrolls the page ────
    One viewport-height grid — topbar / main / time slider — in the MarketGraph
    shell lineage. Panels that overflow scroll INSIDE their own box
