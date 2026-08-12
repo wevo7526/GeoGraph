@@ -71,7 +71,12 @@ def list_events(
         clauses.append("e.event_time <= $end_date")
         params["end_date"] = end
     if pack:
-        clauses.append("e.region_pack = $pack")
+        # THE LENS RULE: a region shows its own tagged events PLUS the global
+        # backbone — deep-tier records (COW) carry no pack because a 1911
+        # great-power dispute belongs to every lens that includes its actors.
+        clauses.append(
+            "(e.region_pack = $pack OR e.region_pack = '' OR e.region_pack IS NULL)"
+        )
         params["pack"] = pack
     where = f"WHERE {' AND '.join(clauses)} " if clauses else ""
     # Actor and dyad ids ride along on every row so the explorer can draw the
@@ -103,7 +108,10 @@ def coverage(request: Request, pack: str | None = None) -> dict[str, Any]:
     of a bar meaning "not ingested", never "history was quiet".
     """
     conn = _conn(request)
-    where = "WHERE e.region_pack = $pack " if pack else ""
+    where = (
+        "WHERE (e.region_pack = $pack OR e.region_pack = '' OR e.region_pack IS NULL) "
+        if pack else ""
+    )
     params: dict[str, Any] = {"pack": pack} if pack else {}
     rows = kuzu_store.query(
         conn,

@@ -52,7 +52,7 @@ _STUDY_SCRIPT = _ROOT / "scripts" / "run_event_study.py"
 _METRICS_SCRIPT = _ROOT / "scripts" / "run_network_metrics.py"
 _FORECASTS_SCRIPT = _ROOT / "scripts" / "run_forecasts.py"
 _GDELT_SCRIPT = _ROOT / "scripts" / "backfill_gdelt.py"
-_GDELT_ARTIFACT = _ROOT / "data" / "derived" / "gdelt-mena-1979-2005.tsv.gz"
+_DERIVED_DIR = _ROOT / "data" / "derived"
 _DEEP_TIER_SCRIPT = _ROOT / "scripts" / "load_deep_tier.py"
 _LOAD_13F_SCRIPT = _ROOT / "scripts" / "load_13f.py"
 
@@ -275,8 +275,8 @@ def _load_deep_tier() -> dict[str, Any]:
     return {k: v for k, v in result.items() if k != "step"}
 
 
-def _graph_has_gdelt() -> bool | None:
-    """Does the graph already hold GDELT events? None if it cannot be asked."""
+def _graph_has_gdelt(pack_name: str) -> bool | None:
+    """Does the graph hold GDELT events for THIS lens? None if unaskable."""
     from core import settings as settings_module
     from core.graph import kuzu_store
 
@@ -291,32 +291,42 @@ def _graph_has_gdelt() -> bool | None:
         rows = kuzu_store.query(
             conn,
             "MATCH (e:Event) WHERE e.node_id STARTS WITH 'event:gdelt-' "
-            "RETURN e.node_id AS id LIMIT 1",
+            "AND e.region_pack = $pack RETURN e.node_id AS id LIMIT 1",
+            {"pack": pack_name},
         )
         return bool(rows)
     finally:
         kuzu_store.close(conn)
 
 
-def _load_gdelt() -> dict[str, Any]:
-    """The GDELT backfill from the SHIPPED ARTIFACT (Phase 4, credential-free).
-
-    The image carries the filtered 1979-2005 lines (data/derived); loading
-    them is a couple of minutes ONCE — the volume graph keeps the events, so
-    every later boot skips here in milliseconds."""
+def _load_gdelt(pack_names: list[str]) -> dict[str, Any]:
+    """The GDELT backfill from the SHIPPED ARTIFACTS, one per region lens
+    (Phase 4, credential-free). The image carries the filtered lines
+    (data/derived/gdelt-<pack>-*.tsv.gz); loading is a couple of minutes ONCE
+    per pack — the volume graph keeps the events, so every later boot skips
+    in milliseconds."""
     if os.getenv("GEOGRAPH_GDELT_ON_BOOT", "1").strip().lower() in {"0", "false", "no"}:
         return {"ok": True, "skipped": "disabled by GEOGRAPH_GDELT_ON_BOOT"}
-    if not _GDELT_ARTIFACT.exists():
-        return {"ok": True, "skipped": "no derived artifact in the image"}
-    if _graph_has_gdelt():
-        return {"ok": True, "skipped": "graph already holds GDELT events"}
-    result = _run_step(
-        "gdelt backfill",
-        [sys.executable, str(_GDELT_SCRIPT), "--from-filtered", str(_GDELT_ARTIFACT)],
-        timeout=_LOAD_TIMEOUT_SECONDS,
-        echo=False,
-    )
-    return {k: v for k, v in result.items() if k != "step"}
+    results = []
+    for name in pack_names:
+        artifacts = sorted(_DERIVED_DIR.glob(f"gdelt-{name}-*.tsv.gz"))
+        if not artifacts:
+            results.append({"pack": name, "ok": True,
+                            "skipped": "no derived artifact in the image"})
+            continue
+        if _graph_has_gdelt(name):
+            results.append({"pack": name, "ok": True,
+                            "skipped": "graph already holds this lens"})
+            continue
+        step = _run_step(
+            f"gdelt backfill {name}",
+            [sys.executable, str(_GDELT_SCRIPT), name,
+             "--from-filtered", str(artifacts[-1])],
+            timeout=_LOAD_TIMEOUT_SECONDS,
+            echo=False,
+        )
+        results.append({"pack": name, **{k: v for k, v in step.items() if k != "step"}})
+    return {"ok": all(r["ok"] for r in results), "packs": results}
 
 
 def _load_13f() -> dict[str, Any]:
@@ -412,7 +422,7 @@ def _boot_status() -> dict[str, Any]:
     # API from coming up.
     steps: tuple[tuple[str, Callable[[], dict[str, Any] | None]], ...] = (
         ("deep", _load_deep_tier),
-        ("gdelt", _load_gdelt),
+        ("gdelt", lambda: _load_gdelt(names)),
         ("flows", _load_13f),
         ("panel", _apply_panel_schema),
         ("prices", lambda: _load_panel_if_shallow(names)),

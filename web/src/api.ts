@@ -37,11 +37,14 @@ export const getStats = () => get<Stats>('/api/stats')
 export const getRegimes = () => get<Segmentation>('/api/regimes')
 export const getPack = (name: string) => get<Pack>(`/api/packs/${name}`)
 
-export const getEvents = (params: { start?: string; end?: string; limit?: number } = {}) => {
+export const getEvents = (
+  params: { start?: string; end?: string; limit?: number; pack?: string } = {},
+) => {
   const query = new URLSearchParams()
   if (params.start) query.set('start', params.start)
   if (params.end) query.set('end', params.end)
   if (params.limit) query.set('limit', String(params.limit))
+  if (params.pack) query.set('pack', params.pack)
   const suffix = query.toString() ? `?${query}` : ''
   return get<EventList>(`/api/events${suffix}`)
 }
@@ -82,7 +85,10 @@ export const getActors = (params: { start?: string; end?: string } = {}) => {
   return get<{ rows: GraphActor[] }>(`/api/actors${suffix}`)
 }
 
-export const getForecasts = () => get<{ rows: ForecastSummary[] }>('/api/forecasts')
+export const getForecasts = (region?: string) =>
+  get<{ rows: ForecastSummary[] }>(
+    region ? `/api/forecasts?region=${encodeURIComponent(region)}` : '/api/forecasts',
+  )
 
 export const getForecast = (nodeId: string) =>
   get<ForecastDetail>(`/api/forecasts/${encodeURIComponent(nodeId)}`)

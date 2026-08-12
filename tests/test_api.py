@@ -295,3 +295,35 @@ def test_an_unknown_api_route_is_a_json_404_not_the_spa(client):
     response = client.get("/api/nope")
     assert response.status_code == 404
     assert response.headers["content-type"].startswith("application/json")
+
+
+def test_the_lens_keeps_the_global_backbone(tmp_path, monkeypatch):
+    # A pack filter shows the region's tagged events PLUS untagged global
+    # records — the deep tier belongs to every lens that includes its actors.
+    # Standalone graph: the shared fixture's app already holds the write lock.
+    db = tmp_path / "lens.kuzu"
+    monkeypatch.setenv("KUZU_DB_PATH", str(db))
+    monkeypatch.delenv("DATABASE_URL", raising=False)
+    conn = kuzu_store.connect(db)
+    _load_seed().seed(conn, packs.load("mena"))
+    kuzu_store.merge_nodes(conn, "Event", [{
+        "node_id": "event:test-global", "name": "Global backbone record",
+        "event_time": "2020-06-15", "action_cameo_code": "190",
+        "goldstein": -10.0, "quad_class": "material_conflict",
+        "region_pack": "", "fidelity_tier": "deep_structured",
+        "temporal_resolution": "day", "source_scale": "cow_hostility",
+    }])
+    kuzu_store.close(conn)
+
+    from core.api.app import create_app
+
+    with TestClient(create_app()) as lens_client:
+        ids = {
+            r["node_id"]
+            for r in lens_client.get(
+                "/api/events?pack=mena&start=2020-01-01&end=2020-12-31"
+            ).json()["rows"]
+        }
+        assert "event:test-global" in ids
+        body = lens_client.get("/api/events/coverage?pack=mena").json()
+        assert body["years"].get("2020", 0) >= 1

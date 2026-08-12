@@ -546,7 +546,7 @@ function PressureLine({ detail }: { detail: ForecastDetail }) {
 /** The reasoning layer, on screen: both frozen forecast modes. Appears when
  *  the slider crosses "now" — the forward segment of the timeline renders
  *  scenario space, and this panel IS that space. */
-function ForecastPanel() {
+function ForecastPanel({ region }: { region: string }) {
   const [nearTerm, setNearTerm] = useState<ForecastDetail | null>(null)
   const [longHorizon, setLongHorizon] = useState<ForecastDetail | null>(null)
   const [paper, setPaper] = useState<PaperBook | null>(null)
@@ -554,7 +554,7 @@ function ForecastPanel() {
 
   useEffect(() => {
     let active = true
-    getForecasts().then((list) => {
+    getForecasts(region).then((list) => {
       if (!active) return
       const rows = list?.rows ?? []
       if (!rows.length) {
@@ -576,7 +576,7 @@ function ForecastPanel() {
     return () => {
       active = false
     }
-  }, [])
+  }, [region])
 
   if (empty) {
     return (
@@ -777,7 +777,7 @@ export default function Explorer({ region }: { region: string }) {
     }
     let active = true
     Promise.all([
-      getEvents({ start: windowFrom, end: `${year}-12-31`, limit: 500 }),
+      getEvents({ start: windowFrom, end: `${year}-12-31`, limit: 500, pack: region }),
       getActors({ start: windowFrom, end: `${year}-12-31` }),
       getRelations({ start: windowFrom, end: `${year}-12-31` }),
     ]).then(([eventsRes, actorsRes, relationsRes]) => {
@@ -793,7 +793,7 @@ export default function Explorer({ region }: { region: string }) {
     return () => {
       active = false
     }
-  }, [windowFrom, windowTo, year])
+  }, [windowFrom, windowTo, year, region])
 
   const inWindow = useMemo(
     () =>
@@ -1072,7 +1072,7 @@ export default function Explorer({ region }: { region: string }) {
           style={{ borderColor: 'var(--line)', background: 'var(--panel)' }}
         >
           {!selection && year > YEAR_NOW ? (
-            <ForecastPanel />
+            <ForecastPanel region={region} />
           ) : selection?.kind === 'event' ? (
             <EventDetailPanel nodeId={selection.id} />
           ) : selection?.kind === 'dyad' ? (

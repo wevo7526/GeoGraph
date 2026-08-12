@@ -37,7 +37,9 @@ def _conn(request: Request) -> Any:
 
 
 @router.get("/forecasts")
-def list_forecasts(request: Request, mode: str | None = None) -> dict[str, Any]:
+def list_forecasts(
+    request: Request, mode: str | None = None, region: str | None = None
+) -> dict[str, Any]:
     """Every frozen forecast, newest first — the trail calibration scores.
 
     An empty list means nothing has been FROZEN yet (run
@@ -45,8 +47,15 @@ def list_forecasts(request: Request, mode: str | None = None) -> dict[str, Any]:
     is unforecastable.
     """
     conn = _conn(request)
-    where = "WHERE f.mode = $mode " if mode else ""
-    params: dict[str, Any] = {"mode": mode} if mode else {}
+    clauses = []
+    params: dict[str, Any] = {}
+    if mode:
+        clauses.append("f.mode = $mode")
+        params["mode"] = mode
+    if region:
+        clauses.append("f.region_pack = $region")
+        params["region"] = region
+    where = f"WHERE {' AND '.join(clauses)} " if clauses else ""
     rows = kuzu_store.query(
         conn,
         f"MATCH (f:Forecast) {where}RETURN {_SUMMARY_COLUMNS} "
