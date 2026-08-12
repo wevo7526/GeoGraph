@@ -1,0 +1,107 @@
+# The market universe for the Eurasia lens. EVERY MARKET CARRIES ITS INCEPTION
+# DATE, and `native_frequency` is era-keyed — the year a resolution becomes
+# available, not the year the exchange opened. The DAX was backcalculated to
+# 1959 and the CAC to 1987, but the archive can only measure what a feed
+# actually returns, so the eras start where the data does and the engine
+# records a skip for everything earlier (the fidelity gradient).
+#
+# Shared instruments (^GSPC, BZ=F, GC=F, DGS10) reuse the SAME node ids and
+# the SAME metadata as the MENA pack — one market, one node, one inception
+# date. Copying MENA's values rather than restating them is deliberate: packs
+# seed in alphabetical order, so a disagreement here would be silently
+# resolved by whichever pack ran last.
+#
+# European cash equities trade Monday-Friday, which is the archive's `us`
+# calendar (the name is historical, the semantics are the week).
+
+markets:
+  - id: market:gspc
+    name: S&P 500
+    ticker: "^GSPC"
+    market_type: equity_index
+    trading_calendar: us
+    inception_date: "1871-01-01"   # Shiller monthly series; daily index from 1927
+    native_frequency: '{"1871": "month", "1927": "day"}'
+  - id: market:gdaxi
+    name: DAX (Germany)
+    ticker: "^GDAXI"
+    market_type: equity_index
+    trading_calendar: us
+    inception_date: "1987-12-30"
+    native_frequency: '{"1988": "day"}'
+    note: >-
+      The continent's transmission centre — the index most exposed to
+      industrial energy costs, and therefore the one that prices a gas
+      shock rather than merely reporting it.
+  - id: market:ftse
+    name: FTSE 100
+    ticker: "^FTSE"
+    market_type: equity_index
+    trading_calendar: us
+    inception_date: "1984-01-03"
+    native_frequency: '{"1984": "day"}'
+  - id: market:fchi
+    name: CAC 40
+    ticker: "^FCHI"
+    market_type: equity_index
+    trading_calendar: us
+    inception_date: "1987-12-31"
+    native_frequency: '{"1990": "day"}'
+  - id: market:imoex
+    name: MOEX Russia Index
+    # THE SANCTIONS-SHAPED HOLE, kept deliberately — same posture as the MENA
+    # pack's Abu Dhabi ticker. Yahoo's coverage of Russian domestic indices
+    # became unreliable after the February 2022 sanctions and the exchange's
+    # closure, so the engine will record skipped_no_data for recent events
+    # rather than measuring. That absence IS the finding: the most direct
+    # sensor for Russian risk stopped being observable at exactly the moment
+    # the risk materialised, and the depth report is what surfaces it.
+    ticker: "IMOEX.ME"
+    market_type: equity_index
+    trading_calendar: us
+    inception_date: "1997-09-22"
+    native_frequency: '{"1998": "day"}'
+  - id: market:wheat
+    name: Wheat (CBOT front month)
+    ticker: "ZW=F"
+    market_type: commodity
+    trading_calendar: global_futures
+    inception_date: "2000-01-04"
+    native_frequency: '{"2000": "day"}'
+    note: >-
+      The Black Sea channel. Russia and Ukraine together move roughly a
+      quarter of the world's traded wheat, which makes this contract the
+      most direct price of a war on the steppe.
+  - id: market:natgas
+    name: Natural gas (Henry Hub front month)
+    ticker: "NG=F"
+    market_type: commodity
+    trading_calendar: global_futures
+    inception_date: "2000-08-23"
+    native_frequency: '{"2000": "day"}'
+    note: >-
+      A PROXY, and named as one. The European price is TTF, whose free-feed
+      history is too thin to measure against; Henry Hub carries the LNG
+      substitution channel and nothing more. Read it as the global gas
+      complex, not as the German industrial gas bill.
+  - id: market:brent
+    name: Brent crude
+    ticker: "BZ=F"
+    market_type: commodity
+    trading_calendar: global_futures
+    inception_date: "1861-01-01"   # long-run annual oil series; futures from 1988
+    native_frequency: '{"1861": "year", "1988": "day"}'
+  - id: market:gold
+    name: Gold
+    ticker: "GC=F"
+    market_type: commodity
+    trading_calendar: global_futures
+    inception_date: "1905-01-01"   # long-run annual gold price; futures from 1974
+    native_frequency: '{"1905": "year", "1974": "day"}'
+  - id: market:dgs10
+    name: US 10-Year Treasury yield
+    ticker: DGS10
+    market_type: sovereign_yield
+    trading_calendar: us
+    inception_date: "1871-01-01"   # Shiller long-rate proxy monthly; FRED daily from 1962
+    native_frequency: '{"1871": "month", "1962": "day"}'

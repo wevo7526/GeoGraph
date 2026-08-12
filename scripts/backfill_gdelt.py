@@ -122,6 +122,7 @@ def main() -> None:
                     actors_by_iso3=actors_by_iso3,
                     region_pack=pack.name,
                     min_mentions=args.min_mentions,
+                    external_powers=pack.external_powers,
                 )
             gdelt.write_events(conn, events, edges)
             total_written, total_dropped = result.written, result.dropped
@@ -139,6 +140,7 @@ def main() -> None:
                                 actors_by_iso3=actors_by_iso3,
                                 region_pack=pack.name,
                                 min_mentions=args.min_mentions,
+                                external_powers=pack.external_powers,
                                 keep_lines=exporter,
                             )
                         else:
@@ -147,6 +149,7 @@ def main() -> None:
                                 actors_by_iso3=actors_by_iso3,
                                 region_pack=pack.name,
                                 min_mentions=args.min_mentions,
+                                external_powers=pack.external_powers,
                             )
                 gdelt.write_events(conn, events, edges)
                 total_written += result.written

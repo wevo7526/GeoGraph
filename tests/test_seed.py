@@ -163,8 +163,11 @@ def test_an_event_citing_a_ghost_actor_fails_the_seed(conn, mena):
 
 
 def test_boot_seeds_every_complete_pack_by_default(monkeypatch):
+    # The rule, not a roster: boot seeds whatever satisfies the contract, so a
+    # new pack is picked up by existing, not by editing this list.
     monkeypatch.delenv("GEOGRAPH_SEED_PACKS", raising=False)
-    assert boot._pack_names() == packs.available() == ["china", "mena"]
+    assert boot._pack_names() == packs.available()
+    assert {"china", "eurasia", "mena"} <= set(packs.available())
 
 
 def test_boot_honours_an_explicit_pack_list(monkeypatch):

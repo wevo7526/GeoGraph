@@ -1,0 +1,346 @@
+# Eurasia pack — region three (build-spec §16). Russia, Europe and the
+# stepland: the continental system whose dyads the 20th century was organised
+# around, and whose energy and grain channels the 21st century prices.
+#
+# COW ccodes anchor states to the deep tier; iso3 anchors them to GDELT's
+# country codes. Deep-tier ingestion EXTENDS this roster from COW state-system
+# membership — this file seeds the modern network, it does not bound the
+# archive.
+#
+# STATES THAT NO LONGER EXIST CARRY THEIR WINDOWS AND NO iso3. The two German
+# states and Czechoslovakia are real COW members with real dyads, but GDELT's
+# country vocabulary is modern: DEU means Germany at every date, so giving the
+# GDR an iso3 would silently route 1980s wire traffic to a state the coder
+# never meant. The window (`state_from`/`state_to`) is what makes them
+# queryable at the dates they existed.
+
+actors:
+  # ── the external anchor ────────────────────────────────────────────────────
+  - id: actor:cow-2
+    name: United States
+    actor_type: state
+    cow_ccode: 2
+    iso3: USA
+
+  # ── Russia and the western republics ───────────────────────────────────────
+  - id: actor:cow-365
+    name: Russia
+    actor_type: state
+    cow_ccode: 365
+    iso3: RUS
+    note: >-
+      COW carries 365 continuously across the Empire, the USSR and the
+      Federation — the archive follows COW's coding, so a 1939 event and a
+      2022 event sit on the same node and the dyad baselines are comparable.
+  - id: actor:cow-369
+    name: Ukraine
+    actor_type: state
+    cow_ccode: 369
+    iso3: UKR
+    state_from: "1991-12-01"
+  - id: actor:cow-370
+    name: Belarus
+    actor_type: state
+    cow_ccode: 370
+    iso3: BLR
+    state_from: "1991-12-08"
+  - id: actor:cow-359
+    name: Moldova
+    actor_type: state
+    cow_ccode: 359
+    iso3: MDA
+    state_from: "1991-08-27"
+
+  # ── the European core ──────────────────────────────────────────────────────
+  - id: actor:cow-200
+    name: United Kingdom
+    actor_type: state
+    cow_ccode: 200
+    iso3: GBR
+  - id: actor:cow-220
+    name: France
+    actor_type: state
+    cow_ccode: 220
+    iso3: FRA
+  - id: actor:cow-255
+    name: Germany
+    actor_type: state
+    cow_ccode: 255
+    iso3: DEU
+    note: >-
+      COW's 255 is the German Empire through 1945 and reunified Germany from
+      1990; the 1955-1990 gap is held by 260 and 265 below.
+  - id: actor:cow-260
+    name: German Federal Republic
+    actor_type: state
+    cow_ccode: 260
+    state_from: "1955-05-05"
+    state_to: "1990-10-03"
+    note: No iso3 — see the header; GDELT's DEU is modern Germany at every date.
+  - id: actor:cow-265
+    name: German Democratic Republic
+    actor_type: state
+    cow_ccode: 265
+    state_from: "1954-03-25"
+    state_to: "1990-10-03"
+    note: No iso3 — see the header.
+  - id: actor:cow-325
+    name: Italy
+    actor_type: state
+    cow_ccode: 325
+    iso3: ITA
+  - id: actor:cow-305
+    name: Austria
+    actor_type: state
+    cow_ccode: 305
+    iso3: AUT
+
+  # ── the Visegrád belt and the Balkans gate ─────────────────────────────────
+  - id: actor:cow-290
+    name: Poland
+    actor_type: state
+    cow_ccode: 290
+    iso3: POL
+  - id: actor:cow-310
+    name: Hungary
+    actor_type: state
+    cow_ccode: 310
+    iso3: HUN
+  - id: actor:cow-315
+    name: Czechoslovakia
+    actor_type: state
+    cow_ccode: 315
+    state_from: "1918-10-28"
+    state_to: "1992-12-31"
+    note: No iso3 — the successor states carry the modern wire traffic.
+  - id: actor:cow-316
+    name: Czech Republic
+    actor_type: state
+    cow_ccode: 316
+    iso3: CZE
+    state_from: "1993-01-01"
+  - id: actor:cow-317
+    name: Slovakia
+    actor_type: state
+    cow_ccode: 317
+    iso3: SVK
+    state_from: "1993-01-01"
+  - id: actor:cow-360
+    name: Romania
+    actor_type: state
+    cow_ccode: 360
+    iso3: ROU
+  - id: actor:cow-355
+    name: Bulgaria
+    actor_type: state
+    cow_ccode: 355
+    iso3: BGR
+  - id: actor:cow-345
+    name: Serbia
+    actor_type: state
+    cow_ccode: 345
+    iso3: SRB
+    note: COW carries 345 across Serbia, the Kingdom of Yugoslavia and the FRY.
+
+  # ── the Baltic and Nordic rim ──────────────────────────────────────────────
+  - id: actor:cow-366
+    name: Estonia
+    actor_type: state
+    cow_ccode: 366
+    iso3: EST
+  - id: actor:cow-367
+    name: Latvia
+    actor_type: state
+    cow_ccode: 367
+    iso3: LVA
+  - id: actor:cow-368
+    name: Lithuania
+    actor_type: state
+    cow_ccode: 368
+    iso3: LTU
+  - id: actor:cow-375
+    name: Finland
+    actor_type: state
+    cow_ccode: 375
+    iso3: FIN
+  - id: actor:cow-380
+    name: Sweden
+    actor_type: state
+    cow_ccode: 380
+    iso3: SWE
+  - id: actor:cow-385
+    name: Norway
+    actor_type: state
+    cow_ccode: 385
+    iso3: NOR
+
+  # ── the Caucasus ───────────────────────────────────────────────────────────
+  - id: actor:cow-371
+    name: Armenia
+    actor_type: state
+    cow_ccode: 371
+    iso3: ARM
+  - id: actor:cow-372
+    name: Georgia
+    actor_type: state
+    cow_ccode: 372
+    iso3: GEO
+  - id: actor:cow-373
+    name: Azerbaijan
+    actor_type: state
+    cow_ccode: 373
+    iso3: AZE
+  - id: actor:cow-640
+    name: Turkey
+    actor_type: state
+    cow_ccode: 640
+    iso3: TUR
+    note: >-
+      The hinge actor — NATO's southern flank, the straits, and the Middle
+      Corridor's western gate. Shared with no other pack's roster by design.
+
+  # ── the stepland ───────────────────────────────────────────────────────────
+  - id: actor:cow-705
+    name: Kazakhstan
+    actor_type: state
+    cow_ccode: 705
+    iso3: KAZ
+  - id: actor:cow-704
+    name: Uzbekistan
+    actor_type: state
+    cow_ccode: 704
+    iso3: UZB
+  - id: actor:cow-703
+    name: Kyrgyzstan
+    actor_type: state
+    cow_ccode: 703
+    iso3: KGZ
+  - id: actor:cow-702
+    name: Tajikistan
+    actor_type: state
+    cow_ccode: 702
+    iso3: TJK
+  - id: actor:cow-701
+    name: Turkmenistan
+    actor_type: state
+    cow_ccode: 701
+    iso3: TKM
+  - id: actor:cow-700
+    name: Afghanistan
+    actor_type: state
+    cow_ccode: 700
+    iso3: AFG
+    note: >-
+      In the roster because GDELT's record opens in 1979 — the year the
+      steppe's southern edge became the Soviet Union's war.
+
+  # ── sovereign wealth funds ─────────────────────────────────────────────────
+  - id: actor:swf-nbim
+    name: Norges Bank Investment Management (GPFG)
+    actor_type: swf
+    state_from: "1996-05-31"
+    note: >-
+      The largest sovereign fund in the world, and — unlike the Gulf and
+      Chinese funds — a registered 13F filer. See assets.yaml.
+  - id: actor:swf-nwf-russia
+    name: National Wealth Fund of the Russian Federation
+    actor_type: swf
+    state_from: "2008-02-01"
+  - id: actor:swf-samruk
+    name: Samruk-Kazyna
+    actor_type: swf
+    state_from: "2008-11-03"
+  - id: actor:swf-sofaz
+    name: State Oil Fund of Azerbaijan
+    actor_type: swf
+    state_from: "1999-12-29"
+
+# ── the GDELT externality declaration ────────────────────────────────────────
+# EMPTY, AND THAT IS THE POINT. The loader's default treats USA–RUS wire
+# traffic as an external-power pair and drops it, which is right for a lens
+# on the Gulf or the Strait — there it is flood noise about somewhere else.
+# HERE IT IS THE SPINE. A Eurasia archive that dropped the Washington–Moscow
+# dyad would be an archive of the Cold War with the Cold War removed.
+external_powers: []
+
+# ── durable relations ────────────────────────────────────────────────────────
+# COW's deep tier already carries the treaty alliances (NATO 1949, the Warsaw
+# Treaty 1955, the post-1999 accessions) and the IGO layer. Curated here: what
+# COW cannot carry — the post-1991 rivalries, the statutory commitments short
+# of treaties, and the one trade dependency that became a lever.
+relations:
+  - a: actor:cow-365            # Russia
+    b: actor:cow-369            # Ukraine
+    relation_type: rivalry
+    valid_from: "2014-02-27"
+    source: source:crs-russia-ukraine
+    note: >-
+      Dated to the seizure of the Crimean parliament — the moment the
+      relationship stopped being contested politics and became territorial
+      conflict. The region's defining dyad.
+  - a: actor:cow-365            # Russia
+    b: actor:cow-2              # United States
+    relation_type: rivalry
+    valid_from: "2007-02-10"
+    source: source:crs-russia-ukraine
+    note: >-
+      Dated to the Munich Security Conference speech, where Moscow declared
+      the post-Cold-War settlement unacceptable in as many words. Thaw
+      episodes (the 2009 reset, the 2025 talks) do not end the structure.
+  - a: actor:cow-365            # Russia
+    b: actor:cow-372            # Georgia
+    relation_type: rivalry
+    valid_from: "2008-08-07"
+    source: source:crs-russia-ukraine
+    note: The first post-Soviet war fought to redraw a border by force.
+  - a: actor:cow-371            # Armenia
+    b: actor:cow-373            # Azerbaijan
+    relation_type: rivalry
+    valid_from: "1988-02-20"
+    source: source:crs-russia-ukraine
+    note: >-
+      Nagorno-Karabakh, dated to the oblast soviet's unification vote — the
+      Caucasus dyad that outlived the state both belonged to.
+  - a: actor:cow-365            # Russia
+    b: actor:cow-370            # Belarus
+    relation_type: alliance
+    valid_from: "1999-12-08"
+    source: source:crs-russia-ukraine
+    note: >-
+      The Union State treaty. Deepened into basing and launch territory in
+      2022 — the alliance is why the northern axis existed.
+  - a: actor:cow-2              # United States
+    b: actor:cow-369            # Ukraine
+    relation_type: alliance
+    valid_from: "2021-11-10"
+    source: source:crs-russia-ukraine
+    note: >-
+      The Charter on Strategic Partnership — a commitment explicitly short of
+      an Article 5 guarantee, and the ambiguity is exactly what the dyad
+      prices, the same way the Taiwan Relations Act is priced in the China
+      lens.
+  - a: actor:cow-255            # Germany
+    b: actor:cow-365            # Russia
+    relation_type: trade
+    valid_from: "2011-11-08"
+    source: source:nato-enlargement
+    note: >-
+      Nord Stream 1 enters service. Held as STRUCTURE rather than commerce
+      because that is what it became: the dependency that priced every
+      European escalation from 2014 onward.
+  - a: actor:cow-365            # Russia
+    b: actor:cow-705            # Kazakhstan
+    relation_type: alliance
+    valid_from: "1992-05-15"
+    source: source:nato-enlargement
+    note: >-
+      The Collective Security Treaty — the stepland's standing structure, and
+      the frame the January 2022 Almaty deployment ran through.
+
+# ── IGO spotlight ────────────────────────────────────────────────────────────
+# The organisations whose membership edges the COW IGO layer supplies; listed
+# so a reader of this pack knows which blocs the network view is drawing.
+igo_spotlight:
+  - actor:igo-nato
+  - actor:igo-eu
+  - actor:igo-osce

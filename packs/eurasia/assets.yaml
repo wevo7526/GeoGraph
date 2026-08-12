@@ -1,0 +1,57 @@
+# Secondary instruments for finer transmission stories. Modern era only;
+# depth-verified on ingest like the markets themselves.
+
+assets:
+  - ticker: EWG
+    name: iShares MSCI Germany
+    note: US-hours German exposure — trades while Frankfurt sleeps, so the
+      lead-lag against ^GDAXI is readable.
+  - ticker: EZU
+    name: iShares MSCI Eurozone
+  - ticker: EPOL
+    name: iShares MSCI Poland
+    note: The frontline economy — the closest listed proxy for eastern-flank risk.
+  - ticker: ITA
+    name: iShares US Aerospace & Defense
+    note: The conflict-persistence read, shared with the MENA and China lenses.
+  - ticker: MOO
+    name: VanEck Agribusiness
+    note: The grain channel's equity leg, beside the ZW=F contract itself.
+  - ticker: URA
+    name: Global X Uranium
+    note: >-
+      The substitution read. Rosatom's enrichment share means an escalation
+      prices this differently from the rest of the energy complex.
+
+# ── paper books ──────────────────────────────────────────────────────────────
+# The fixed paper-trade translation of a near-term forecast (signed weight per
+# ticker, blended by the frozen escalation likelihood p). THIS REGION'S
+# escalation read is a continental supply shock, not a Gulf one: energy and
+# grain up, the industrial index that pays for both down, and the haven long.
+# Reversion prices the normalization. Mechanical, stated once, never fitted,
+# not advice.
+paper_books:
+  escalation:
+    NG=F: 0.25
+    ZW=F: 0.25
+    GC=F: 0.20
+    ^GDAXI: -0.30
+  reversion:
+    ^GDAXI: 0.60
+    ^FCHI: 0.40
+
+# ── 13F filers ───────────────────────────────────────────────────────────────
+# The SWFs whose EDGAR 13F-HR filings become FLOW edges (build-spec §5.2).
+# CIK resolved against EDGAR's company search on 2026-08-12 and pinned here —
+# curated data, never a runtime guess.
+#
+# THIS IS THE FIRST PACK WHOSE SOVEREIGN MONEY IS ACTUALLY VISIBLE. Neither
+# the Gulf funds (ADIA) nor the Chinese ones (CIC, SAFE) file 13F, so those
+# packs record absences; Norges Bank files quarterly for the largest sovereign
+# equity portfolio in the world. The Russian, Kazakh and Azerbaijani funds are
+# DELIBERATELY ABSENT for the opposite reason — NWF and Samruk-Kazyna hold no
+# 13F-reportable US positions, and SOFAZ files none under its own name.
+swf_filers:
+  - actor: actor:swf-nbim
+    cik: 1374170
+    name: Norges Bank

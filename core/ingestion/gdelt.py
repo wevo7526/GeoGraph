@@ -68,6 +68,9 @@ _QUAD_CLASS = {
 
 #: Roster members that do not make an event REGIONAL by themselves — the
 #: external powers whose mutual wire traffic would otherwise flood the pack.
+#: THE DEFAULT, not the rule: a pack declares its own set in actors.yaml
+#: (`external_powers`), because externality is a property of the lens — the
+#: USA–RUS dyad is noise to MENA and the spine of Eurasia.
 EXTERNAL_POWERS = frozenset({"USA", "RUS"})
 
 
@@ -78,6 +81,7 @@ def parse_lines(
     region_pack: str,
     min_mentions: int = 10,
     keep_lines: Any = None,
+    external_powers: frozenset[str] = EXTERNAL_POWERS,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]], LoadResult]:
     """Filter and shape raw export lines → (event rows, edge rows, result).
 
@@ -106,7 +110,7 @@ def parse_lines(
         if a1 not in actors_by_iso3 or a2 not in actors_by_iso3 or a1 == a2:
             result.drop("actors outside the pack roster")
             continue
-        if a1 in EXTERNAL_POWERS and a2 in EXTERNAL_POWERS:
+        if a1 in external_powers and a2 in external_powers:
             result.drop("external-power pair — not a regional event")
             continue
         code = fields[_EVENT_CODE]

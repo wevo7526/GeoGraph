@@ -52,20 +52,27 @@ markets:
     trading_calendar: us
     inception_date: "1983-01-04"
     native_frequency: '{"1996": "day"}'
+  # The two shared COMMODITY nodes carry the MENA pack's description verbatim,
+  # and must keep carrying it. They were stated differently here until
+  # 2026-08-12 (a 1988 inception for Brent, a `us` calendar for both), which
+  # was inert only by accident: packs seed alphabetically, so MENA ran last
+  # and its values were the ones the engine actually measured against. Two
+  # descriptions of one node is one description plus a silent loser —
+  # `test_shared_market_nodes_agree_across_packs` now refuses the divergence.
   - id: market:brent
-    name: Brent crude (front month)
+    name: Brent crude
     ticker: "BZ=F"
     market_type: commodity
-    trading_calendar: us
-    inception_date: "1988-06-23"
-    native_frequency: '{"2007": "day"}'
+    trading_calendar: global_futures
+    inception_date: "1861-01-01"   # long-run annual oil series; futures from 1988
+    native_frequency: '{"1861": "year", "1988": "day"}'
   - id: market:gold
-    name: Gold (COMEX front month)
+    name: Gold
     ticker: "GC=F"
     market_type: commodity
-    trading_calendar: us
-    inception_date: "1974-12-31"
-    native_frequency: '{"2000": "day"}'
+    trading_calendar: global_futures
+    inception_date: "1905-01-01"   # long-run annual gold price; futures from 1974
+    native_frequency: '{"1905": "year", "1974": "day"}'
   - id: market:dgs10
     name: US 10-Year Treasury yield
     ticker: DGS10

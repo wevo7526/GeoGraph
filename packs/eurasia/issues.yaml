@@ -1,0 +1,35 @@
+# The contested questions actors hold positions on (build-spec §8.1).
+
+issues:
+  - id: issue:ukraine-sovereignty
+    name: Ukrainian sovereignty and borders
+    scale: >-
+      0 = Russian control of the state's direction and territory, 100 = full
+      sovereignty within the 1991 borders. The war is a fight over where on
+      this line the settlement lands, not over whether the line exists.
+  - id: issue:nato-expansion
+    name: The security architecture of eastern Europe
+    scale: >-
+      0 = a recognised Russian sphere with NATO rolled back to its 1997
+      membership, 100 = the open door honoured without qualification.
+  - id: issue:european-energy
+    name: European energy dependence on Russia
+    scale: >-
+      0 = supply and pricing at Moscow's discretion, 100 = a European market
+      that can be indifferent to it. The 2022 rupture moved this variable
+      further and faster than any other in the archive.
+  - id: issue:black-sea-grain
+    name: Black Sea export access
+    scale: 0 = exports closed at will, 100 = freedom of navigation uncontested.
+  - id: issue:caucasus-corridor
+    name: The Caucasus corridor and Nagorno-Karabakh
+    scale: >-
+      0 = transit and enclaves controlled from Moscow, 100 = an open Middle
+      Corridor under settled borders.
+  - id: issue:stepland-alignment
+    name: Central Asian alignment
+    scale: >-
+      0 = the steppe inside a Russian security and export order, 100 = fully
+      multi-vector — Beijing, Brussels, Ankara and Moscow balanced against
+      one another. The region's actual position has been drifting upward
+      since 2022, which is itself a measurable consequence of the war.

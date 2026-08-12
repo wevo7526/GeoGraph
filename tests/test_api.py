@@ -225,11 +225,17 @@ def test_dyads_are_listed_most_conflictual_first(client):
 
 
 def test_the_case_study_lists_itself(client):
+    # Every pack that declares a study appears, keyed to the pack that owns
+    # it. Asserted as a rule over the packs rather than as a fixed roster, so
+    # region four does not fail a test about region one.
     rows = client.get("/api/case-studies").json()["rows"]
-    assert {r["slug"]: r["pack"] for r in rows} == {
-        "fourth-strait-crisis": "china",
-        "twelve-day-war": "mena",
+    expected = {
+        pack.case_study["slug"]: name
+        for name in packs.available()
+        if (pack := packs.load(name)).case_study is not None
     }
+    assert {r["slug"]: r["pack"] for r in rows} == expected
+    assert expected["twelve-day-war"] == "mena"
 
 
 def test_the_case_study_pairs_the_prose_with_the_measured_numbers(client):

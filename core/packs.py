@@ -68,6 +68,20 @@ class Pack:
         return cast(dict[str, dict[str, float]], books) if books else None
 
     @property
+    def external_powers(self) -> frozenset[str]:
+        """Roster members (iso3) that do not make a GDELT event REGIONAL by
+        themselves — their MUTUAL wire traffic is dropped as non-regional.
+
+        Pack-declared because it is a claim about the region, not about the
+        world: USA–RUS traffic is flood noise to the MENA and China lenses and
+        the very spine of a Eurasia lens. The default preserves the packs
+        that predate the key."""
+        declared = self.data["actors"].get("external_powers")
+        if declared is None:
+            return frozenset({"USA", "RUS"})
+        return frozenset(str(code) for code in declared)
+
+    @property
     def case_study(self) -> dict[str, Any] | None:
         """The narrated episode, if the pack declares one.
 

@@ -1,0 +1,234 @@
+# The Eurasia marquee spine — curated, day-resolution, CODED.
+#
+# THE SAME DISCIPLINE AS THE OTHER PACKS: pre-2015 ARMED disputes live in the
+# COW MIDs, and coding them again here would fold a dyad's baseline twice. So
+# the deep rows are diplomatic and economic — the treaties, the partitions and
+# the sanctions — and the armed record before 2015 arrives through the deep
+# tier on its own. Two consequences a reader should expect: the 1948 Berlin
+# blockade, Hungary 1956, Prague 1968, Afghanistan 1979 and Georgia 2008 are
+# NOT in this file, and they are not missing from the archive either.
+#
+# Codes are the archive's CAMEO vocabulary (core/ontology/crosswalks). Two
+# notes on coding choices that would otherwise look arbitrary:
+#   - Multilateral accessions are coded on the BILATERAL dyad where the
+#     commitment actually binds (NATO 1949 on US-UK, the 1999 and 2004 rounds
+#     on the US and the acceding state), the same convention the China pack
+#     used for the WTO.
+#   - The Wall's opening is 081, easing administrative restrictions. CAMEO
+#     puts root 08 (Yield) in MATERIAL cooperation, which reads oddly for a
+#     border crossing and is nonetheless the vocabulary's call, not ours.
+
+events:
+  - id: event:eurasia-1939-molotov-ribbentrop
+    date: "1939-08-23"
+    name: Molotov–Ribbentrop Pact signed in Moscow
+    quad_class: verbal_cooperation
+    cameo: "057"
+    initiator: actor:cow-255
+    target: actor:cow-365
+    note: >-
+      The archive's starkest demonstration that the quad class is a coding of
+      the ACTION, not of the consequence: a signed agreement between two
+      states scores as cooperation on their dyad, and the week it bought was
+      the week the war began. Read the market effect, not the label.
+  - id: event:eurasia-1945-yalta
+    date: "1945-02-11"
+    name: Yalta Conference concludes
+    quad_class: verbal_cooperation
+    cameo: "057"
+    initiator: actor:cow-2
+    target: actor:cow-365
+    note: The postwar order agreed on the US–Soviet dyad that would then contest it.
+  - id: event:eurasia-1949-nato
+    date: "1949-04-04"
+    name: North Atlantic Treaty signed in Washington
+    quad_class: verbal_cooperation
+    cameo: "057"
+    initiator: actor:cow-2
+    target: actor:cow-200
+  - id: event:eurasia-1955-warsaw-pact
+    date: "1955-05-14"
+    name: Warsaw Treaty signed
+    quad_class: verbal_cooperation
+    cameo: "057"
+    initiator: actor:cow-365
+    target: actor:cow-290
+  - id: event:eurasia-1961-berlin-wall
+    date: "1961-08-13"
+    name: Berlin sector border sealed
+    quad_class: material_conflict
+    cameo: "191"
+    initiator: actor:cow-265
+    target: actor:cow-260
+    note: >-
+      Coded on the two German states, which is why both carry COW windows in
+      actors.yaml — the dyad is only queryable at the dates it existed.
+  - id: event:eurasia-1975-helsinki
+    date: "1975-08-01"
+    name: Helsinki Final Act signed
+    quad_class: verbal_cooperation
+    cameo: "057"
+    initiator: actor:cow-365
+    target: actor:cow-2
+    note: Détente's high-water mark, and the human-rights language that outlived it.
+  - id: event:eurasia-1989-wall-opens
+    date: "1989-11-09"
+    name: Berlin crossing points opened
+    quad_class: material_cooperation
+    cameo: "081"
+    initiator: actor:cow-265
+    target: actor:cow-260
+    note: See the header on the 081 coding.
+  - id: event:eurasia-1991-belovezha
+    date: "1991-12-08"
+    name: Belovezha Accords dissolve the Soviet Union
+    quad_class: verbal_cooperation
+    cameo: "057"
+    initiator: actor:cow-365
+    target: actor:cow-369
+    note: >-
+      The dissolution enters the archive as what it formally was — an
+      agreement signed between two of the republics that made it.
+  - id: event:eurasia-1994-budapest
+    date: "1994-12-05"
+    name: Budapest Memorandum on security assurances
+    quad_class: verbal_cooperation
+    cameo: "057"
+    initiator: actor:cow-365
+    target: actor:cow-369
+    note: >-
+      Ukraine surrenders the world's third-largest nuclear arsenal against
+      assurances of its borders. The single most load-bearing row in this
+      file for anything the reasoning layer says about 2022.
+  - id: event:eurasia-1999-nato-v4
+    date: "1999-03-12"
+    name: NATO's first eastward enlargement (Poland, Hungary, Czech Republic)
+    quad_class: verbal_cooperation
+    cameo: "057"
+    initiator: actor:cow-2
+    target: actor:cow-290
+  - id: event:eurasia-2004-nato-baltic
+    date: "2004-03-29"
+    name: NATO's Baltic enlargement
+    quad_class: verbal_cooperation
+    cameo: "057"
+    initiator: actor:cow-2
+    target: actor:cow-368
+    note: Seven states at once — the round that put the alliance on Russia's border.
+  - id: event:eurasia-2006-gas-cutoff
+    date: "2006-01-01"
+    name: Russia halts gas deliveries through Ukraine
+    quad_class: material_conflict
+    cameo: "163"
+    initiator: actor:cow-365
+    target: actor:cow-369
+    note: >-
+      The first time the pipeline was used openly as an instrument. Europe
+      priced it as a commercial dispute; the archive codes it as what the
+      action was.
+  - id: event:eurasia-2014-sectoral-sanctions
+    date: "2014-07-29"
+    name: US and EU sectoral sanctions on Russia
+    quad_class: material_conflict
+    cameo: "163"
+    initiator: actor:cow-2
+    target: actor:cow-365
+    note: >-
+      The economic answer to Crimea and the Donbas, coded here rather than
+      the annexation itself — 2014 is inside MID coverage, the sanctions are
+      not a militarized dispute, and this is the row that does not double-fold.
+  - id: event:eurasia-2022-invasion
+    date: "2022-02-24"
+    name: Russia invades Ukraine
+    quad_class: material_conflict
+    cameo: "190"
+    initiator: actor:cow-365
+    target: actor:cow-369
+    phase0_candidate: true
+    note: >-
+      The largest interstate war in Europe since 1945, and the first event in
+      the archive whose transmission runs through every channel this pack
+      carries at once — energy, grain, the industrial index and the haven.
+  - id: event:eurasia-2022-reserve-freeze
+    date: "2022-02-26"
+    name: Russian central-bank reserves frozen; banks cut from SWIFT
+    quad_class: material_conflict
+    cameo: "163"
+    initiator: actor:cow-2
+    target: actor:cow-365
+    phase0_candidate: true
+    note: >-
+      Roughly half of Russia's reserves immobilised over a weekend. The
+      case study's second half: the financial system used as a weapon
+      against a state that had spent a decade preparing for sanctions on
+      everything except its reserves.
+  - id: event:eurasia-2022-mobilization
+    date: "2022-09-21"
+    name: Russian partial mobilization announced
+    quad_class: material_conflict
+    cameo: "153"
+    initiator: actor:cow-365
+    target: actor:cow-369
+  - id: event:eurasia-2023-grain-deal-ends
+    date: "2023-07-17"
+    name: Russia withdraws from the Black Sea Grain Initiative
+    quad_class: material_conflict
+    cameo: "163"
+    initiator: actor:cow-365
+    target: actor:cow-369
+    note: The grain channel closed deliberately — ZW=F is the sensor.
+  - id: event:eurasia-2024-sweden-nato
+    date: "2024-03-07"
+    name: Sweden accedes to NATO
+    quad_class: verbal_cooperation
+    cameo: "057"
+    initiator: actor:cow-2
+    target: actor:cow-380
+    note: >-
+      Two centuries of non-alignment ended as a consequence of the invasion —
+      the clearest case in the archive of an escalation producing the exact
+      structural outcome it was meant to prevent.
+  - id: event:eurasia-2025-riyadh-talks
+    date: "2025-02-18"
+    name: US–Russia talks on Ukraine open in Riyadh
+    quad_class: verbal_cooperation
+    cameo: "046"
+    initiator: actor:cow-2
+    target: actor:cow-365
+    note: >-
+      The first direct bilateral engagement of the war, held without Ukraine
+      in the room. Coded as negotiation on the US–Russia dyad, which is
+      literally what it was.
+
+case_study:
+  slug: february-rupture
+  title: The February Rupture
+  dek: >-
+    An invasion and a reserve freeze, two days apart. One episode, two dyads,
+    and the first time the archive can watch a war and a financial weapon
+    price the same continent through four separate channels.
+  summary: >-
+    Russian forces crossed into Ukraine on 24 February 2022; on 26 February
+    the United States and its partners immobilised roughly half of Russia's
+    central-bank reserves and cut major banks from SWIFT. The archive codes
+    the pair as they were — conventional force on the Russia–Ukraine dyad,
+    answered by economic coercion on the US–Russia dyad — and measures each
+    against the baseline its OWN dyad had before the week began.
+  reading: >-
+    Watch the channels separate. Gas and wheat price the supply shock, the
+    DAX prices the industrial economy that pays for it, and gold prices the
+    exit — so the same episode produces effects of opposite sign in one
+    window, which is the point of measuring rather than asserting. Then note
+    what the archive CANNOT show you: MOEX is the most direct sensor for
+    Russian risk in this pack, and it is exactly the series that stopped
+    being observable when the risk arrived. The skip is the finding.
+  caveat: >-
+    Two honesty notes. The gas leg is Henry Hub, a proxy for the European
+    price rather than the price itself — the free feed's TTF history is too
+    thin to measure, and naming the substitute beats implying a precision the
+    data does not have. And the two events are two days apart, so their
+    windows overlap: the engine flags the overlap on every affected edge
+    rather than averaging an invasion and a sanctions package into one number.
+  events:
+    - event:eurasia-2022-invasion
+    - event:eurasia-2022-reserve-freeze

@@ -116,6 +116,9 @@ codes:
   "057":
     label: Sign formal agreement
     goldstein: 8.0
+  "081":
+    label: Ease administrative sanctions, not specified
+    goldstein: 5.0
   "084":
     label: Return, release
     goldstein: 7.0

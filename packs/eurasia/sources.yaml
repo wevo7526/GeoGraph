@@ -1,0 +1,65 @@
+# The source registry — every ingested node and edge cites one (§17).
+
+sources:
+  # ── deep tier (same registry ids as every pack; merges are idempotent) ─────
+  - id: source:cow-mid
+    name: COW Militarized Interstate Disputes v5.0
+    kind: dataset
+    url: https://correlatesofwar.org/data-sets/mids/
+    citation: Palmer et al., "The MID5 Dataset, 2011-2014", CMPS 39(4).
+  - id: source:cow-states
+    name: COW State System Membership
+    kind: dataset
+    url: https://correlatesofwar.org/data-sets/state-system-membership/
+    citation: Correlates of War Project, State System Membership List, v2016.
+  - id: source:cow-alliances
+    name: COW Formal Alliances v4.1
+    kind: dataset
+    url: https://correlatesofwar.org/data-sets/formal-alliances/
+    citation: Gibler (2009), International Military Alliances 1648-2008.
+
+  # ── modern tier ────────────────────────────────────────────────────────────
+  - id: source:gdelt
+    name: GDELT 1.0 events (raw export files)
+    kind: dataset
+    url: http://data.gdeltproject.org/events/index.html
+    citation: Leetaru & Schrodt (2013), GDELT. ISA Annual Convention.
+  - id: source:yfinance
+    name: Yahoo Finance daily bars
+    kind: feed
+    url: https://finance.yahoo.com/
+    citation: Accessed via yfinance; depth verified per ticker at ingest.
+  - id: source:fred
+    name: FRED (DGS2, DGS10)
+    kind: feed
+    url: https://fred.stlouisfed.org/
+    citation: Board of Governors via FRED.
+
+  # ── curated context for this lens ──────────────────────────────────────────
+  - id: source:crs-russia-ukraine
+    name: CRS — Russia, Ukraine and the post-Soviet space
+    kind: report
+    url: https://crsreports.congress.gov/
+    citation: >-
+      Congressional Research Service, the standing Russia/Ukraine product
+      series (updated periodically): the rivalry's dating, the Charter on
+      Strategic Partnership's limits, and the sanctions architecture. Cited
+      as a series rather than one product number because the reports are
+      revised continuously and the pack's claims are the durable ones.
+  - id: source:nato-enlargement
+    name: NATO — Enlargement and Article 10
+    kind: report
+    url: https://www.nato.int/cps/en/natohq/topics_49212.htm
+    citation: >-
+      NATO's own record of accession dates and the open-door policy, used for
+      the enlargement events and the structural reading of the European
+      energy dependency that grew beside them.
+
+  # ── this pack ──────────────────────────────────────────────────────────────
+  - id: source:eurasia-marquee
+    name: Eurasia marquee event spine (curated)
+    kind: pack
+    url: packs/eurasia/marquee_events.yaml
+    citation: >-
+      Curated by the GeoGraph authors; each event's own provenance is the
+      public record.

@@ -1,0 +1,62 @@
+# Starter latent-variable priors (build-spec §4): DISTRIBUTIONS, not points.
+# Honest guesses to give the sensor loop something to update, wide where
+# knowledge is thin; method='prior'.
+
+priors:
+  - actor: actor:cow-365        # Russia
+    issue: issue:ukraine-sovereignty
+    attribute: resolve
+    mean: 0.92
+    std: 0.08
+    rationale: >-
+      Revealed by cost borne rather than by statement: three years of
+      casualties and a war economy price a commitment that survives outcomes
+      no pre-war analysis expected it to survive.
+  - actor: actor:cow-2          # United States
+    issue: issue:ukraine-sovereignty
+    attribute: resolve
+    mean: 0.55
+    std: 0.30
+    rationale: >-
+      The widest distribution in the pack, and deliberately so. Support has
+      been substantial and conditional at once, and it re-prices with each
+      administration — a wide std IS the estimate, not a failure to make one.
+  - actor: actor:cow-255        # Germany
+    issue: issue:european-energy
+    attribute: position
+    mean: 70
+    std: 15
+    rationale: >-
+      Moved further than any other actor in the archive: from roughly 20 on
+      this scale in 2021 to the high sixties after the pipelines stopped. The
+      std stays wide because the industrial cost of holding the position is
+      still being discovered.
+  - actor: actor:cow-365        # Russia
+    issue: issue:nato-expansion
+    attribute: salience
+    mean: 0.88
+    std: 0.10
+    rationale: >-
+      Stated as a first-order interest since 2007 and acted on twice. High
+      salience, and note that this is separate from resolve — how much the
+      question matters, not what will be spent on it.
+  - actor: actor:cow-705        # Kazakhstan
+    issue: issue:stepland-alignment
+    attribute: position
+    mean: 60
+    std: 20
+    rationale: >-
+      Multi-vector in doctrine and increasingly in practice — sanctions
+      compliance beside CSTO membership. Wide: the steppe's hedging is the
+      least legible behaviour in the region and the most likely to be
+      revised by the sensor loop.
+  - actor: actor:cow-369        # Ukraine
+    issue: issue:black-sea-grain
+    attribute: clout
+    mean: 0.45
+    std: 0.20
+    rationale: >-
+      Export share gives leverage only while the corridor is navigable, so
+      this attribute is unusually state-dependent — the 2023 corridor
+      collapse and its partial reopening are exactly the realized outcomes
+      the loop should update on.
