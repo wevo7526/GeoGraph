@@ -13,11 +13,24 @@ def test_mena_satisfies_the_contract():
     assert set(pack.data) == {f.removesuffix(".yaml") for f in packs.PACK_FILES}
 
 
-def test_china_is_absent_not_broken():
-    # Phase 6 lands the files; until then the pack must not be listed.
-    assert packs.available() == ["mena"]
+def test_china_satisfies_the_contract():
+    # Phase 6 landed the files; the P6 exit test is that the core reads them
+    # through the same contract with no special-casing.
+    assert packs.available() == ["china", "mena"]
+    pack = packs.load("china")
+    assert set(pack.data) == {f.removesuffix(".yaml") for f in packs.PACK_FILES}
+
+
+def test_an_incomplete_pack_is_absent_not_broken(tmp_path, monkeypatch):
+    # The original china condition, preserved as the general rule: a directory
+    # missing contract files must not be listed, and loading it names what's
+    # missing instead of half-working.
+    (tmp_path / "packs" / "partial").mkdir(parents=True)
+    (tmp_path / "packs" / "partial" / "sources.yaml").write_text("sources: []\n")
+    monkeypatch.setattr(packs, "PACKS_DIR", tmp_path / "packs")
+    assert packs.available() == []
     with pytest.raises(packs.PackError, match="marquee_events.yaml|actors.yaml"):
-        packs.load("china")
+        packs.load("partial")
 
 
 def test_every_market_carries_calendar_and_inception():

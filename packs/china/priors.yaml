@@ -1,0 +1,33 @@
+# Starter latent-variable priors (build-spec §4): DISTRIBUTIONS, not points.
+# Honest guesses to give the sensor loop something to update, wide where
+# knowledge is thin; method='prior'.
+
+priors:
+  - actor: actor:cow-710        # China
+    issue: issue:taiwan-strait
+    attribute: resolve
+    mean: 0.90
+    std: 0.10
+    rationale: >-
+      Stated core interest across every leadership generation; the wide-open
+      question is timing, not commitment — hence low std on resolve itself.
+  - actor: actor:cow-2          # United States
+    issue: issue:taiwan-strait
+    attribute: resolve
+    mean: 0.60
+    std: 0.25
+    rationale: >-
+      Strategic ambiguity IS a wide distribution — the TRA commits less than
+      a treaty and administrations price it differently.
+  - actor: actor:cow-713        # Taiwan
+    issue: issue:semiconductor-supply
+    attribute: clout
+    mean: 0.85
+    std: 0.10
+    rationale: The foundry concentration is the island's structural leverage.
+  - actor: actor:cow-710
+    issue: issue:south-china-sea
+    attribute: position
+    mean: 15
+    std: 10
+    rationale: Nine-dash enforcement in practice; arbitration rejected in word and deed.

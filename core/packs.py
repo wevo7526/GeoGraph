@@ -72,8 +72,7 @@ class Pack:
 
 def available() -> list[str]:
     """Pack names that satisfy the contract completely. A half-finished pack
-    directory (packs/china before Phase 6) is simply not listed — absent, not
-    broken."""
+    directory is simply not listed — absent, not broken."""
     if not PACKS_DIR.exists():
         return []
     return sorted(

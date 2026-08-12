@@ -1,0 +1,124 @@
+# China pack — region two (build-spec §16, Phase 6). The Taiwan Strait is the
+# flagship second story, and THE PACK PROVES THE CONTRACT: the core runs
+# against this file unchanged or the contract is broken.
+#
+# COW ccodes anchor states to the deep tier; iso3 anchors them to GDELT's
+# country codes. Deep-tier ingestion EXTENDS this roster from COW state-system
+# membership — this file seeds the modern network, it does not bound the
+# archive.
+
+actors:
+  # ── states ─────────────────────────────────────────────────────────────────
+  - id: actor:cow-2
+    name: United States
+    actor_type: state
+    cow_ccode: 2
+    iso3: USA
+  - id: actor:cow-365
+    name: Russia
+    actor_type: state
+    cow_ccode: 365
+    iso3: RUS
+  - id: actor:cow-710
+    name: China
+    actor_type: state
+    cow_ccode: 710
+    iso3: CHN
+  - id: actor:cow-713
+    name: Taiwan
+    actor_type: state
+    cow_ccode: 713
+    iso3: TWN
+    note: >-
+      COW carries Taiwan as a system member from 1949; the archive follows
+      COW's coding and takes no position the dataset does not take.
+  - id: actor:cow-731
+    name: North Korea
+    actor_type: state
+    cow_ccode: 731
+    iso3: PRK
+  - id: actor:cow-732
+    name: South Korea
+    actor_type: state
+    cow_ccode: 732
+    iso3: KOR
+  - id: actor:cow-740
+    name: Japan
+    actor_type: state
+    cow_ccode: 740
+    iso3: JPN
+  - id: actor:cow-750
+    name: India
+    actor_type: state
+    cow_ccode: 750
+    iso3: IND
+  - id: actor:cow-816
+    name: Vietnam
+    actor_type: state
+    cow_ccode: 816
+    iso3: VNM
+  - id: actor:cow-840
+    name: Philippines
+    actor_type: state
+    cow_ccode: 840
+    iso3: PHL
+  - id: actor:cow-900
+    name: Australia
+    actor_type: state
+    cow_ccode: 900
+    iso3: AUS
+
+  # ── sovereign wealth funds ─────────────────────────────────────────────────
+  - id: actor:swf-cic
+    name: China Investment Corporation
+    actor_type: swf
+    state_from: "2007-09-29"
+  - id: actor:swf-safe
+    name: SAFE Investment Company
+    actor_type: swf
+    state_from: "1997"
+  - id: actor:swf-nssf
+    name: National Social Security Fund (China)
+    actor_type: swf
+    state_from: "2000-08"
+
+# ── durable relations ────────────────────────────────────────────────────────
+# COW's deep tier already carries the treaty alliances (US–Japan, US–ROK,
+# US–Philippines, US–Taiwan 1954–79, China–DPRK 1961) and the IGO layer.
+# Curated here: what COW cannot carry — the post-1979 Taiwan commitment and
+# the standing rivalries the region's story runs on.
+relations:
+  - a: actor:cow-2              # United States
+    b: actor:cow-713            # Taiwan
+    relation_type: alliance
+    valid_from: "1979-04-10"
+    source: source:crs-taiwan
+    note: >-
+      The Taiwan Relations Act — a statutory commitment short of a mutual
+      defense treaty, which is exactly the ambiguity the strait prices.
+  - a: actor:cow-710            # China
+    b: actor:cow-713            # Taiwan
+    relation_type: rivalry
+    valid_from: "1949-12-07"
+    source: source:crs-taiwan
+    note: The unresolved civil war — the region's defining dyad.
+  - a: actor:cow-731            # North Korea
+    b: actor:cow-732            # South Korea
+    relation_type: rivalry
+    valid_from: "1948"
+    source: source:crs-taiwan
+    note: Armistice, not peace; the peninsula's baseline is the 1953 line.
+  - a: actor:cow-710            # China
+    b: actor:cow-2              # United States
+    relation_type: rivalry
+    valid_from: "2018-03-22"
+    source: source:crs-taiwan
+    note: >-
+      Dated to the Section 301 tariffs — the moment strategic competition
+      became declared policy on both sides; thaw episodes do not end the
+      structure.
+
+# ── IGO spotlight ────────────────────────────────────────────────────────────
+igo_spotlight:
+  - actor:igo-asean
+  - actor:igo-apec

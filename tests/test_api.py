@@ -226,8 +226,10 @@ def test_dyads_are_listed_most_conflictual_first(client):
 
 def test_the_case_study_lists_itself(client):
     rows = client.get("/api/case-studies").json()["rows"]
-    assert [r["slug"] for r in rows] == ["twelve-day-war"]
-    assert rows[0]["pack"] == "mena"
+    assert {r["slug"]: r["pack"] for r in rows} == {
+        "fourth-strait-crisis": "china",
+        "twelve-day-war": "mena",
+    }
 
 
 def test_the_case_study_pairs_the_prose_with_the_measured_numbers(client):

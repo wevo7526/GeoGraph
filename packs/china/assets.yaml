@@ -1,0 +1,26 @@
+# Secondary instruments for finer transmission stories. Modern era only;
+# depth-verified on ingest like the markets themselves.
+
+assets:
+  - ticker: FXI
+    name: iShares China Large-Cap
+    note: US-hours China exposure — trades while Shanghai sleeps.
+  - ticker: EWT
+    name: iShares MSCI Taiwan
+    note: The strait's US-hours sensor; TSMC-heavy by construction.
+  - ticker: EWJ
+    name: iShares MSCI Japan
+  - ticker: SMH
+    name: VanEck Semiconductor
+    note: The supply-chain read — where an export-control shock shows first.
+  - ticker: ITA
+    name: iShares US Aerospace & Defense
+    note: The conflict-persistence read, shared with the MENA lens.
+
+# ── 13F filers ───────────────────────────────────────────────────────────────
+# DELIBERATELY EMPTY, and the emptiness is the finding (2026-08): neither CIC
+# nor SAFE Investment Company is locatable as a 13F filer under those names
+# on EDGAR's company search — Chinese sovereign US-equity exposure runs
+# through channels 13F does not see. Recording the absence beats inventing a
+# CIK; revisit with EDGAR full-text search when the money layer deepens.
+swf_filers: []

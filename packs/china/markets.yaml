@@ -1,0 +1,75 @@
+# The market universe for the China lens. EVERY MARKET CARRIES ITS INCEPTION
+# DATE, and `native_frequency` is era-keyed — a market founded in 1969 whose
+# feed starts in 1986 has NO measurable era before the feed, and the engine
+# records the skip rather than inventing one (the fidelity gradient).
+#
+# Shared instruments (^GSPC, GC=F, BZ=F, DGS10) reuse the SAME node ids as
+# other packs — one market, one node; the graph's region_pack tag on a shared
+# market is whichever pack seeded last, and nothing load-bearing reads it.
+# Asia-Pacific cash sessions are Monday–Friday; `us` is the archive's
+# Mon–Fri calendar (the name is historical, the semantics are the week).
+
+markets:
+  - id: market:gspc
+    name: S&P 500
+    ticker: "^GSPC"
+    market_type: equity_index
+    trading_calendar: us
+    inception_date: "1871-01-01"
+    native_frequency: '{"1871": "month", "1927": "day"}'
+  - id: market:hsi
+    name: Hang Seng Index
+    ticker: "^HSI"
+    market_type: equity_index
+    trading_calendar: us
+    inception_date: "1969-11-24"
+    native_frequency: '{"1987": "day"}'
+  - id: market:twii
+    name: TAIEX (Taiwan Weighted)
+    ticker: "^TWII"
+    market_type: equity_index
+    trading_calendar: us
+    inception_date: "1967-01-05"
+    native_frequency: '{"1997": "day"}'
+  - id: market:sse
+    name: SSE Composite (Shanghai)
+    ticker: "000001.SS"
+    market_type: equity_index
+    trading_calendar: us
+    inception_date: "1990-12-19"
+    native_frequency: '{"1991": "day"}'
+  - id: market:n225
+    name: Nikkei 225
+    ticker: "^N225"
+    market_type: equity_index
+    trading_calendar: us
+    inception_date: "1949-05-16"
+    native_frequency: '{"1965": "day"}'
+  - id: market:kospi
+    name: KOSPI Composite
+    ticker: "^KS11"
+    market_type: equity_index
+    trading_calendar: us
+    inception_date: "1983-01-04"
+    native_frequency: '{"1996": "day"}'
+  - id: market:brent
+    name: Brent crude (front month)
+    ticker: "BZ=F"
+    market_type: commodity
+    trading_calendar: us
+    inception_date: "1988-06-23"
+    native_frequency: '{"2007": "day"}'
+  - id: market:gold
+    name: Gold (COMEX front month)
+    ticker: "GC=F"
+    market_type: commodity
+    trading_calendar: us
+    inception_date: "1974-12-31"
+    native_frequency: '{"2000": "day"}'
+  - id: market:dgs10
+    name: US 10-Year Treasury yield
+    ticker: DGS10
+    market_type: sovereign_yield
+    trading_calendar: us
+    inception_date: "1871-01-01"
+    native_frequency: '{"1871": "month", "1962": "day"}'

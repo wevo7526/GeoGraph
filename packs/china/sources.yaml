@@ -1,0 +1,53 @@
+# The source registry — every ingested node and edge cites one (§17).
+
+sources:
+  # ── deep tier (same registry ids as every pack; merges are idempotent) ─────
+  - id: source:cow-mid
+    name: COW Militarized Interstate Disputes v5.0
+    kind: dataset
+    url: https://correlatesofwar.org/data-sets/mids/
+    citation: Palmer et al., "The MID5 Dataset, 2011-2014", CMPS 39(4).
+  - id: source:cow-states
+    name: COW State System Membership
+    kind: dataset
+    url: https://correlatesofwar.org/data-sets/state-system-membership/
+    citation: Correlates of War Project, State System Membership List, v2016.
+  - id: source:cow-alliances
+    name: COW Formal Alliances v4.1
+    kind: dataset
+    url: https://correlatesofwar.org/data-sets/formal-alliances/
+    citation: Gibler (2009), International Military Alliances 1648-2008.
+
+  # ── modern tier ────────────────────────────────────────────────────────────
+  - id: source:gdelt
+    name: GDELT 1.0 events (raw export files)
+    kind: dataset
+    url: http://data.gdeltproject.org/events/index.html
+    citation: Leetaru & Schrodt (2013), GDELT. ISA Annual Convention.
+  - id: source:yfinance
+    name: Yahoo Finance daily bars
+    kind: feed
+    url: https://finance.yahoo.com/
+    citation: Accessed via yfinance; depth verified per ticker at ingest.
+  - id: source:fred
+    name: FRED (DGS2, DGS10)
+    kind: feed
+    url: https://fred.stlouisfed.org/
+    citation: Board of Governors via FRED.
+  - id: source:crs-taiwan
+    name: CRS — Taiwan and U.S. policy
+    kind: report
+    url: https://crsreports.congress.gov/product/pdf/IF/IF10275
+    citation: >-
+      Congressional Research Service, "Taiwan: Political and Security Issues"
+      (IF10275, updated periodically): the TRA's commitment, the strait's
+      military balance, and the semiconductor dependency.
+
+  # ── this pack ──────────────────────────────────────────────────────────────
+  - id: source:china-marquee
+    name: China marquee event spine (curated)
+    kind: pack
+    url: packs/china/marquee_events.yaml
+    citation: >-
+      Curated by the GeoGraph authors; each event's own provenance is the
+      public record.

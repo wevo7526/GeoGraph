@@ -1,0 +1,140 @@
+# The China marquee spine — curated, day-resolution, CODED. Chosen to avoid
+# double-folding dyad baselines against the COW deep tier: pre-2015 armed
+# disputes live in the MIDs, so the curated rows lean diplomatic and
+# economic, plus the post-2014 events the MIDs cannot carry. The CAMEO
+# vocabulary has no state-visit code in the archive's table, so Nixon 1972
+# and Pelosi 2022 carry 046 (engage in negotiation / high-level engagement)
+# with the coding noted — the nearest scorable fit, and the market read of
+# both events was the engagement itself.
+
+events:
+  - id: event:china-1953-armistice
+    date: "1953-07-27"
+    name: Korean Armistice signed at Panmunjom
+    quad_class: verbal_cooperation
+    cameo: "057"
+    initiator: actor:cow-731
+    target: actor:cow-732
+    note: Armistice, not peace — the baseline every peninsula event departs from.
+  - id: event:china-1972-nixon
+    date: "1972-02-21"
+    name: Nixon arrives in Beijing
+    quad_class: verbal_cooperation
+    cameo: "046"          # high-level engagement; see header note
+    initiator: actor:cow-2
+    target: actor:cow-710
+    note: The week that changed the world — the triangular opening priced slowly.
+  - id: event:china-1979-normalization
+    date: "1979-01-01"
+    name: US–China diplomatic normalization
+    quad_class: verbal_cooperation
+    cameo: "057"
+    initiator: actor:cow-2
+    target: actor:cow-710
+  - id: event:china-2001-wto
+    date: "2001-12-11"
+    name: China joins the WTO
+    quad_class: verbal_cooperation
+    cameo: "057"
+    initiator: actor:cow-710
+    target: actor:cow-2
+    note: >-
+      Multilateral accession coded on the US–China dyad — the bilateral
+      agreement of 1999 was the gate, and the dyad is where markets priced it.
+  - id: event:china-2018-tariffs
+    date: "2018-03-22"
+    name: Section 301 tariffs on China announced
+    quad_class: material_conflict
+    cameo: "163"
+    initiator: actor:cow-2
+    target: actor:cow-710
+    note: The declared start of strategic economic competition.
+  - id: event:china-2020-phase-one
+    date: "2020-01-15"
+    name: Phase One trade agreement signed
+    quad_class: verbal_cooperation
+    cameo: "057"
+    initiator: actor:cow-2
+    target: actor:cow-710
+  - id: event:china-2020-galwan
+    date: "2020-06-15"
+    name: Galwan Valley clash
+    quad_class: material_conflict
+    cameo: "190"
+    initiator: actor:cow-710
+    target: actor:cow-750
+    note: First fatal India–China border clash in 45 years; post-MID-coverage era.
+  - id: event:china-2022-pelosi
+    date: "2022-08-02"
+    name: Pelosi lands in Taipei
+    quad_class: verbal_cooperation
+    cameo: "046"          # high-level engagement; see header note
+    initiator: actor:cow-2
+    target: actor:cow-713
+    phase0_candidate: true
+    note: >-
+      The highest-ranking US visit in 25 years — a cooperative act on the
+      US–Taiwan dyad that the CHINA–Taiwan dyad priced as provocation; the
+      pairing with the drills two days later is the case study's point.
+  - id: event:china-2022-drills
+    date: "2022-08-04"
+    name: PLA live-fire exercises encircle Taiwan
+    quad_class: material_conflict
+    cameo: "150"
+    initiator: actor:cow-710
+    target: actor:cow-713
+    phase0_candidate: true
+    note: Ballistic missiles over the island; six closure zones around it.
+  - id: event:china-2022-chips
+    date: "2022-10-07"
+    name: US semiconductor export controls
+    quad_class: material_conflict
+    cameo: "163"
+    initiator: actor:cow-2
+    target: actor:cow-710
+    note: The supply-chain front opens formally.
+  - id: event:china-2024-drills
+    date: "2024-05-23"
+    name: Joint Sword-2024A drills after Lai inauguration
+    quad_class: material_conflict
+    cameo: "150"
+    initiator: actor:cow-710
+    target: actor:cow-713
+  - id: event:china-2025-tariffs
+    date: "2025-04-02"
+    name: US global tariff escalation reaches China
+    quad_class: material_conflict
+    cameo: "163"
+    initiator: actor:cow-2
+    target: actor:cow-710
+
+case_study:
+  slug: fourth-strait-crisis
+  title: The Fourth Strait Crisis
+  dek: >-
+    A visit and an answer, two days apart. The cooperative event and the
+    coercive one priced the same island's risk in opposite directions —
+    across Taipei, Hong Kong, Tokyo and New York sessions.
+  summary: >-
+    Speaker Pelosi landed in Taipei on the evening of 2 August 2022; on 4
+    August the PLA opened the largest exercises ever conducted around
+    Taiwan, with ballistic missiles overflying the island. The archive codes
+    the pair as they were: a high-level engagement on the US–Taiwan dyad,
+    answered by a display of force on the China–Taiwan dyad — one episode,
+    two dyads, and the drills measured against a baseline the visit did not
+    move.
+  reading: >-
+    Watch the two dyads separately. The visit is cooperative ON ITS OWN
+    DYAD — Head B scores it against US–Taiwan's normal, not against
+    Beijing's reaction. The drills are the escalation, and their measured
+    market effect carries the overlap flag where the windows touch: the
+    archive refuses to average a visit and a blockade rehearsal into one
+    number.
+  caveat: >-
+    TAIEX and the Hang Seng carry the local read; the semiconductor channel
+    (EWT, SMH in the asset layer) is where the strait's specific risk shows
+    inside US hours. Measured effects are the era's daily CARs — no intraday
+    exists this far back on the free feed.
+  events:
+    - event:china-2022-pelosi
+    - event:china-2022-drills

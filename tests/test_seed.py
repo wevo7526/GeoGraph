@@ -164,7 +164,7 @@ def test_an_event_citing_a_ghost_actor_fails_the_seed(conn, mena):
 
 def test_boot_seeds_every_complete_pack_by_default(monkeypatch):
     monkeypatch.delenv("GEOGRAPH_SEED_PACKS", raising=False)
-    assert boot._pack_names() == packs.available() == ["mena"]
+    assert boot._pack_names() == packs.available() == ["china", "mena"]
 
 
 def test_boot_honours_an_explicit_pack_list(monkeypatch):

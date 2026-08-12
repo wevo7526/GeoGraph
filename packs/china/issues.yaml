@@ -1,0 +1,20 @@
+# The contested questions actors hold positions on (build-spec §8.1).
+
+issues:
+  - id: issue:taiwan-strait
+    name: Status of Taiwan
+    scale: >-
+      0 = enforced unification, 100 = recognized independence; the strait
+      trades the whole range without ever printing either end.
+  - id: issue:south-china-sea
+    name: South China Sea claims
+    scale: 0 = nine-dash line enforced, 100 = UNCLOS arbitration honored.
+  - id: issue:semiconductor-supply
+    name: Semiconductor supply chain control
+    scale: 0 = full decoupling, 100 = open market access.
+  - id: issue:dprk-nuclear
+    name: North Korean nuclear program
+    scale: 0 = unconstrained arsenal, 100 = verified denuclearization.
+  - id: issue:senkaku
+    name: Senkaku/Diaoyu administration
+    scale: 0 = Chinese administration, 100 = Japanese administration undisturbed.
