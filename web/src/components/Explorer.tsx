@@ -3,6 +3,7 @@ import {
   getActors,
   getForecast,
   getForecasts,
+  getPaperBook,
   getCoverage,
   getDyads,
   getEvent,
@@ -32,6 +33,7 @@ import type {
   EventDetail,
   Flow,
   ForecastDetail,
+  PaperBook,
   GraphActor,
   GraphEvent,
   Pack,
@@ -547,6 +549,7 @@ function PressureLine({ detail }: { detail: ForecastDetail }) {
 function ForecastPanel() {
   const [nearTerm, setNearTerm] = useState<ForecastDetail | null>(null)
   const [longHorizon, setLongHorizon] = useState<ForecastDetail | null>(null)
+  const [paper, setPaper] = useState<PaperBook | null>(null)
   const [empty, setEmpty] = useState(false)
 
   useEffect(() => {
@@ -565,6 +568,9 @@ function ForecastPanel() {
       ] as const) {
         const summary = newest(mode)
         if (summary) getForecast(summary.node_id).then((d) => active && d && set(d))
+        if (summary && mode === 'near_term') {
+          getPaperBook(summary.node_id).then((b) => active && b && setPaper(b))
+        }
       }
     })
     return () => {
@@ -619,6 +625,57 @@ function ForecastPanel() {
           <p className="mono text-xs mt-2" style={{ color: 'var(--muted)' }}>
             likelihoods are regime-gated base rates — recount them from the archive
           </p>
+
+          {paper && (
+            <div className="mt-5 pt-4 border-t" style={{ borderColor: 'var(--line)' }}>
+              <div className="flex items-baseline justify-between gap-3">
+                <Microcaps>Paper book · $1M notional</Microcaps>
+                <span
+                  className="mono text-sm"
+                  style={{ color: paper.pnl_usd >= 0 ? 'var(--accent)' : 'var(--alert)' }}
+                >
+                  {paper.pnl_usd >= 0 ? '+' : '−'}$
+                  {Math.abs(paper.pnl_usd).toLocaleString(undefined, {
+                    maximumFractionDigits: 0,
+                  })}
+                </span>
+              </div>
+              <ul className="mt-2 space-y-1">
+                {paper.positions.map((pos) => (
+                  <li
+                    key={pos.ticker}
+                    className="flex items-baseline justify-between gap-3 text-xs mono"
+                    style={{ color: 'var(--muted)' }}
+                  >
+                    <span>
+                      {pos.ticker} {pos.weight >= 0 ? 'long' : 'short'}{' '}
+                      {Math.abs(pos.weight * 100).toFixed(0)}%
+                    </span>
+                    {pos.status === 'marked' ? (
+                      <span
+                        style={{
+                          color:
+                            (pos.pnl_usd ?? 0) >= 0 ? 'var(--text)' : 'var(--alert)',
+                        }}
+                      >
+                        {(pos.pnl_usd ?? 0) >= 0 ? '+' : '−'}$
+                        {Math.abs(pos.pnl_usd ?? 0).toLocaleString(undefined, {
+                          maximumFractionDigits: 0,
+                        })}
+                      </span>
+                    ) : (
+                      <span>unfillable</span>
+                    )}
+                  </li>
+                ))}
+              </ul>
+              <p className="text-xs mt-2 leading-relaxed" style={{ color: 'var(--muted)' }}>
+                A mechanical, unfitted translation of the frozen scenarios,
+                entered after the data cutoff and marked at the latest close —
+                a calibration instrument, not advice.
+              </p>
+            </div>
+          )}
         </div>
       )}
 

@@ -319,3 +319,72 @@ def test_freezing_persists_both_modes_with_recountable_inputs(db_path):
     assert by_mode["long_horizon"]["boundary"]
     near = json.loads(by_mode["near_term"]["scenarios"])
     assert all(s["likelihood"] is not None for s in near)
+
+
+# ── the paper book: frozen implications, marked ──────────────────────────────
+
+
+def test_the_paper_book_blends_the_books_by_the_frozen_likelihood():
+    from core.reasoning import paper
+
+    p, net = paper.build_book([
+        {"scenario_name": "further_escalation:dyad:a", "likelihood": 0.3},
+        {"scenario_name": "reversion_to_baseline:dyad:a", "likelihood": 0.7},
+    ])
+    assert p == 0.3
+    # Net = p*escalation + (1-p)*reversion, by hand:
+    assert net["BZ=F"] == pytest.approx(0.12)          # 0.3*0.4
+    assert net["^TASI.SR"] == pytest.approx(0.29)      # 0.3*-0.2 + 0.7*0.5
+    assert net["GC=F"] == pytest.approx(0.06)
+    assert net["DFMGI.AE"] == pytest.approx(0.29)
+
+
+def test_the_paper_book_refuses_the_long_horizon_shape():
+    from core.reasoning import paper
+
+    with pytest.raises(ValueError, match="NEAR-TERM"):
+        paper.build_book([{"scenario_name": "pressure_release", "likelihood": None}])
+
+
+def test_marking_enters_after_the_cutoff_and_skips_the_unfillable():
+    from core.reasoning import paper
+
+    series = {
+        "BZ=F": [
+            {"obs_date": "2025-06-20", "price": 70.0},   # BEFORE cutoff: not a fill
+            {"obs_date": "2025-06-23", "price": 80.0},
+            {"obs_date": "2025-08-01", "price": 88.0},
+        ],
+        "GC=F": [{"obs_date": "2025-06-23", "price": 3000.0}],  # one close: no mark
+    }
+    report = paper.mark_book(
+        {"BZ=F": 0.5, "GC=F": 0.2, "^TASI.SR": 0.1},
+        series,
+        entry_after="2025-06-22",
+    )
+    marked = {p["ticker"]: p for p in report["positions"]}
+    brent = marked["BZ=F"]
+    assert brent["entry_date"] == "2025-06-23"          # first close AFTER cutoff
+    assert brent["pnl_usd"] == pytest.approx(0.5 * 1_000_000 * (88 / 80 - 1), abs=0.01)
+    assert marked["GC=F"]["status"] == "skipped"
+    assert marked["^TASI.SR"]["status"] == "skipped"
+    assert report["pnl_usd"] == brent["pnl_usd"]
+    assert "not advice" in report["method"]
+
+
+def test_the_paper_endpoint_is_honest_without_a_panel(db_path, monkeypatch, tmp_path):
+    from fastapi.testclient import TestClient
+
+    freeze = _load("run_forecasts").freeze
+    written = freeze(db_path, region_pack="mena")
+    near = next(w["node_id"] for w in written if w["mode"] == "near_term")
+
+    monkeypatch.setenv("KUZU_DB_PATH", str(db_path))
+    monkeypatch.delenv("DATABASE_URL", raising=False)
+    from core.api.app import create_app
+
+    with TestClient(create_app()) as client:
+        response = client.get(f"/api/forecasts/{near}/paper")
+        assert response.status_code == 503  # no panel, no invented fills
+        long = near.replace("near-term", "long-horizon")
+        assert client.get(f"/api/forecasts/{long}/paper").status_code == 400

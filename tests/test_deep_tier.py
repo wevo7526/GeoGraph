@@ -405,3 +405,83 @@ def test_13f_flows_land_as_quarterly_edges(conn, monkeypatch):
     assert rows[0]["value_usd"] == 5_000_000
     assert all(r["source_id"] == "source:edgar-13f" for r in rows)
     assert kuzu_store.check_provenance(conn) == []
+
+
+# ── GDELT raw-file parsing (the credential-free modern tier) ─────────────────
+
+
+def _gdelt_line(**kw: str) -> str:
+    fields = [""] * 57
+    fields[0] = kw.get("id", "12345")
+    fields[1] = kw.get("date", "19980215")
+    fields[6] = kw.get("a1name", "IRAN")
+    fields[7] = kw.get("a1", "IRN")
+    fields[16] = kw.get("a2name", "ISRAEL")
+    fields[17] = kw.get("a2", "ISR")
+    fields[25] = kw.get("root", "1")
+    fields[26] = kw.get("code", "138")
+    fields[29] = kw.get("quad", "3")
+    fields[30] = kw.get("goldstein", "-5.8")
+    fields[31] = kw.get("mentions", "12")
+    return "\t".join(fields)
+
+
+_ACTORS = {
+    "IRN": {"node_id": "actor:cow-630", "name": "Iran"},
+    "ISR": {"node_id": "actor:cow-666", "name": "Israel"},
+    "USA": {"node_id": "actor:cow-2", "name": "United States"},
+    "RUS": {"node_id": "actor:cow-365", "name": "Russia"},
+}
+
+
+def test_gdelt_keeps_the_significant_regional_root_events():
+    from core.ingestion import gdelt
+
+    events, edges, result = gdelt.parse_lines(
+        [
+            _gdelt_line(),                                   # kept
+            _gdelt_line(id="2", mentions="3"),               # below threshold
+            _gdelt_line(id="3", root="0"),                   # not a root event
+            _gdelt_line(id="4", a1="USA", a2="RUS"),         # external-power pair
+            _gdelt_line(id="5", a2="ZWE"),                   # outside the roster
+            "too\tshort",                                    # malformed
+        ],
+        actors_by_iso3=_ACTORS,
+        region_pack="mena",
+        min_mentions=10,
+    )
+    assert result.written == 1
+    assert result.dropped == 5
+    event = events[0]
+    assert event["node_id"] == "event:gdelt-12345"
+    assert event["event_time"] == "1998-02-15"
+    assert event["goldstein"] == -5.8            # GDELT's own score, trusted
+    assert event["quad_class"] == "verbal_conflict"
+    assert event["fidelity_tier"] == "modern_coded"
+    assert "Iran" in event["name"] and "Israel" in event["name"]
+    kinds = [e["kind"] for e in edges]
+    assert kinds == ["INITIATED_BY", "DIRECTED_AT", "DERIVED_FROM"]
+
+
+def test_gdelt_events_land_sourced_and_rescorable(conn):
+    from core.classifier.rescore import rescore_escalation
+    from core.ingestion import gdelt
+
+    seed_pack.seed(conn, packs.load("mena"))
+    events, edges, _ = gdelt.parse_lines(
+        [_gdelt_line(), _gdelt_line(id="99", date="19990301", goldstein="-9.0",
+                                    code="190", quad="4")],
+        actors_by_iso3=_ACTORS,
+        region_pack="mena",
+    )
+    gdelt.write_events(conn, events, edges)
+    counts = rescore_escalation(conn)
+    assert counts["events_rescored"] >= 26  # spine + the two GDELT rows
+    row = kuzu_store.query(
+        conn,
+        "MATCH (e:Event {node_id: 'event:gdelt-99'}) "
+        "RETURN e.escalation_direction AS d, e.escalation_baseline AS b",
+    )[0]
+    assert row["d"] in {"escalating", "stable", "deescalating"}
+    assert row["b"] is not None
+    assert kuzu_store.check_provenance(conn) == []

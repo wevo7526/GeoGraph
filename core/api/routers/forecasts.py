@@ -56,6 +56,67 @@ def list_forecasts(request: Request, mode: str | None = None) -> dict[str, Any]:
     return {"rows": rows}
 
 
+@router.get("/forecasts/{node_id:path}/paper")
+def paper_book(request: Request, node_id: str) -> dict[str, Any]:
+    """The frozen forecast's market implications as a marked paper book.
+
+    A mechanical, unfitted translation (core/reasoning/paper.py — the rule is
+    in the payload's method string): positions weighted by the frozen
+    base-rate likelihood, entered at the first panel close after the data
+    cutoff, marked at the latest close. Needs the panel; without it the
+    answer is 503 and says so, never an invented fill.
+    """
+    import json as json_module
+
+    from core import settings as settings_module
+    from core.panel import pg_store
+    from core.reasoning import paper
+
+    conn = _conn(request)
+    rows = kuzu_store.query(
+        conn,
+        "MATCH (f:Forecast {node_id: $id}) RETURN f.mode AS mode, "
+        "f.scenarios_json AS scenarios_json, f.frozen_inputs_json AS frozen_inputs_json",
+        {"id": node_id},
+    )
+    if not rows:
+        raise HTTPException(status_code=404, detail=f"no such forecast: {node_id}")
+    if rows[0]["mode"] != "near_term":
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "the paper book translates the near-term mode only — "
+                "long-horizon output carries no likelihoods, by design."
+            ),
+        )
+    scenarios = json_module.loads(rows[0]["scenarios_json"] or "[]")
+    frozen = json_module.loads(rows[0]["frozen_inputs_json"] or "{}")
+    entry_after = str(frozen.get("as_of") or "")
+    likelihood, net = paper.build_book(scenarios)
+
+    settings = settings_module.load()
+    try:
+        panel = pg_store.connect(settings)
+    except pg_store.PanelUnavailable as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    try:
+        series = {
+            ticker: pg_store.series(
+                panel, ticker, start=entry_after, end="2100-01-01"
+            )
+            for ticker in net
+        }
+    finally:
+        panel.close()
+    report = paper.mark_book(net, series, entry_after=entry_after)
+    return {
+        "forecast": node_id,
+        "escalation_likelihood": likelihood,
+        "entry_after": entry_after,
+        **report,
+    }
+
+
 @router.get("/forecasts/{node_id:path}")
 def get_forecast(request: Request, node_id: str) -> dict[str, Any]:
     """One frozen forecast, whole: scenarios and the inputs it froze —

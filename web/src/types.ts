@@ -234,6 +234,30 @@ export interface ForecastDetail extends ForecastSummary {
   }
 }
 
+export interface PaperPosition {
+  ticker: string
+  weight: number
+  status: 'marked' | 'skipped'
+  reason?: string
+  entry_date?: string
+  entry?: number
+  mark_date?: string
+  mark?: number
+  pnl_usd?: number
+}
+
+export interface PaperBook {
+  forecast: string
+  escalation_likelihood: number
+  entry_after: string
+  notional_usd: number
+  deployed_usd: number
+  pnl_usd: number
+  return_on_notional: number
+  positions: PaperPosition[]
+  method: string
+}
+
 export interface CaseStudyIndexEntry {
   slug: string
   pack: string

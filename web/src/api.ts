@@ -10,6 +10,7 @@ import type {
   ForecastSummary,
   GraphActor,
   Health,
+  PaperBook,
   Pack,
   Relation,
   Segmentation,
@@ -82,6 +83,9 @@ export const getForecasts = () => get<{ rows: ForecastSummary[] }>('/api/forecas
 
 export const getForecast = (nodeId: string) =>
   get<ForecastDetail>(`/api/forecasts/${encodeURIComponent(nodeId)}`)
+
+export const getPaperBook = (nodeId: string) =>
+  get<PaperBook>(`/api/forecasts/${encodeURIComponent(nodeId)}/paper`)
 
 export const getCaseStudies = () =>
   get<{ rows: CaseStudyIndexEntry[] }>('/api/case-studies')
