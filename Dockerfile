@@ -35,9 +35,21 @@ WORKDIR /app
 
 # Dependency metadata before source, same caching reason. Installed from
 # pyproject so the image and a local dev install cannot drift apart.
+#
+# THEN THE PROJECT ITSELF IS UNINSTALLED. `pip install .` over the one-file
+# skeleton below also installs `core` into site-packages as JUST __init__.py —
+# and a script run as `python /app/scripts/boot.py` has /app/scripts on
+# sys.path, not /app, so `import core.packs` found the skeleton and the boot
+# seed died with "cannot import name 'packs'" while the API served an empty
+# graph. The dependencies stay; the package must resolve to /app/core (via
+# PYTHONPATH below), not least because core/packs.py locates packs/ RELATIVE
+# to core's own location.
 COPY pyproject.toml README.md ./
 COPY core/__init__.py core/
-RUN pip install --no-cache-dir ".[api,panel,mcp]"
+RUN pip install --no-cache-dir ".[api,panel,mcp]" \
+ && pip uninstall --yes geograph
+
+ENV PYTHONPATH=/app
 
 COPY core/ core/
 # The ontology and crosswalks are not documentation: kuzu_schema.py reads the
