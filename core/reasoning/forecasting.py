@@ -44,31 +44,47 @@ def _dyad_events(conn: Any) -> list[dict[str, Any]]:
     )
 
 
+def _quarter(date: str) -> tuple[int, int]:
+    year = int(date[:4])
+    month = int(date[5:7]) if len(date) >= 7 else 1
+    return year, (month - 1) // 3 + 1
+
+
 def _base_rate(
     rows: list[dict[str, Any]], *, regime_anchor: str, horizon_years: int
 ) -> tuple[int, int]:
-    """(continuations, episodes): of the in-regime escalating events across
-    ALL dyads, how many were followed by another escalating event ON THE SAME
-    DYAD within the horizon. Cross-dyad counting because single-dyad samples
-    are thin — stated in the rationale, not hidden."""
+    """(continuations, episodes) counted on EPISODES — dyad-QUARTERS with at
+    least one escalating event — not raw events.
+
+    The distinction is load-bearing at GDELT density: a week of wire stories
+    about one confrontation is dozens of escalating EVENTS but one episode,
+    and counting events made the continuation rate measure how much the wire
+    kept reporting (96%) rather than whether the dyad strategically
+    re-escalated. An episode continues when the SAME dyad has another
+    escalating episode in a LATER quarter within the horizon. Cross-dyad
+    pooling stays (single-dyad samples are thin) and stays stated in the
+    rationale.
+    """
+    episode_quarters: dict[str, set[tuple[int, int]]] = {}
+    for row in rows:
+        if row["direction"] != "escalating":
+            continue
+        date = str(row["event_time"])
+        if not regimes.comparable(regime_anchor, date):
+            continue
+        episode_quarters.setdefault(row["dyad_id"], set()).add(_quarter(date))
+
     episodes = 0
     continuations = 0
-    by_dyad: dict[str, list[dict[str, Any]]] = {}
-    for row in rows:
-        by_dyad.setdefault(row["dyad_id"], []).append(row)
-    for events in by_dyad.values():
-        for index, event in enumerate(events):
-            if event["direction"] != "escalating":
-                continue
-            date = str(event["event_time"])
-            if not regimes.comparable(regime_anchor, date):
-                continue
+    horizon_quarters = horizon_years * 4
+    for quarters in episode_quarters.values():
+        ordered = sorted(quarters)
+        indexed = [year * 4 + (quarter - 1) for year, quarter in ordered]
+        for position, quarter_index in enumerate(indexed):
             episodes += 1
-            year = int(date[:4])
             if any(
-                later["direction"] == "escalating"
-                and year < int(str(later["event_time"])[:4]) <= year + horizon_years
-                for later in events[index + 1 :]
+                0 < later - quarter_index <= horizon_quarters
+                for later in indexed[position + 1 :]
             ):
                 continuations += 1
     return continuations, episodes
@@ -118,9 +134,10 @@ def forecast(
         name = events[-1]["dyad_name"]
         latest = events[-1]
         counting = (
-            f"{continuations} of {episodes} in-regime escalating episodes (all "
-            f"dyads, monetary order at {as_of}) saw further escalation on the "
-            f"same dyad within {horizon_years}y"
+            f"{continuations} of {episodes} in-regime escalating EPISODES "
+            f"(dyad-quarters with an escalating event, all dyads, monetary "
+            f"order at {as_of}) saw another escalating episode on the same "
+            f"dyad within {horizon_years}y"
         )
         scenarios.append({
             "scenario_name": f"further_escalation:{dyad_id}",
@@ -148,8 +165,8 @@ def forecast(
             ),
             "rationale": (
                 f"The complement of the escalation base rate for {name}: "
-                f"{episodes - continuations} of {episodes} in-regime episodes "
-                f"were NOT followed within {horizon_years}y."
+                f"{episodes - continuations} of {episodes} in-regime "
+                f"dyad-quarter episodes were NOT followed within {horizon_years}y."
             ),
             "analogue_ids": [],
         })

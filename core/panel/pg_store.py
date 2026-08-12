@@ -199,6 +199,17 @@ def record_runs(conn: Any, effects: list[Any], skips: list[Any]) -> int:
     return len(rows)
 
 
+def measured_events(conn: Any) -> set[str]:
+    """Event ids with ANY recorded study attempt — the study's watermark.
+
+    An attempt (computed OR skipped) means the engine already looked with
+    the panel it had; determinism makes re-looking a no-op, so the watermark
+    is what lets a hundred-thousand-event archive boot in seconds."""
+    with conn.cursor() as cur:
+        cur.execute("SELECT DISTINCT event_node_id FROM event_study_runs")
+        return {row[0] for row in cur.fetchall()}
+
+
 def _finite(value: float | None) -> float | None:
     """NaN is not a measurement. Postgres would store it; nothing downstream
     could tell it from a real number, so it becomes NULL here."""

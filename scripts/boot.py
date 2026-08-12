@@ -69,6 +69,11 @@ _SEED_TIMEOUT_SECONDS = 300
 #: ceiling than the seed — but still a ceiling.
 _LOAD_TIMEOUT_SECONDS = 900
 
+#: The full-archive study's ceiling. With the measured-events watermark only
+#: NEW events pay compute, so a normal boot uses seconds of this — the
+#: ceiling exists for the first boot after a large backfill.
+_STUDY_TIMEOUT_SECONDS = 1500
+
 #: How far before the spine's EARLIEST event the panel must reach: the
 #: estimation window (120 sessions) plus its gap and the measurement windows,
 #: with slack for weekends and holidays. Matches run_event_study._LOOKBACK_DAYS.
@@ -242,9 +247,7 @@ def _run_study(pack_names: list[str]) -> dict[str, Any] | None:
         _run_step(
             f"event study {name}",
             [sys.executable, str(_STUDY_SCRIPT), name, "--all"],
-            # The archive is thousands of events now — the study reads the
-            # panel per event per market and earns the longer ceiling.
-            timeout=_LOAD_TIMEOUT_SECONDS,
+            timeout=_STUDY_TIMEOUT_SECONDS,
             echo=False,
         )
         for name in pack_names

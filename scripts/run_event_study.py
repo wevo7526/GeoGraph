@@ -60,6 +60,14 @@ def main() -> None:
     parser.add_argument("--all", action="store_true", help="every event in the spine")
     parser.add_argument("--dry-run", action="store_true", help="print, write nothing")
     parser.add_argument(
+        "--refresh", action="store_true",
+        help="re-measure events that already have recorded runs. The default "
+             "SKIPS them (the watermark): the engine is deterministic, so an "
+             "already-measured event re-derives the same numbers — and at a "
+             "hundred thousand events, skipping is what lets a deploy boot in "
+             "seconds and a cut-off run resume where it stopped.",
+    )
+    parser.add_argument(
         "--min-gdelt-goldstein", type=float, default=7.0,
         help="materiality bar for GDELT-sourced events under --all: a ten-"
              "mention consultation does not need a measured CAR, and measuring "
@@ -141,6 +149,16 @@ def main() -> None:
     except pg_store.PanelUnavailable as exc:
         kuzu_store.close(graph)
         sys.exit(str(exc))
+
+    if not args.refresh:
+        measured = pg_store.measured_events(panel)
+        before = len(chosen)
+        chosen = [e for e in chosen if e["id"] not in measured]
+        if before != len(chosen):
+            print(f"{before - len(chosen)} already-measured events skipped "
+                  "(the watermark; --refresh re-measures)")
+        if not chosen:
+            print("nothing new to measure")
 
     market_node_ids = {m["ticker"]: m["id"] for m in pack.markets}
     # PRELOAD, ONCE PER (ticker, frequency): the archive is a hundred thousand
