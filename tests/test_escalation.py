@@ -168,3 +168,56 @@ def test_the_twelve_day_war_escalates_in_the_us_iran_dyad():
     assert midnight_hammer["dyad_id"] == "dyad:cow-2--cow-630"
     assert midnight_hammer["escalation_direction"] == "escalating"
     assert midnight_hammer["escalation_magnitude"] > 10.0
+
+
+# ── the deep-tier scale crosswalk (build-spec §9, §10) ───────────────────────
+
+
+def test_the_scale_map_is_bounded_and_monotonic():
+    """The crosswalk is an APPROXIMATION and says so — but it must at least be
+    coherent: every equivalent inside Goldstein's [-10, +10], and escalating
+    categories mapping to monotonically more negative equivalents. A YAML
+    edit that inverts a scale should fail here, not corrupt baselines."""
+    for scale in ("cow_hostility", "icb_severity"):
+        values = [
+            escalation.harmonize(scale, level)
+            for level in sorted(
+                {"cow_hostility": ["1", "2", "3", "4", "5"],
+                 "icb_severity": ["1", "2", "3", "4"]}[scale],
+                key=int,
+            )
+        ]
+        assert all(-10.0 <= v <= 10.0 for v in values), (scale, values)
+        assert values == sorted(values, reverse=True), (
+            f"{scale}: equivalents must fall as severity rises — got {values}"
+        )
+    # War is the floor on both scales, and the two scales agree there.
+    assert escalation.harmonize("cow_hostility", 5) == -10.0
+    assert escalation.harmonize("icb_severity", 4) == -10.0
+
+
+def test_goldstein_passes_through_and_unmapped_values_refuse():
+    assert escalation.harmonize("goldstein", -6.5) == -6.5
+    with pytest.raises(KeyError, match="not in"):
+        escalation.harmonize("cow_hostility", 9)
+    with pytest.raises(KeyError, match="no crosswalk"):
+        escalation.harmonize("vibes", 1)
+
+
+def test_a_deep_tier_stream_folds_through_the_same_baseline():
+    """Head B is scale-blind BY DESIGN: a 1911 dispute harmonized to -7.2 and
+    a 2011 event scored -7.2 move a dyad's EWMA identically. This is what
+    'one axis across 120 years' means operationally."""
+    harmonized = [
+        escalation.harmonize("cow_hostility", level) for level in ("2", "3", "5")
+    ]
+    stream = [
+        _event(f"event:deep-{i}", f"19{10 + i}-01-01", score, "actor:a", "actor:b")
+        for i, score in enumerate(harmonized)
+    ]
+    coded = escalation.code_events(stream).events
+    # First observation IS the baseline; war against a threat-level baseline
+    # is a rupture, and the direction says which way.
+    assert coded[0]["escalation_magnitude"] == 0.0
+    assert coded[-1]["escalation_direction"] == "escalating"
+    assert coded[-1]["escalation_magnitude"] > 2.0
