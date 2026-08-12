@@ -190,9 +190,11 @@ def record_runs(conn: Any, effects: list[Any], skips: list[Any]) -> int:
         }
         for s in skips
     ]
+    # executemany, not a Python loop of round trips: at GDELT scale the
+    # working set is hundreds of thousands of attempts per full study.
     with conn.cursor() as cur:
-        for row in rows:
-            cur.execute(sql, row)
+        if rows:
+            cur.executemany(sql, rows)
     conn.commit()
     return len(rows)
 

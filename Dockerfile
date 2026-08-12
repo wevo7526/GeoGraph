@@ -64,6 +64,11 @@ COPY core/ core/
 # The packs are INPUTS the seed needs, not build artifacts.
 COPY packs/ packs/
 COPY scripts/ scripts/
+# The derived GDELT artifact: the kept raw lines of the 1979-2005 backfill
+# (the generator is scripts/backfill_gdelt.py --export-filtered), so a boot
+# loads a hundred thousand events in a couple of minutes instead of parsing
+# sixty-one million lines on every fresh volume.
+COPY data/derived/ data/derived/
 
 COPY --from=web /web/dist ./web/dist
 

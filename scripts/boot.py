@@ -51,6 +51,8 @@ _LOAD_PANEL_SCRIPT = _ROOT / "scripts" / "load_panel.py"
 _STUDY_SCRIPT = _ROOT / "scripts" / "run_event_study.py"
 _METRICS_SCRIPT = _ROOT / "scripts" / "run_network_metrics.py"
 _FORECASTS_SCRIPT = _ROOT / "scripts" / "run_forecasts.py"
+_GDELT_SCRIPT = _ROOT / "scripts" / "backfill_gdelt.py"
+_GDELT_ARTIFACT = _ROOT / "data" / "derived" / "gdelt-mena-1979-2005.tsv.gz"
 _DEEP_TIER_SCRIPT = _ROOT / "scripts" / "load_deep_tier.py"
 _LOAD_13F_SCRIPT = _ROOT / "scripts" / "load_13f.py"
 
@@ -270,6 +272,50 @@ def _load_deep_tier() -> dict[str, Any]:
     return {k: v for k, v in result.items() if k != "step"}
 
 
+def _graph_has_gdelt() -> bool | None:
+    """Does the graph already hold GDELT events? None if it cannot be asked."""
+    from core import settings as settings_module
+    from core.graph import kuzu_store
+
+    settings = settings_module.load()
+    if not settings.kuzu_db_path.exists():
+        return False
+    try:
+        conn = kuzu_store.connect(settings.kuzu_db_path, read_only=True)
+    except kuzu_store.GraphUnavailable:
+        return None
+    try:
+        rows = kuzu_store.query(
+            conn,
+            "MATCH (e:Event) WHERE e.node_id STARTS WITH 'event:gdelt-' "
+            "RETURN e.node_id AS id LIMIT 1",
+        )
+        return bool(rows)
+    finally:
+        kuzu_store.close(conn)
+
+
+def _load_gdelt() -> dict[str, Any]:
+    """The GDELT backfill from the SHIPPED ARTIFACT (Phase 4, credential-free).
+
+    The image carries the filtered 1979-2005 lines (data/derived); loading
+    them is a couple of minutes ONCE — the volume graph keeps the events, so
+    every later boot skips here in milliseconds."""
+    if os.getenv("GEOGRAPH_GDELT_ON_BOOT", "1").strip().lower() in {"0", "false", "no"}:
+        return {"ok": True, "skipped": "disabled by GEOGRAPH_GDELT_ON_BOOT"}
+    if not _GDELT_ARTIFACT.exists():
+        return {"ok": True, "skipped": "no derived artifact in the image"}
+    if _graph_has_gdelt():
+        return {"ok": True, "skipped": "graph already holds GDELT events"}
+    result = _run_step(
+        "gdelt backfill",
+        [sys.executable, str(_GDELT_SCRIPT), "--from-filtered", str(_GDELT_ARTIFACT)],
+        timeout=_LOAD_TIMEOUT_SECONDS,
+        echo=False,
+    )
+    return {k: v for k, v in result.items() if k != "step"}
+
+
 def _load_13f() -> dict[str, Any]:
     """SWF capital flows from EDGAR (Phase 4's credential-free half).
 
@@ -363,6 +409,7 @@ def _boot_status() -> dict[str, Any]:
     # API from coming up.
     steps: tuple[tuple[str, Callable[[], dict[str, Any] | None]], ...] = (
         ("deep", _load_deep_tier),
+        ("gdelt", _load_gdelt),
         ("flows", _load_13f),
         ("panel", _apply_panel_schema),
         ("prices", lambda: _load_panel_if_shallow(names)),

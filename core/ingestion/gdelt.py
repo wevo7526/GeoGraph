@@ -77,6 +77,7 @@ def parse_lines(
     actors_by_iso3: dict[str, dict[str, Any]],
     region_pack: str,
     min_mentions: int = 10,
+    keep_lines: Any = None,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]], LoadResult]:
     """Filter and shape raw export lines → (event rows, edge rows, result).
 
@@ -126,6 +127,8 @@ def parse_lines(
             result.drop("CAMEO code the archive cannot score")
             continue
 
+        if keep_lines is not None:
+            keep_lines.write(line if line.endswith("\n") else line + "\n")
         initiator = actors_by_iso3[a1]
         target = actors_by_iso3[a2]
         event_id = f"event:gdelt-{fields[_GLOBALEVENTID]}"

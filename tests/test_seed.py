@@ -189,6 +189,7 @@ def test_a_failing_seed_reports_rather_than_stopping_the_boot(tmp_path, monkeypa
     monkeypatch.setenv("GEOGRAPH_SEED_PACKS", "atlantis")
     monkeypatch.setenv("GEOGRAPH_DEEP_TIER", "0")
     monkeypatch.setenv("GEOGRAPH_13F_ON_BOOT", "0")  # no SEC calls from a test
+    monkeypatch.setenv("GEOGRAPH_GDELT_ON_BOOT", "0")
     monkeypatch.delenv("GEOGRAPH_SEED_ON_BOOT", raising=False)
     monkeypatch.delenv("DATABASE_URL", raising=False)
     status = boot._boot_status()
@@ -206,6 +207,7 @@ def test_the_seed_runs_in_a_child_process_so_the_lock_is_released(tmp_path, monk
     monkeypatch.setenv("GEOGRAPH_SEED_PACKS", "mena")
     monkeypatch.setenv("GEOGRAPH_DEEP_TIER", "0")
     monkeypatch.setenv("GEOGRAPH_13F_ON_BOOT", "0")  # no SEC calls from a test
+    monkeypatch.setenv("GEOGRAPH_GDELT_ON_BOOT", "0")
     monkeypatch.delenv("GEOGRAPH_SEED_ON_BOOT", raising=False)
     monkeypatch.delenv("DATABASE_URL", raising=False)
 

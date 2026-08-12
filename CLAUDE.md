@@ -179,6 +179,16 @@ over membership- and validity-windowed subgraphs, persists NetworkMetric
 MCP `network_metrics` tool. The explorer is a 3D no-scroll workspace
 (react-force-graph-3d, MarketGraph Graph3D lineage) drawing the durable
 RELATES_TO web (incl. Iran's proxy clients) under windowed event flow.
-Not yet built — each stub names its phase: Phase 2 Head A validation,
-3 (deep history), 4 (GDELT, 13F, explorer at 120 years), 5 (reasoning),
-6 (China pack).
+Phase 3 landed (COW states/MIDs/CINC/alliances/IGO + Shiller monthly;
+ICB/ICOW deferred — severity files are JS-gated). Phase 4's credential-free
+half landed: GDELT from the FREE RAW FILES (data.gdeltproject.org — no
+BigQuery project needed; scripts/backfill_gdelt.py), 13F FLOW edges from
+EDGAR, the explorer walks 120 years with windowed casts. Phase 5's
+deterministic core landed end to end: structural pressure + retrodiction,
+regime-gated analogy, sensor loop, near-term base-rate scenarios — FROZEN
+into Forecast nodes at boot, served at /api/forecasts, rendered in the
+explorer when the slider crosses "now", with the PAPER BOOK
+(/api/forecasts/{id}/paper) marking each frozen call's implications to
+market on $1M notional. Still stubbed: the LLM halves (agent.py narration,
+vector-index analogy — need ANTHROPIC_API_KEY), BigQuery transport
+(alternative to raw files), Phase 6 (China pack).

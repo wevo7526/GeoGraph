@@ -36,12 +36,17 @@ _RAW = Path(
 
 #: What to fetch and what lands where. The zips carry more than the one file
 #: each loader needs; only the named members are extracted.
-_FETCH: list[tuple[str, str | None, str]] = [
-    # (url, member-inside-zip or None for a bare file, local filename)
+_FETCH: list[tuple[str, str | tuple[str, str] | None, str]] = [
+    # (url, member or (outer-zip-member, inner-member) or None, local filename)
     ("https://correlatesofwar.org/wp-content/uploads/states2016.csv",
      None, "states2016.csv"),
+    # NMCv7.zip NESTS its data: the CSV lives inside a second zip inside the
+    # first. A local hand-extraction masked this until Railway's fresh fetch
+    # hit the truth (KeyError on the flat member name) — the tuple form IS
+    # that lesson.
     ("https://correlatesofwar.org/wp-content/uploads/NMCv7.zip",
-     "NMC-70-wsupplementary.csv", "NMC-70-wsupplementary.csv"),
+     ("NMCv7/NMC-v7-supplemental.zip", "NMC-70-wsupplementary.csv"),
+     "NMC-70-wsupplementary.csv"),
     ("https://correlatesofwar.org/wp-content/uploads/MID-5-Data-and-Supporting-Materials.zip",
      "MIDA 5.0.csv", "MIDA 5.0.csv"),
     ("https://correlatesofwar.org/wp-content/uploads/MID-5-Data-and-Supporting-Materials.zip",
@@ -68,13 +73,25 @@ def fetch_missing() -> None:
                 downloaded[url] = response.read()
         payload = downloaded[url]
         if member is None:
-            target.write_bytes(payload)
+            content = payload
+        elif isinstance(member, tuple):
+            outer_name, inner_name = member
+            with (
+                zipfile.ZipFile(io.BytesIO(payload)) as outer,
+                zipfile.ZipFile(io.BytesIO(outer.read(outer_name))) as inner,
+            ):
+                content = inner.read(inner_name)
         else:
             with zipfile.ZipFile(io.BytesIO(payload)) as archive:
                 # Zip members keep their internal paths; extract flat, and a
                 # member the archive renamed FAILS LOUDLY instead of loading
                 # a stale local copy forever.
-                target.write_bytes(archive.read(member))
+                content = archive.read(member)
+        # Write-then-rename: a boot killed mid-write must not leave a partial
+        # file that every later boot "finds" and trusts.
+        partial = target.with_suffix(target.suffix + ".part")
+        partial.write_bytes(content)
+        partial.replace(target)
         print(f"  -> {target.name}")
 
 

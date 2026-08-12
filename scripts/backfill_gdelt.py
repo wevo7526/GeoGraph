@@ -18,6 +18,7 @@ archive-wide Head B rescore and the provenance backstop.
 from __future__ import annotations
 
 import argparse
+import gzip
 import io
 import os
 import sys
@@ -79,6 +80,17 @@ def main() -> None:
     parser.add_argument("--from", dest="start", type=int, default=1979)
     parser.add_argument("--to", dest="end", type=int, default=2005)
     parser.add_argument("--min-mentions", type=int, default=10)
+    parser.add_argument(
+        "--export-filtered",
+        help="ALSO write the kept raw lines to this gz file — a derived cache "
+             "that lets a container load in seconds instead of re-parsing "
+             "sixty million lines every boot",
+    )
+    parser.add_argument(
+        "--from-filtered",
+        help="load from a previously exported gz instead of the archives "
+             "(no downloads, no full parse — the boot path)",
+    )
     args = parser.parse_args()
 
     pack = packs.load(args.pack)
@@ -92,26 +104,54 @@ def main() -> None:
 
     settings = settings_module.load()
     conn = kuzu_store.connect(settings.kuzu_db_path)
+    # Closed in the finally below; the write sites are two try branches deep
+    # and a with-block could not reach them.
+    exporter = (
+        gzip.open(args.export_filtered, "wt", encoding="latin-1")  # noqa: SIM115
+        if args.export_filtered
+        else None
+    )
     try:
         kuzu_store.apply_schema(conn)
         total_written = 0
         total_dropped = 0
-        for name in _archives(args.start, args.end):
-            archive = _fetch(name)
-            with zipfile.ZipFile(archive) as zf:
-                member = zf.namelist()[0]
-                with zf.open(member) as fh:
-                    lines = io.TextIOWrapper(fh, encoding="latin-1", newline="")
-                    events, edges, result = gdelt.parse_lines(
-                        lines,
-                        actors_by_iso3=actors_by_iso3,
-                        region_pack=pack.name,
-                        min_mentions=args.min_mentions,
-                    )
+        if args.from_filtered:
+            with gzip.open(args.from_filtered, "rt", encoding="latin-1") as fh:
+                events, edges, result = gdelt.parse_lines(
+                    fh,
+                    actors_by_iso3=actors_by_iso3,
+                    region_pack=pack.name,
+                    min_mentions=args.min_mentions,
+                )
             gdelt.write_events(conn, events, edges)
-            total_written += result.written
-            total_dropped += result.dropped
-            print(f"{name}: {result.written} events")
+            total_written, total_dropped = result.written, result.dropped
+            print(f"{Path(args.from_filtered).name}: {result.written} events")
+        else:
+            for name in _archives(args.start, args.end):
+                archive = _fetch(name)
+                with zipfile.ZipFile(archive) as zf:
+                    member = zf.namelist()[0]
+                    with zf.open(member) as fh:
+                        lines = io.TextIOWrapper(fh, encoding="latin-1", newline="")
+                        if exporter is not None:
+                            events, edges, result = gdelt.parse_lines(
+                                lines,
+                                actors_by_iso3=actors_by_iso3,
+                                region_pack=pack.name,
+                                min_mentions=args.min_mentions,
+                                keep_lines=exporter,
+                            )
+                        else:
+                            events, edges, result = gdelt.parse_lines(
+                                lines,
+                                actors_by_iso3=actors_by_iso3,
+                                region_pack=pack.name,
+                                min_mentions=args.min_mentions,
+                            )
+                gdelt.write_events(conn, events, edges)
+                total_written += result.written
+                total_dropped += result.dropped
+                print(f"{name}: {result.written} events")
         print(f"total: {total_written} written, {total_dropped} filtered")
         for key, value in rescore_escalation(conn).items():
             print(f"{key}: {value}")
@@ -120,6 +160,8 @@ def main() -> None:
             sys.exit("PROVENANCE VIOLATIONS:\n" + "\n".join(violations))
         print("provenance: ok")
     finally:
+        if exporter is not None:
+            exporter.close()
         kuzu_store.close(conn)
 
 

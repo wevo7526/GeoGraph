@@ -8,7 +8,8 @@
     "$comment": "boot.py seeds the stores and then execs the API — it is not a wrapper that can be skipped. A startCommand of `python -m core.api.app` boots an API over an empty volume, because Kuzu is single-writer and the API holds the lock.",
     "startCommand": "python /app/scripts/boot.py",
     "healthcheckPath": "/api/health",
-    "healthcheckTimeout": 120,
+    "$timeout_comment": "The FIRST boot on a fresh volume does real work before the API binds: deep-tier fetch+load, the GDELT artifact, the full-archive study and the forecast freeze. Later boots skip the loaded parts and come up in under a minute.",
+    "healthcheckTimeout": 1800,
     "restartPolicyType": "ON_FAILURE",
     "restartPolicyMaxRetries": 3
   }

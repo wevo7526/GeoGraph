@@ -18,7 +18,9 @@ is queryable instead of being inferred from silence.
 from __future__ import annotations
 
 import argparse
+import bisect
 import datetime as dt
+import json
 import sys
 from typing import Any
 
@@ -57,6 +59,13 @@ def main() -> None:
     parser.add_argument("--event", action="append", help="event node_id; repeatable")
     parser.add_argument("--all", action="store_true", help="every event in the spine")
     parser.add_argument("--dry-run", action="store_true", help="print, write nothing")
+    parser.add_argument(
+        "--min-gdelt-goldstein", type=float, default=7.0,
+        help="materiality bar for GDELT-sourced events under --all: a ten-"
+             "mention consultation does not need a measured CAR, and measuring "
+             "a hundred thousand of them is attribution soup by construction. "
+             "Curated and COW events are ALWAYS measured.",
+    )
     args = parser.parse_args()
 
     settings = settings_module.load()
@@ -76,7 +85,8 @@ def main() -> None:
     archive = kuzu_store.query(
         graph,
         "MATCH (e:Event) RETURN e.node_id AS id, e.event_time AS date, "
-        "e.name AS name ORDER BY e.event_time, e.node_id",
+        "e.name AS name, e.goldstein AS goldstein "
+        "ORDER BY e.event_time, e.node_id",
     )
     if not archive:
         kuzu_store.close(graph)
@@ -90,7 +100,19 @@ def main() -> None:
             kuzu_store.close(graph)
             sys.exit(f"no such event(s) in the graph: {', '.join(sorted(missing))}")
     elif args.all:
-        chosen = list(archive)
+        chosen = [
+            e for e in archive
+            if not e["id"].startswith("event:gdelt-")
+            or (e["goldstein"] is not None
+                and abs(float(e["goldstein"])) >= args.min_gdelt_goldstein)
+        ]
+        excluded = len(archive) - len(chosen)
+        if excluded:
+            print(
+                f"{excluded} GDELT events below the |goldstein| "
+                f">= {args.min_gdelt_goldstein} materiality bar are not measured "
+                "(they remain in the graph and in Head B's baselines)"
+            )
     else:
         candidates = {e["id"] for e in pack.marquee_events if e.get("phase0_candidate")}
         chosen = [e for e in archive if e["id"] in candidates]
@@ -102,6 +124,17 @@ def main() -> None:
             )
 
     all_dates = {e["id"]: event_study.parse_event_date(e["date"]) for e in archive}
+    # Overlap needs only the NEIGHBOURHOOD: another event matters when its
+    # date falls inside this event's measurement window (a handful of weeks
+    # at most), and scanning all hundred thousand dates per window is a
+    # billion comparisons for the same answer.
+    timeline = sorted((date, event_id) for event_id, date in all_dates.items())
+    timeline_dates = [date for date, _ in timeline]
+
+    def _nearby(event_date: dt.date) -> dict[str, dt.date]:
+        lo = bisect.bisect_left(timeline_dates, event_date - dt.timedelta(days=1))
+        hi = bisect.bisect_right(timeline_dates, event_date + dt.timedelta(days=45))
+        return {event_id: date for date, event_id in timeline[lo:hi]}
 
     try:
         panel = pg_store.connect(settings)
@@ -110,15 +143,47 @@ def main() -> None:
         sys.exit(str(exc))
 
     market_node_ids = {m["ticker"]: m["id"] for m in pack.markets}
+    # PRELOAD, ONCE PER (ticker, frequency): the archive is a hundred thousand
+    # events after the GDELT backfill, and a per-event panel read is 800k
+    # round trips where sixteen bulk reads and an in-memory slice do the same
+    # arithmetic. Spans cover the earliest event's estimation window through
+    # the latest event's measurement window.
+    first_event = min(all_dates.values())
+    last_event = max(all_dates.values())
+    preloaded: dict[tuple[str, str], list[dict[str, Any]]] = {}
+    for m in pack.markets:
+        table = json.loads(m["native_frequency"]) if m.get("native_frequency") else {}
+        for resolution in set(table.values()) or {"day"}:
+            frequency = _PANEL_FREQUENCY[resolution]
+            key = (m["ticker"], frequency)
+            if key in preloaded:
+                continue
+            start = (
+                first_event - dt.timedelta(days=_LOOKBACK_DAYS[resolution])
+            ).isoformat()
+            end = (last_event + dt.timedelta(days=400)).isoformat()
+            preloaded[key] = pg_store.series(
+                panel, m["ticker"], start=start, end=end, frequency=frequency
+            )
+
+    preloaded_dates = {
+        key: [str(r["obs_date"]) for r in rows] for key, rows in preloaded.items()
+    }
+
+    def _slice(ticker: str, frequency: str, start: str, end: str) -> list[dict[str, Any]]:
+        rows = preloaded.get((ticker, frequency), [])
+        dates = preloaded_dates.get((ticker, frequency), [])
+        return rows[bisect.bisect_left(dates, start) : bisect.bisect_right(dates, end)]
+
     written = 0
     try:
         for event in chosen:
             event_date = all_dates[event["id"]]
-            # Each market reads the panel AT ITS OWN ERA'S FREQUENCY, looking
-            # back far enough for that resolution's estimation window — the
-            # fidelity gradient applied to the read path. A market with no
-            # native frequency at the date is alive-but-dataless; series()
-            # for it returns nothing and the engine records the skip.
+            # Each market reads AT ITS OWN ERA'S FREQUENCY, looking back far
+            # enough for that resolution's estimation window — the fidelity
+            # gradient applied to the read path. A market with no native
+            # frequency at the date is alive-but-dataless; the empty slice
+            # becomes the engine's recorded skip.
             prices: dict[str, list[dict[str, Any]]] = {}
             for m in pack.markets:
                 try:
@@ -131,16 +196,15 @@ def main() -> None:
                 ).isoformat()
                 end = (event_date + dt.timedelta(days=400 if resolution == "year" else 60)
                        ).isoformat()
-                prices[m["ticker"]] = pg_store.series(
-                    panel, m["ticker"], start=start, end=end,
-                    frequency=_PANEL_FREQUENCY[resolution],
+                prices[m["ticker"]] = _slice(
+                    m["ticker"], _PANEL_FREQUENCY[resolution], start, end
                 )
 
             results, skips = event_study.compute_effects(
                 {"node_id": event["id"], "event_time": event["date"]},
                 pack.markets,
                 prices=prices,
-                other_event_dates=all_dates,
+                other_event_dates=_nearby(event_date),
             )
 
             print(f"\n{event['id']}  {event['date']}  {event['name']}")
