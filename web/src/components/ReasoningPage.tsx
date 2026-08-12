@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
-import { getWhatIf, getWhatIfOptions, postAssess } from '../api'
-import type { WhatIfOptions, WhatIfResult } from '../types'
+import { getForecasts, getWhatIf, getWhatIfOptions, postAssess } from '../api'
+import type { ForecastSummary, WhatIfOptions, WhatIfResult } from '../types'
 
 /** The reasoning layer's two halves, degrading honestly: the deterministic
  *  what-if engine (always on — codebook, dyad baselines, admissible
@@ -46,11 +46,14 @@ export default function ReasoningPage({
   const [question, setQuestion] = useState('')
   const [asking, setAsking] = useState(false)
   const [answer, setAnswer] = useState<{ dark: boolean; text: string } | null>(null)
+  const [trail, setTrail] = useState<ForecastSummary[] | null>(null)
 
   useEffect(() => {
     setOptions(undefined)
     setResult(null)
     setAnswer(null)
+    setTrail(null)
+    getForecasts(region).then((r) => setTrail(r?.rows ?? []))
     getWhatIfOptions(region).then((o) => {
       setOptions(o)
       if (o) {
@@ -260,6 +263,85 @@ export default function ReasoningPage({
             </div>
           )}
         </>
+      )}
+
+      {/* ── The trail ───────────────────────────────────────────────────── */}
+      <h2 className="text-xl mt-14" style={{ color: 'var(--text)' }}>
+        The trail
+      </h2>
+      <p className="mt-2 text-sm leading-relaxed max-w-3xl" style={{ color: 'var(--muted)' }}>
+        Every frozen call this region has made, with how it is being judged:
+        near-term calls are Brier-scored the day their horizon closes, and
+        long-horizon calls carry the structural method's retrodiction — its
+        record when run against the past. An open horizon is an open
+        question, not a zero.
+      </p>
+      {trail === null ? (
+        <p className="mt-4 text-sm mono" style={{ color: 'var(--muted)' }}>Reaching the archive…</p>
+      ) : trail.length === 0 ? (
+        <p className="mt-4 text-sm" style={{ color: 'var(--muted)' }}>
+          Nothing frozen for this region yet.
+        </p>
+      ) : (
+        <ul className="mt-5 space-y-4 max-w-4xl">
+          {trail.map((f) => (
+            <li
+              key={f.node_id}
+              className="border p-4"
+              style={{ borderColor: 'var(--line)', background: 'var(--panel)' }}
+            >
+              <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
+                <span
+                  className="mono text-[10px] uppercase tracking-wider border px-2 py-0.5"
+                  style={{ borderColor: 'var(--line)', color: 'var(--accent)' }}
+                >
+                  {f.mode === 'near_term' ? 'near term' : 'long horizon'}
+                </span>
+                <span className="mono text-xs" style={{ color: 'var(--text)' }}>{f.node_id}</span>
+                <span className="mono text-[10px]" style={{ color: 'var(--muted)' }}>
+                  frozen {f.generated_at?.slice(0, 10)} · horizon {f.horizon_end ?? 'open'}
+                </span>
+              </div>
+              <p className="mt-2 text-sm" style={{ color: 'var(--muted)' }}>{f.question}</p>
+              {f.mode === 'near_term' ? (
+                <p className="mono text-xs mt-2" style={{ color: 'var(--text)' }}>
+                  {f.brier_score !== null
+                    ? `Brier ${f.brier_score.toFixed(4)} — 0 is perfect, 0.25 is coin-flip calling`
+                    : `unresolved — the horizon runs through ${f.horizon_end ?? '?'}`}
+                </p>
+              ) : (
+                <div className="mt-2">
+                  {f.retrodiction ? (
+                    f.retrodiction.hit_rate !== null ? (
+                      <p className="mono text-xs" style={{ color: 'var(--text)' }}>
+                        retrodiction as of {f.retrodiction.as_of}: hit rate{' '}
+                        {(f.retrodiction.hit_rate * 100).toFixed(0)}% vs base rate{' '}
+                        {f.retrodiction.base_rate !== null
+                          ? `${(f.retrodiction.base_rate * 100).toFixed(0)}%`
+                          : '?'}{' '}
+                        — reported beside each other, never adjudicated
+                      </p>
+                    ) : (
+                      <p className="mono text-xs" style={{ color: 'var(--muted)' }}>
+                        retrodiction as of {f.retrodiction.as_of}:{' '}
+                        {f.retrodiction.verdict ?? 'no verdict'}
+                      </p>
+                    )
+                  ) : (
+                    <p className="mono text-xs" style={{ color: 'var(--muted)' }}>
+                      retrodiction pending — attached by the calibration pass on boot
+                    </p>
+                  )}
+                  {f.boundary_statement && (
+                    <p className="text-xs italic mt-2" style={{ color: 'var(--muted)' }}>
+                      {f.boundary_statement}
+                    </p>
+                  )}
+                </div>
+              )}
+            </li>
+          ))}
+        </ul>
       )}
 
       {/* ── The agent ───────────────────────────────────────────────────── */}

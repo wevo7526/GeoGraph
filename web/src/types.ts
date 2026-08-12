@@ -203,6 +203,19 @@ export interface CaseStudy {
   status: 'measured' | 'not_yet_measured'
 }
 
+export interface Retrodiction {
+  as_of: string
+  region_pack: string
+  verdict?: string
+  flagged_years: number[]
+  hot_years?: number[]
+  hits: number[]
+  hit_rate: number | null
+  base_rate: number | null
+  boundary_statement?: string
+  method?: string
+}
+
 export interface ForecastSummary {
   node_id: string
   mode: 'near_term' | 'long_horizon'
@@ -212,6 +225,7 @@ export interface ForecastSummary {
   horizon_end: string | null
   boundary_statement: string | null
   brier_score: number | null
+  retrodiction: Retrodiction | null
 }
 
 export interface ForecastScenario {

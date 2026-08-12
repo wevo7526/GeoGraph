@@ -46,7 +46,10 @@ def dyad_event_rows(conn: Any) -> list[dict[str, Any]]:
     )
 
 
-def _quarter(date: str) -> tuple[int, int]:
+def quarter(date: str) -> tuple[int, int]:
+    """(year, quarter) of an ISO date at any archive resolution — shared by
+    the base-rate counter here and the calibration scorer, so a forecast and
+    its later scoring can never disagree about what a quarter is."""
     year = int(date[:4])
     month = int(date[5:7]) if len(date) >= 7 else 1
     return year, (month - 1) // 3 + 1
@@ -74,7 +77,7 @@ def _base_rate(
         date = str(row["event_time"])
         if not regimes.comparable(regime_anchor, date):
             continue
-        episode_quarters.setdefault(row["dyad_id"], set()).add(_quarter(date))
+        episode_quarters.setdefault(row["dyad_id"], set()).add(quarter(date))
 
     episodes = 0
     continuations = 0

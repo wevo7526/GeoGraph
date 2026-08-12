@@ -54,6 +54,7 @@ _METRICS_SCRIPT = _ROOT / "scripts" / "run_network_metrics.py"
 _FORECASTS_SCRIPT = _ROOT / "scripts" / "run_forecasts.py"
 _GDELT_SCRIPT = _ROOT / "scripts" / "backfill_gdelt.py"
 _BACKTEST_SCRIPT = _ROOT / "scripts" / "run_backtest.py"
+_SCORE_SCRIPT = _ROOT / "scripts" / "score_forecasts.py"
 _DERIVED_DIR = _ROOT / "data" / "derived"
 _DEEP_TIER_SCRIPT = _ROOT / "scripts" / "load_deep_tier.py"
 _LOAD_13F_SCRIPT = _ROOT / "scripts" / "load_13f.py"
@@ -414,6 +415,21 @@ def _run_backtest() -> dict[str, Any]:
     return {k: v for k, v in result.items() if k != "step"}
 
 
+def _score_forecasts() -> dict[str, Any]:
+    """Calibration over the frozen trail (Phase 5): Brier where horizons have
+    resolved, retrodiction on the long-horizon nodes. Needs the write lock,
+    so it runs as a boot child like the freeze itself."""
+    if os.getenv("GEOGRAPH_SCORE_ON_BOOT", "1").strip().lower() in {"0", "false", "no"}:
+        return {"ok": True, "skipped": "disabled by GEOGRAPH_SCORE_ON_BOOT"}
+    result = _run_step(
+        "score forecasts",
+        [sys.executable, str(_SCORE_SCRIPT)],
+        timeout=_SEED_TIMEOUT_SECONDS,
+        echo=False,
+    )
+    return {k: v for k, v in result.items() if k != "step"}
+
+
 def _boot_status() -> dict[str, Any]:
     if _disabled():
         _log("seeding disabled by GEOGRAPH_SEED_ON_BOOT")
@@ -447,6 +463,7 @@ def _boot_status() -> dict[str, Any]:
         ("study", lambda: _run_study(names)),
         ("metrics", _run_network_metrics),
         ("forecasts", _freeze_forecasts),
+        ("scores", _score_forecasts),
         ("backtest", _run_backtest),
     )
     for key, step in steps:

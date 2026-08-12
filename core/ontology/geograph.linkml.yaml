@@ -532,6 +532,15 @@ classes:
         range: float
         annotations:
           derived: true
+      retrodiction_json:
+        description: >-
+          Filled by calibration for long_horizon mode - the Turchin
+          retrospective of the structural method as of a past cutoff (hit
+          rate beside base rate, reported never adjudicated), serialized.
+          Point calibration does not apply to pressure-over-windows output;
+          this is that mode's honest evaluation. DERIVED.
+        annotations:
+          derived: true
 
   Scenario:
     description: >-

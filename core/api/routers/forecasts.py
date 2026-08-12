@@ -23,8 +23,17 @@ _SUMMARY_COLUMNS = (
     "f.node_id AS node_id, f.mode AS mode, f.region_pack AS region_pack, "
     "f.question AS question, f.generated_at AS generated_at, "
     "f.horizon_end AS horizon_end, f.boundary_statement AS boundary_statement, "
-    "f.brier_score AS brier_score"
+    "f.brier_score AS brier_score, f.retrodiction_json AS retrodiction_json"
 )
+
+
+def _with_retrodiction(row: dict[str, Any]) -> dict[str, Any]:
+    """retrodiction_json → a parsed `retrodiction` (or None): the API serves
+    structures, not double-encoded strings."""
+    out = dict(row)
+    raw = out.pop("retrodiction_json", None)
+    out["retrodiction"] = json.loads(raw) if raw else None
+    return out
 
 
 def _conn(request: Request) -> Any:
@@ -62,7 +71,7 @@ def list_forecasts(
         "ORDER BY f.generated_at DESC, f.node_id",
         params,
     )
-    return {"rows": rows}
+    return {"rows": [_with_retrodiction(row) for row in rows]}
 
 
 @router.get("/forecasts/{node_id:path}/paper")
@@ -158,7 +167,7 @@ def get_forecast(request: Request, node_id: str) -> dict[str, Any]:
     )
     if not rows:
         raise HTTPException(status_code=404, detail=f"no such forecast: {node_id}")
-    row = dict(rows[0])
+    row = _with_retrodiction(rows[0])
     row["scenarios"] = json.loads(row.pop("scenarios_json") or "[]")
     row["frozen_inputs"] = json.loads(row.pop("frozen_inputs_json") or "{}")
     return row
