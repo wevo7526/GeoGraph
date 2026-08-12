@@ -63,9 +63,10 @@ _SEED_TIMEOUT_SECONDS = 300
 #: ceiling than the seed — but still a ceiling.
 _LOAD_TIMEOUT_SECONDS = 900
 
-#: How much history the first load pulls. Enough for the estimation window
-#: (120 sessions) plus the measurement windows, several times over.
-_LOAD_FROM = "2023-01-01"
+#: How far before the spine's EARLIEST event the panel must reach: the
+#: estimation window (120 sessions) plus its gap and the measurement windows,
+#: with slack for weekends and holidays. Matches run_event_study._LOOKBACK_DAYS.
+_LOOKBACK_DAYS = 400
 
 
 def _log(message: str) -> None:
@@ -131,42 +132,83 @@ def _seed_one(name: str) -> dict[str, Any]:
     return {"pack": name, **{k: v for k, v in result.items() if k != "step"}}
 
 
-def _panel_is_empty() -> bool | None:
-    """Does the panel hold any observation at all? None if it cannot be asked."""
+def _panel_first_observation() -> tuple[bool, str | None]:
+    """(reachable, earliest obs_date as ISO string or None when empty)."""
     from core import settings as settings_module
     from core.panel import pg_store
 
     settings = settings_module.load()
     if not settings.database_url:
-        return None
+        return False, None
     try:
         conn = pg_store.connect(settings)
     except pg_store.PanelUnavailable:
-        return None
+        return False, None
     try:
         with conn.cursor() as cur:
-            cur.execute("SELECT EXISTS (SELECT 1 FROM market_observations)")
+            cur.execute("SELECT min(obs_date) FROM market_observations")
             row = cur.fetchone()
-        return not bool(row and row[0])
+        first = row[0] if row else None
+        return True, first.isoformat() if first is not None else None
     finally:
         conn.close()
 
 
-def _load_panel_if_empty(pack_names: list[str]) -> dict[str, Any] | None:
-    """Fetch prices ONCE. Postgres survives a redeploy; the network call
-    should not be repeated on every one."""
+def _panel_is_empty() -> bool | None:
+    """Does the panel hold any observation at all? None if it cannot be asked."""
+    reachable, first = _panel_first_observation()
+    if not reachable:
+        return None
+    return first is None
+
+
+def _spine_needs_from(pack_names: list[str]) -> str | None:
+    """The panel depth the SPINE requires: the earliest marquee event across
+    the packs, minus the estimation lookback. None if no pack loads."""
+    import datetime as dt
+
+    from core import packs
+
+    earliest: dt.date | None = None
+    for name in pack_names:
+        try:
+            pack = packs.load(name)
+        except Exception:  # noqa: BLE001 - a broken pack is the seed step's report
+            continue
+        for event in pack.marquee_events:
+            date = dt.date.fromisoformat(str(event["date"])[:10])
+            if earliest is None or date < earliest:
+                earliest = date
+    if earliest is None:
+        return None
+    return (earliest - dt.timedelta(days=_LOOKBACK_DAYS)).isoformat()
+
+
+def _load_panel_if_shallow(pack_names: list[str]) -> dict[str, Any] | None:
+    """Fetch prices when the panel cannot serve the whole spine.
+
+    Postgres survives a redeploy, so the yfinance call is not repeated on
+    every boot — but "holds some rows" is not the test that matters. Phase 1
+    measures the WHOLE spine, so the guard is DEPTH: the panel must reach the
+    estimation window of the earliest marquee event. Loading without --start
+    pulls each market from its own inception (the full history), and every
+    row is an upsert, so a deepening reload converges instead of duplicating.
+    """
     if os.getenv("GEOGRAPH_LOAD_PANEL", "1").strip().lower() in {"0", "false", "no"}:
         return {"ok": True, "skipped": "disabled by GEOGRAPH_LOAD_PANEL"}
-    empty = _panel_is_empty()
-    if empty is None:
+    reachable, first = _panel_first_observation()
+    if not reachable:
         return None
-    if not empty:
-        _log("panel already holds observations — no fetch")
-        return {"ok": True, "skipped": "panel already loaded"}
+    needed = _spine_needs_from(pack_names)
+    if first is not None and (needed is None or first <= needed):
+        _log(f"panel reaches {first} — deep enough for the spine ({needed})")
+        return {"ok": True, "skipped": f"panel reaches {first}"}
+    if first is not None:
+        _log(f"panel starts {first} but the spine needs {needed} — deepening")
     results = [
         _run_step(
             f"load panel {name}",
-            [sys.executable, str(_LOAD_PANEL_SCRIPT), name, "--start", _LOAD_FROM],
+            [sys.executable, str(_LOAD_PANEL_SCRIPT), name],
             timeout=_LOAD_TIMEOUT_SECONDS,
         )
         for name in pack_names
@@ -175,12 +217,15 @@ def _load_panel_if_empty(pack_names: list[str]) -> dict[str, Any] | None:
 
 
 def _run_study(pack_names: list[str]) -> dict[str, Any] | None:
-    """The transmission engine over the phase-0 episode.
+    """The transmission engine over the WHOLE spine (Phase 1, build-spec §18).
 
     Runs every boot, unconditionally: it is pure computation over the panel,
     and the graph it writes into lives on a volume that may have been rebuilt.
     Re-deriving the same numbers is the cheapest way to keep the two stores
     consistent — and the engine being deterministic is what makes that safe.
+    --all measures every marquee event; a market with no data at an event's
+    date is a recorded skip, not an error, so the deep spine costs nothing
+    but honesty.
     """
     if os.getenv("GEOGRAPH_STUDY_ON_BOOT", "1").strip().lower() in {"0", "false", "no"}:
         return {"ok": True, "skipped": "disabled by GEOGRAPH_STUDY_ON_BOOT"}
@@ -190,7 +235,7 @@ def _run_study(pack_names: list[str]) -> dict[str, Any] | None:
     results = [
         _run_step(
             f"event study {name}",
-            [sys.executable, str(_STUDY_SCRIPT), name],
+            [sys.executable, str(_STUDY_SCRIPT), name, "--all"],
             timeout=_SEED_TIMEOUT_SECONDS,
             echo=False,
         )
@@ -245,7 +290,7 @@ def _boot_status() -> dict[str, Any]:
     # API from coming up.
     steps: tuple[tuple[str, Callable[[], dict[str, Any] | None]], ...] = (
         ("panel", _apply_panel_schema),
-        ("prices", lambda: _load_panel_if_empty(names)),
+        ("prices", lambda: _load_panel_if_shallow(names)),
         ("study", lambda: _run_study(names)),
     )
     for key, step in steps:

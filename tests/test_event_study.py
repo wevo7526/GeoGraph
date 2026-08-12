@@ -345,3 +345,37 @@ def test_a_flat_history_yields_no_t_stat_rather_than_a_division_by_zero():
     assert car_0_1.abnormal_return == pytest.approx(0.05)
     assert math.isnan(car_0_1.t_stat)
     assert math.isnan(car_0_1.p_value)
+
+
+# ── Phase 1: the whole spine, accounted for ──────────────────────────────────
+
+
+def test_every_spine_event_and_market_is_measured_or_a_recorded_skip():
+    """THE COVERAGE INVARIANT (build-spec §18 Phase 1). Run the engine over
+    every marquee event × every pack market with an empty panel: nothing is
+    measurable, so every single pair must come back as a recorded skip —
+    never silently absent. Silence is how "we didn't look" gets mistaken for
+    "nothing happened"."""
+    from core import packs
+
+    pack = packs.load("mena")
+    all_dates = {
+        e["id"]: dt.date.fromisoformat(str(e["date"])[:10]) for e in pack.marquee_events
+    }
+    assert len(pack.marquee_events) >= 15  # the spine, not the episode
+
+    for event in pack.marquee_events:
+        effects, skips = event_study.compute_effects(
+            {"node_id": event["id"], "event_time": event["date"]},
+            pack.markets,
+            prices={m["ticker"]: [] for m in pack.markets},
+            other_event_dates=all_dates,
+        )
+        assert effects == []
+        accounted = {s.market_ticker for s in skips}
+        assert accounted == {m["ticker"] for m in pack.markets}, (
+            f"{event['id']}: unaccounted markets "
+            f"{sorted({m['ticker'] for m in pack.markets} - accounted)}"
+        )
+        for skip in skips:
+            assert skip.reason, f"{event['id']} {skip.market_ticker}: skip with no reason"

@@ -46,7 +46,11 @@ WORKDIR /app
 # to core's own location.
 COPY pyproject.toml README.md ./
 COPY core/__init__.py core/
-RUN pip install --no-cache-dir ".[api,panel,mcp]" \
+# `ingest` is not optional in the image: boot loads the price panel with
+# yfinance/FRED before the API starts, and without the extra the panel stays
+# empty and the transmission engine measures nothing, forever reporting
+# "panel empty" as if that were a fact about the world.
+RUN pip install --no-cache-dir ".[api,panel,mcp,ingest]" \
  && pip uninstall --yes geograph
 
 ENV PYTHONPATH=/app
