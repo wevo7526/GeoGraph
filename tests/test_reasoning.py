@@ -286,3 +286,36 @@ def test_near_term_is_deterministic_and_clock_free(db_path):
     second = forecasting.forecast(db_path, "q", region_pack="mena")
     assert first == second
     assert "generated_at" not in first  # the caller stamps at freeze time
+
+
+# ── freezing (build-spec §17: frozen at generation, scorable later) ──────────
+
+
+def test_freezing_persists_both_modes_with_recountable_inputs(db_path):
+    import json
+
+    freeze = _load("run_forecasts").freeze
+
+    written = freeze(db_path, region_pack="mena")
+    assert {w["mode"] for w in written} == {"near_term", "long_horizon"}
+    # Same archive state -> same node ids: a re-freeze merges onto itself.
+    again = freeze(db_path, region_pack="mena")
+    assert [w["node_id"] for w in again] == [w["node_id"] for w in written]
+
+    conn = kuzu_store.connect(db_path, read_only=True)
+    try:
+        rows = kuzu_store.query(
+            conn,
+            "MATCH (f:Forecast) RETURN f.node_id AS node_id, f.mode AS mode, "
+            "f.scenarios_json AS scenarios, f.frozen_inputs_json AS inputs, "
+            "f.boundary_statement AS boundary",
+        )
+    finally:
+        kuzu_store.close(conn)
+    assert len(rows) == 2
+    by_mode = {r["mode"]: r for r in rows}
+    long_inputs = json.loads(by_mode["long_horizon"]["inputs"])
+    assert long_inputs["pressure"], "the trajectory rides in the frozen inputs"
+    assert by_mode["long_horizon"]["boundary"]
+    near = json.loads(by_mode["near_term"]["scenarios"])
+    assert all(s["likelihood"] is not None for s in near)

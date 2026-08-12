@@ -203,6 +203,37 @@ export interface CaseStudy {
   status: 'measured' | 'not_yet_measured'
 }
 
+export interface ForecastSummary {
+  node_id: string
+  mode: 'near_term' | 'long_horizon'
+  region_pack: string | null
+  question: string
+  generated_at: string
+  horizon_end: string | null
+  boundary_statement: string | null
+  brier_score: number | null
+}
+
+export interface ForecastScenario {
+  scenario_name: string
+  likelihood: number | null
+  market_implication: string
+  rationale: string
+  analogue_ids?: string[]
+}
+
+export interface ForecastDetail extends ForecastSummary {
+  scenarios: ForecastScenario[]
+  frozen_inputs: {
+    pressure?: Record<string, number>
+    windows?: Array<{ start: number; end: number; level: string }>
+    episodes?: number
+    continuations?: number
+    as_of?: string
+    method?: string
+  }
+}
+
 export interface CaseStudyIndexEntry {
   slug: string
   pack: string

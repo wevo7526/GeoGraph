@@ -6,6 +6,8 @@ import type {
   EventDetail,
   EventList,
   Flow,
+  ForecastDetail,
+  ForecastSummary,
   GraphActor,
   Health,
   Pack,
@@ -75,6 +77,11 @@ export const getActors = (params: { start?: string; end?: string } = {}) => {
   const suffix = query.toString() ? `?${query}` : ''
   return get<{ rows: GraphActor[] }>(`/api/actors${suffix}`)
 }
+
+export const getForecasts = () => get<{ rows: ForecastSummary[] }>('/api/forecasts')
+
+export const getForecast = (nodeId: string) =>
+  get<ForecastDetail>(`/api/forecasts/${encodeURIComponent(nodeId)}`)
 
 export const getCaseStudies = () =>
   get<{ rows: CaseStudyIndexEntry[] }>('/api/case-studies')

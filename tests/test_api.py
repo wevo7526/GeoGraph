@@ -274,10 +274,13 @@ def test_an_unknown_case_study_names_the_ones_that_exist(client):
 # ── unbuilt layers ───────────────────────────────────────────────────────────
 
 
-def test_unbuilt_endpoints_name_their_phase(client):
-    response = client.get("/api/forecasts/scenarios")
-    assert response.status_code == 501
-    assert "Phase" in response.json()["detail"]
+def test_forecasts_serve_empty_before_any_freeze(client):
+    # Built with the reasoning layer: an archive nobody has frozen a call
+    # over answers with an empty trail — never a 501, never an invention.
+    response = client.get("/api/forecasts")
+    assert response.status_code == 200
+    assert response.json() == {"rows": []}
+    assert client.get("/api/forecasts/forecast:nope").status_code == 404
 
 
 def test_network_metrics_serves_empty_before_any_window_is_computed(client):

@@ -50,6 +50,7 @@ _SEED_SCRIPT = _ROOT / "scripts" / "seed_pack.py"
 _LOAD_PANEL_SCRIPT = _ROOT / "scripts" / "load_panel.py"
 _STUDY_SCRIPT = _ROOT / "scripts" / "run_event_study.py"
 _METRICS_SCRIPT = _ROOT / "scripts" / "run_network_metrics.py"
+_FORECASTS_SCRIPT = _ROOT / "scripts" / "run_forecasts.py"
 _DEEP_TIER_SCRIPT = _ROOT / "scripts" / "load_deep_tier.py"
 _LOAD_13F_SCRIPT = _ROOT / "scripts" / "load_13f.py"
 
@@ -322,6 +323,20 @@ def _apply_panel_schema() -> dict[str, Any] | None:
     return {"ok": True}
 
 
+def _freeze_forecasts() -> dict[str, Any]:
+    """Freeze both forecast modes (Phase 5). Deterministic payloads, one
+    clock stamp at persistence — see scripts/run_forecasts.py."""
+    if os.getenv("GEOGRAPH_FORECASTS_ON_BOOT", "1").strip().lower() in {"0", "false", "no"}:
+        return {"ok": True, "skipped": "disabled by GEOGRAPH_FORECASTS_ON_BOOT"}
+    result = _run_step(
+        "freeze forecasts",
+        [sys.executable, str(_FORECASTS_SCRIPT)],
+        timeout=_SEED_TIMEOUT_SECONDS,
+        echo=False,
+    )
+    return {k: v for k, v in result.items() if k != "step"}
+
+
 def _boot_status() -> dict[str, Any]:
     if _disabled():
         _log("seeding disabled by GEOGRAPH_SEED_ON_BOOT")
@@ -353,6 +368,7 @@ def _boot_status() -> dict[str, Any]:
         ("prices", lambda: _load_panel_if_shallow(names)),
         ("study", lambda: _run_study(names)),
         ("metrics", _run_network_metrics),
+        ("forecasts", _freeze_forecasts),
     )
     for key, step in steps:
         try:

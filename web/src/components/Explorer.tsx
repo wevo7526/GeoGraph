@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   getActors,
+  getForecast,
+  getForecasts,
   getCoverage,
   getDyads,
   getEvent,
@@ -29,6 +31,7 @@ import type {
   Effect,
   EventDetail,
   Flow,
+  ForecastDetail,
   GraphActor,
   GraphEvent,
   Pack,
@@ -499,6 +502,157 @@ function ActorPanel({
   )
 }
 
+/** The pressure trajectory: the long-horizon mode's spine, drawn. Flagged
+ *  windows shade the background — elevated in slate, high in the alert tone —
+ *  so "when was the system loaded" is answered by looking, and the boundary
+ *  statement below says exactly what this is not. */
+function PressureLine({ detail }: { detail: ForecastDetail }) {
+  const pressure = detail.frozen_inputs.pressure ?? {}
+  const years = Object.keys(pressure).map(Number).sort((a, b) => a - b)
+  if (years.length < 2) return null
+  const W = 300
+  const H = 72
+  const x = (year: number) =>
+    4 + ((year - years[0]) / (years[years.length - 1] - years[0])) * (W - 8)
+  const y = (v: number) => H - 6 - v * (H - 16)
+  const path = years
+    .map((year, i) => `${i ? 'L' : 'M'}${x(year).toFixed(1)},${y(pressure[year]).toFixed(1)}`)
+    .join(' ')
+  return (
+    <figure className="mt-3">
+      <svg viewBox={`0 0 ${W} ${H}`} className="w-full" role="img" aria-label="structural pressure">
+        {(detail.frozen_inputs.windows ?? []).map((w) => (
+          <rect
+            key={`${w.start}-${w.level}`}
+            x={x(Math.max(w.start, years[0]))}
+            y={4}
+            width={Math.max(1, x(Math.min(w.end, years[years.length - 1])) - x(Math.max(w.start, years[0])))}
+            height={H - 10}
+            fill={w.level === 'high' ? 'rgba(164, 74, 63, 0.18)' : 'rgba(138, 147, 166, 0.12)'}
+          />
+        ))}
+        <line x1={0} y1={y(0.6)} x2={W} y2={y(0.6)} stroke="#232a3a" strokeWidth={1} strokeDasharray="3 3" />
+        <path d={path} fill="none" stroke="#b08d57" strokeWidth={1.5} />
+      </svg>
+      <figcaption className="text-xs mono mt-1" style={{ color: 'var(--muted)' }}>
+        composite pressure, {years[0]}–{years[years.length - 1]} · shaded: flagged windows
+      </figcaption>
+    </figure>
+  )
+}
+
+/** The reasoning layer, on screen: both frozen forecast modes. Appears when
+ *  the slider crosses "now" — the forward segment of the timeline renders
+ *  scenario space, and this panel IS that space. */
+function ForecastPanel() {
+  const [nearTerm, setNearTerm] = useState<ForecastDetail | null>(null)
+  const [longHorizon, setLongHorizon] = useState<ForecastDetail | null>(null)
+  const [empty, setEmpty] = useState(false)
+
+  useEffect(() => {
+    let active = true
+    getForecasts().then((list) => {
+      if (!active) return
+      const rows = list?.rows ?? []
+      if (!rows.length) {
+        setEmpty(true)
+        return
+      }
+      const newest = (mode: string) => rows.find((r) => r.mode === mode)
+      for (const [mode, set] of [
+        ['near_term', setNearTerm],
+        ['long_horizon', setLongHorizon],
+      ] as const) {
+        const summary = newest(mode)
+        if (summary) getForecast(summary.node_id).then((d) => active && d && set(d))
+      }
+    })
+    return () => {
+      active = false
+    }
+  }, [])
+
+  if (empty) {
+    return (
+      <p className="text-sm" style={{ color: 'var(--muted)' }}>
+        No forecast has been frozen over this archive yet — run
+        <span className="mono"> scripts/run_forecasts.py</span> (or redeploy;
+        the boot freezes both modes).
+      </p>
+    )
+  }
+
+  return (
+    <div>
+      <Microcaps>The forecast</Microcaps>
+
+      {nearTerm && (
+        <div className="mt-3">
+          <h3 className="text-base leading-snug">{nearTerm.question}</h3>
+          <p className="mono text-xs mt-1" style={{ color: 'var(--muted)' }}>
+            near-term · frozen {nearTerm.generated_at.slice(0, 10)} · data to{' '}
+            {nearTerm.frozen_inputs.as_of}
+          </p>
+          <ul className="mt-3 space-y-3">
+            {nearTerm.scenarios.map((s) => (
+              <li key={s.scenario_name}>
+                <div className="flex items-baseline justify-between gap-3 text-sm">
+                  <span>{s.scenario_name.split(':')[0].replaceAll('_', ' ')}</span>
+                  <span className="mono" style={{ color: 'var(--accent)' }}>
+                    {s.likelihood === null ? '—' : `${Math.round(s.likelihood * 100)}%`}
+                  </span>
+                </div>
+                {s.likelihood !== null && (
+                  <div className="mt-1 h-1" style={{ background: 'var(--line)' }}>
+                    <div
+                      className="h-1"
+                      style={{ width: `${s.likelihood * 100}%`, background: 'var(--accent)' }}
+                    />
+                  </div>
+                )}
+                <p className="text-xs mt-1 leading-relaxed" style={{ color: 'var(--muted)' }}>
+                  {s.market_implication}
+                </p>
+              </li>
+            ))}
+          </ul>
+          <p className="mono text-xs mt-2" style={{ color: 'var(--muted)' }}>
+            likelihoods are regime-gated base rates — recount them from the archive
+          </p>
+        </div>
+      )}
+
+      {longHorizon && (
+        <div className="mt-6 pt-4 border-t" style={{ borderColor: 'var(--line)' }}>
+          <h3 className="text-base leading-snug">{longHorizon.question}</h3>
+          <p className="mono text-xs mt-1" style={{ color: 'var(--muted)' }}>
+            long-horizon · to {longHorizon.horizon_end}
+          </p>
+          <PressureLine detail={longHorizon} />
+          <ul className="mt-3 space-y-3">
+            {longHorizon.scenarios.map((s) => (
+              <li key={s.scenario_name}>
+                <div className="text-sm">{s.scenario_name.replaceAll('_', ' ')}</div>
+                <p className="text-xs mt-1 leading-relaxed" style={{ color: 'var(--muted)' }}>
+                  {s.market_implication}
+                </p>
+              </li>
+            ))}
+          </ul>
+          {longHorizon.boundary_statement && (
+            <p
+              className="text-xs mt-4 leading-relaxed italic"
+              style={{ color: 'var(--muted)' }}
+            >
+              {longHorizon.boundary_statement}
+            </p>
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
+
 export default function Explorer({ onNavigate }: { onNavigate: (route: string) => void }) {
   const [regimes, setRegimes] = useState<Segmentation | null>(null)
   const [pack, setPack] = useState<Pack | null>(null)
@@ -888,7 +1042,9 @@ export default function Explorer({ onNavigate }: { onNavigate: (route: string) =
           className="pane-scroll border-l px-4 py-4"
           style={{ borderColor: 'var(--line)', background: 'var(--panel)' }}
         >
-          {selection?.kind === 'event' ? (
+          {!selection && year > YEAR_NOW ? (
+            <ForecastPanel />
+          ) : selection?.kind === 'event' ? (
             <EventDetailPanel nodeId={selection.id} />
           ) : selection?.kind === 'dyad' ? (
             <DyadPanel dyadId={selection.id} onSelectEvent={selectEvent} />
