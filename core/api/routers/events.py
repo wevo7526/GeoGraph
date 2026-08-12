@@ -93,6 +93,30 @@ def list_events(
     return {"rows": rows[:limit], "truncated": len(rows) > limit}
 
 
+@router.get("/events/coverage")
+def coverage(request: Request, pack: str | None = None) -> dict[str, Any]:
+    """Events per YEAR across the whole archive — the slider's coverage strip.
+
+    The archive is now thousands of events, so the explorer fetches windows
+    rather than everything; this aggregate is what still lets the slider show
+    where the record is dense and where nothing has been ingested — absence
+    of a bar meaning "not ingested", never "history was quiet".
+    """
+    conn = _conn(request)
+    where = "WHERE e.region_pack = $pack " if pack else ""
+    params: dict[str, Any] = {"pack": pack} if pack else {}
+    rows = kuzu_store.query(
+        conn,
+        f"MATCH (e:Event) {where}RETURN e.event_time AS event_time",
+        params,
+    )
+    years: dict[str, int] = {}
+    for row in rows:
+        year = str(row["event_time"])[:4]
+        years[year] = years.get(year, 0) + 1
+    return {"years": years, "total": len(rows)}
+
+
 @router.get("/events/{node_id:path}/effects")
 def event_effects(request: Request, node_id: str) -> dict[str, Any]:
     """What this event was measured to have done, per market and window.

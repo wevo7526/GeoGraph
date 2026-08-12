@@ -1,5 +1,5 @@
 import { useMemo } from 'react'
-import type { GraphEvent, Segmentation } from '../types'
+import type { Segmentation } from '../types'
 
 // The signature interaction (build-spec section 15): scrub 120 years and
 // watch the network reconfigure through regimes. The range runs PAST the
@@ -13,27 +13,32 @@ interface Props {
   year: number
   onChange: (year: number) => void
   regimes: Segmentation | null
-  events?: GraphEvent[] | null
+  /** Events per year from /api/events/coverage — the whole archive's shape,
+   *  which the window-fetched event rows can no longer provide. */
+  coverage?: Record<string, number> | null
 }
 
-export default function TimeSlider({ year, onChange, regimes, events }: Props) {
+export default function TimeSlider({ year, onChange, regimes, coverage }: Props) {
   const span = YEAR_MAX - YEAR_MIN
   const pct = (y: number) => `${((y - YEAR_MIN) / span) * 100}%`
   const boundaries = (regimes?.polarity_epoch ?? [])
     .map((r) => Number(r.start.slice(0, 4)))
     .filter((y) => y > YEAR_MIN)
 
-  // Coverage, drawn: a mark per year the archive actually holds an event, so
-  // an empty stretch of slider reads as "not ingested yet", not "history was
-  // quiet". The same honesty rule as the explorer's empty states.
+  // Coverage, drawn: a mark per year the archive actually holds an event —
+  // denser years darker — so an empty stretch of slider reads as "not
+  // ingested yet", not "history was quiet". The same honesty rule as the
+  // explorer's empty states.
   const coveredYears = useMemo(() => {
-    const years = new Set<number>()
-    for (const e of events ?? []) {
-      const y = Number(e.event_time.slice(0, 4))
-      if (y >= YEAR_MIN && y <= YEAR_MAX) years.add(y)
+    const out: Array<{ year: number; weight: number }> = []
+    for (const [key, count] of Object.entries(coverage ?? {})) {
+      const y = Number(key)
+      if (y >= YEAR_MIN && y <= YEAR_MAX && count > 0) {
+        out.push({ year: y, weight: Math.min(1, 0.35 + count / 40) })
+      }
     }
-    return [...years]
-  }, [events])
+    return out
+  }, [coverage])
 
   return (
     <div className="px-6 py-4 border-t" style={{ borderColor: 'var(--line)' }}>
@@ -51,11 +56,11 @@ export default function TimeSlider({ year, onChange, regimes, events }: Props) {
       <div className="relative" style={{ height: 30 }}>
         {/* coverage strip sits above the track */}
         <div aria-hidden className="absolute inset-x-0 top-0" style={{ height: 5 }}>
-          {coveredYears.map((y) => (
+          {coveredYears.map(({ year: y, weight }) => (
             <span
               key={y}
               className="absolute top-0 h-full"
-              style={{ left: pct(y), width: 2, background: 'var(--accent)', opacity: 0.55 }}
+              style={{ left: pct(y), width: 2, background: 'var(--accent)', opacity: weight }}
             />
           ))}
         </div>

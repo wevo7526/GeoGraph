@@ -221,6 +221,19 @@ export default function Graph3D({
     return { nodes, links }
   }, [actors, relations, dyads, activity])
 
+  // A durable relation outside its validity window is NOT drawn — an
+  // alliance signed in 1949 is a false claim on the 1914 screen. The check
+  // styles rather than restructures: the LAYOUT stays a function of the
+  // century's whole structure, so scrubbing never reheats the simulation.
+  const inWindow = useCallback(
+    (r: Relation | undefined) => {
+      if (!r) return true
+      if (r.valid_from && r.valid_from > windowTo) return false
+      return !(r.valid_to && r.valid_to < windowFrom)
+    },
+    [windowFrom, windowTo],
+  )
+
   // FOCUS: selecting an actor dims everything not attached to it, and what IS
   // attached keeps its own layer color — which kind of tie it is matters as
   // much as that there is one.
@@ -303,12 +316,20 @@ export default function Graph3D({
     graph.d3Force('z', forceZ(0).strength(0.045))
   }, [data])
 
-  // Frame the graph when the structure changes, once the simulation settles.
+  // Frame the graph ONCE per structure, when the simulation actually
+  // settles — a timer guesses and guesses wrong as the cloud keeps
+  // expanding. The guard matters: onEngineStop also fires after every drag,
+  // and auto-refit there would yank the camera out of the viewer's hands.
+  const fitted = useRef(false)
   useEffect(() => {
-    if (!data.nodes.length) return
-    const timer = window.setTimeout(() => fg.current?.zoomToFit(600, 40), 900)
-    return () => window.clearTimeout(timer)
+    fitted.current = false
   }, [data.nodes.length])
+  const handleEngineStop = useCallback(() => {
+    if (!fitted.current) {
+      fitted.current = true
+      fg.current?.zoomToFit(600, 40)
+    }
+  }, [])
 
   const describeLink = useCallback((l: SimLink): string => {
     const name = (side: string | Sim) => (typeof side === 'string' ? side : side.name)
@@ -361,16 +382,20 @@ export default function Graph3D({
         nodeThreeObjectExtend
         nodeThreeObject={nodeLabelObject}
         linkColor={(l) => {
+          if (l.kind === 'relation' && !inWindow(l.relation)) return 'rgba(0,0,0,0)'
           if (focus && !focus.edges.has(l.key)) return DIM_LINK
           return l.color
         }}
         linkWidth={(l) => {
+          if (l.kind === 'relation' && !inWindow(l.relation)) return 0
           if (focus) return focus.edges.has(l.key) ? Math.max(l.width, 1.6) : 0.3
           return l.width
         }}
         linkOpacity={focus ? 1 : 0.75}
         linkCurvature={0}
-        linkDirectionalParticles={(l) => l.particles}
+        linkDirectionalParticles={(l) =>
+          l.kind === 'relation' && !inWindow(l.relation) ? 0 : l.particles
+        }
         linkDirectionalParticleWidth={1.6}
         linkDirectionalParticleSpeed={0.004}
         onNodeClick={(n) => onSelectActor(n.id === selectedActor ? null : n.id)}
@@ -383,14 +408,18 @@ export default function Graph3D({
               : null,
           )
         }
-        onLinkClick={(l) =>
+        onLinkClick={(l) => {
+          if (l.kind === 'relation' && !inWindow(l.relation)) return
           onSelectLink(
             l.kind === 'relation'
               ? { kind: 'relation', relation: l.relation }
               : { kind: 'dyad', dyadId: l.dyad?.node_id },
           )
-        }
-        onLinkHover={(l) => onHover(l ? describeLink(l) : null)}
+        }}
+        onLinkHover={(l) => {
+          if (l && l.kind === 'relation' && !inWindow(l.relation)) return onHover(null)
+          onHover(l ? describeLink(l) : null)
+        }}
         onBackgroundClick={() => onSelectActor(null)}
         onNodeDragEnd={(n) => {
           // Pin a dragged node so the viewer's arrangement survives the tick.
@@ -398,6 +427,7 @@ export default function Graph3D({
           n.fy = n.y
           n.fz = n.z
         }}
+        onEngineStop={handleEngineStop}
         cooldownTicks={280}
         warmupTicks={0}
       />

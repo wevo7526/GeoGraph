@@ -40,6 +40,9 @@ export const getEvents = (params: { start?: string; end?: string; limit?: number
   return get<EventList>(`/api/events${suffix}`)
 }
 
+export const getCoverage = () =>
+  get<{ years: Record<string, number>; total: number }>('/api/events/coverage')
+
 export const getEvent = (nodeId: string) =>
   get<EventDetail>(`/api/events/${encodeURIComponent(nodeId)}`)
 

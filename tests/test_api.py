@@ -127,6 +127,16 @@ def test_events_come_back_in_time_order_with_their_coding(client):
         assert row["escalation_direction"] in {"escalating", "stable", "deescalating"}
 
 
+def test_coverage_counts_the_archive_by_year(client):
+    # Route-order regression guard too: /events/coverage must hit the
+    # aggregate, not fall into /events/{node_id:path} as a 404.
+    body = client.get("/api/events/coverage").json()
+    assert body["total"] == sum(body["years"].values()) > 0
+    assert body["years"]["1973"] == 1  # the embargo
+    year_of = client.get("/api/events").json()["rows"][0]["event_time"][:4]
+    assert year_of in body["years"]
+
+
 def test_a_date_range_filters_lexically(client):
     body = client.get("/api/events?start=2025-01-01&end=2025-12-31").json()
     assert {r["node_id"] for r in body["rows"]} == {

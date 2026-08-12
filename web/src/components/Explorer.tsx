@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import {
+  getCoverage,
   getDyads,
   getEvent,
   getEventEffects,
@@ -489,21 +490,25 @@ export default function Explorer({ onNavigate }: { onNavigate: (route: string) =
   const [pack, setPack] = useState<Pack | null>(null)
   const [dyads, setDyads] = useState<Dyad[]>([])
   const [relations, setRelations] = useState<Relation[]>([])
+  const [coverage, setCoverage] = useState<Record<string, number> | null>(null)
+  const [total, setTotal] = useState<number | null>(null)
   const [events, setEvents] = useState<GraphEvent[] | null>(null)
   const [year, setYear] = useState(YEAR_NOW)
   const [selection, setSelection] = useState<Selection>(null)
   const [focusActor, setFocusActor] = useState<string | null>(null)
   const [hover, setHover] = useState<string | null>(null)
   const graphHandle = useRef<Graph3DHandle>(null)
+  const windowCache = useRef<Map<string, GraphEvent[]>>(new Map())
 
   useEffect(() => {
     getRegimes().then(setRegimes)
     getPack('mena').then(setPack)
     getDyads().then((r) => setDyads(r?.rows ?? []))
     getRelations().then((r) => setRelations(r?.rows ?? []))
-    // The whole spine at once: it is ~20 rows, and holding it locally makes
-    // scrubbing the slider instant instead of a request per year.
-    getEvents({ limit: 500 }).then((result) => setEvents(result?.rows ?? []))
+    getCoverage().then((r) => {
+      setCoverage(r?.years ?? {})
+      setTotal(r?.total ?? 0)
+    })
   }, [])
 
   // A five-year trailing window: long enough that the network shows structure,
@@ -511,6 +516,28 @@ export default function Explorer({ onNavigate }: { onNavigate: (route: string) =
   // lexically, so bare years are valid bounds at every resolution.
   const windowFrom = `${year - 4}`
   const windowTo = `${year + 1}`
+
+  // The archive is thousands of events now (the deep tier landed), so the
+  // explorer fetches THE WINDOW, not the world — cached per window so
+  // scrubbing back and forth is instant after the first visit.
+  useEffect(() => {
+    const key = `${windowFrom}..${windowTo}`
+    const cached = windowCache.current.get(key)
+    if (cached) {
+      setEvents(cached)
+      return
+    }
+    let active = true
+    getEvents({ start: windowFrom, end: `${year}-12-31`, limit: 500 }).then((result) => {
+      if (!active) return
+      const rows = result?.rows ?? []
+      windowCache.current.set(key, rows)
+      setEvents(rows)
+    })
+    return () => {
+      active = false
+    }
+  }, [windowFrom, windowTo, year])
 
   const inWindow = useMemo(
     () =>
@@ -539,7 +566,7 @@ export default function Explorer({ onNavigate }: { onNavigate: (route: string) =
     }
   }
 
-  const offline = events !== null && events.length === 0
+  const offline = total === 0
 
   return (
     <div className="explorer-shell">
@@ -567,9 +594,9 @@ export default function Explorer({ onNavigate }: { onNavigate: (route: string) =
             Case study
           </button>
           <span className="mono text-xs" style={{ color: 'var(--muted)' }}>
-            {events === null
+            {total === null
               ? '…'
-              : `${events.length} events · ${dyads.length} dyads · ${relations.length} relations`}
+              : `${total} events · ${dyads.length} dyads · ${relations.length} relations`}
           </span>
         </nav>
       </header>
@@ -768,7 +795,7 @@ export default function Explorer({ onNavigate }: { onNavigate: (route: string) =
         </aside>
       </main>
 
-      <TimeSlider year={year} onChange={setYear} regimes={regimes} events={events} />
+      <TimeSlider year={year} onChange={setYear} regimes={regimes} coverage={coverage} />
     </div>
   )
 }
