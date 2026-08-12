@@ -51,6 +51,7 @@ _LOAD_PANEL_SCRIPT = _ROOT / "scripts" / "load_panel.py"
 _STUDY_SCRIPT = _ROOT / "scripts" / "run_event_study.py"
 _METRICS_SCRIPT = _ROOT / "scripts" / "run_network_metrics.py"
 _DEEP_TIER_SCRIPT = _ROOT / "scripts" / "load_deep_tier.py"
+_LOAD_13F_SCRIPT = _ROOT / "scripts" / "load_13f.py"
 
 #: What to exec when no command is given. Railway can override by setting a
 #: start command; the default is the app.
@@ -268,6 +269,22 @@ def _load_deep_tier() -> dict[str, Any]:
     return {k: v for k, v in result.items() if k != "step"}
 
 
+def _load_13f() -> dict[str, Any]:
+    """SWF capital flows from EDGAR (Phase 4's credential-free half).
+
+    Idempotent quarterly merges, ~20 polite requests to SEC per run — and
+    the volume graph keeps them, so a redeploy re-merges the same facts."""
+    if os.getenv("GEOGRAPH_13F_ON_BOOT", "1").strip().lower() in {"0", "false", "no"}:
+        return {"ok": True, "skipped": "disabled by GEOGRAPH_13F_ON_BOOT"}
+    result = _run_step(
+        "13f flows",
+        [sys.executable, str(_LOAD_13F_SCRIPT)],
+        timeout=_LOAD_TIMEOUT_SECONDS,
+        echo=False,
+    )
+    return {k: v for k, v in result.items() if k != "step"}
+
+
 def _run_network_metrics() -> dict[str, Any]:
     """NetworkMetric over the standard windows (Phase 2, build-spec §12).
 
@@ -331,6 +348,7 @@ def _boot_status() -> dict[str, Any]:
     # API from coming up.
     steps: tuple[tuple[str, Callable[[], dict[str, Any] | None]], ...] = (
         ("deep", _load_deep_tier),
+        ("flows", _load_13f),
         ("panel", _apply_panel_schema),
         ("prices", lambda: _load_panel_if_shallow(names)),
         ("study", lambda: _run_study(names)),
