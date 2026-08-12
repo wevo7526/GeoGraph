@@ -49,6 +49,7 @@ _ROOT = Path(__file__).resolve().parent.parent
 _SEED_SCRIPT = _ROOT / "scripts" / "seed_pack.py"
 _LOAD_PANEL_SCRIPT = _ROOT / "scripts" / "load_panel.py"
 _STUDY_SCRIPT = _ROOT / "scripts" / "run_event_study.py"
+_METRICS_SCRIPT = _ROOT / "scripts" / "run_network_metrics.py"
 
 #: What to exec when no command is given. Railway can override by setting a
 #: start command; the default is the app.
@@ -244,6 +245,23 @@ def _run_study(pack_names: list[str]) -> dict[str, Any] | None:
     return {"ok": all(r["ok"] for r in results), "packs": results}
 
 
+def _run_network_metrics() -> dict[str, Any]:
+    """NetworkMetric over the standard windows (Phase 2, build-spec §12).
+
+    Pure graph computation — no panel, no network — so it runs every boot for
+    the same reason the study does: the volume may have been rebuilt, and
+    re-deriving deterministic numbers is how the graph stays consistent."""
+    if os.getenv("GEOGRAPH_METRICS_ON_BOOT", "1").strip().lower() in {"0", "false", "no"}:
+        return {"ok": True, "skipped": "disabled by GEOGRAPH_METRICS_ON_BOOT"}
+    result = _run_step(
+        "network metrics",
+        [sys.executable, str(_METRICS_SCRIPT)],
+        timeout=_SEED_TIMEOUT_SECONDS,
+        echo=False,
+    )
+    return {k: v for k, v in result.items() if k != "step"}
+
+
 def _apply_panel_schema() -> dict[str, Any] | None:
     """Panel DDL, if Postgres is configured. Concurrent-safe, so no child
     process is needed — nothing here can hold a lock the API wants."""
@@ -292,6 +310,7 @@ def _boot_status() -> dict[str, Any]:
         ("panel", _apply_panel_schema),
         ("prices", lambda: _load_panel_if_shallow(names)),
         ("study", lambda: _run_study(names)),
+        ("metrics", _run_network_metrics),
     )
     for key, step in steps:
         try:

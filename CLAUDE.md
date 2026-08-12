@@ -168,9 +168,17 @@ hops apart.
 
 ## Phase status (build-spec §18)
 
-Scaffold complete: ontology + derivation, both stores, crosswalks, regime
-segmentation, escalation Head B, calendars, pack contract + MENA pack,
-seed script, API shell, MCP shell, explorer shell, tests. Not yet built —
-each stub names its phase: Phase 0 (spine coding + first case study end to
-end), 1 (event study), 2 (analytics + Head A), 3 (deep history), 4 (GDELT,
-13F, explorer live data), 5 (reasoning), 6 (China pack).
+Phase 0 COMPLETE: spine coded by Head B over the CAMEO→Goldstein crosswalk,
+twelve-day-war case study end to end, container boot seeds/loads/measures
+itself. Phase 1 COMPLETE: the transmission engine runs the whole spine at
+boot (`run_event_study --all`), the panel guard is depth-based, and every
+event×market pair is a measurement or a recorded skip. Phase 2 analytics
+COMPLETE: `graph/analytics.py` computes centrality/brokerage/communities
+over membership- and validity-windowed subgraphs, persists NetworkMetric
+(decades + regime spans at boot), served at `/api/network/metrics` and the
+MCP `network_metrics` tool. The explorer is a 3D no-scroll workspace
+(react-force-graph-3d, MarketGraph Graph3D lineage) drawing the durable
+RELATES_TO web (incl. Iran's proxy clients) under windowed event flow.
+Not yet built — each stub names its phase: Phase 2 Head A validation,
+3 (deep history), 4 (GDELT, 13F, explorer at 120 years), 5 (reasoning),
+6 (China pack).

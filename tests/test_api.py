@@ -265,10 +265,17 @@ def test_an_unknown_case_study_names_the_ones_that_exist(client):
 
 
 def test_unbuilt_endpoints_name_their_phase(client):
-    for path in ("/api/network/metrics", "/api/forecasts/scenarios"):
-        response = client.get(path)
-        assert response.status_code == 501
-        assert "Phase" in response.json()["detail"]
+    response = client.get("/api/forecasts/scenarios")
+    assert response.status_code == 501
+    assert "Phase" in response.json()["detail"]
+
+
+def test_network_metrics_serves_empty_before_any_window_is_computed(client):
+    # Built in Phase 2: an uncomputed archive answers with an empty row set —
+    # a fact about computation coverage — never a 501 and never an error.
+    response = client.get("/api/network/metrics")
+    assert response.status_code == 200
+    assert response.json() == {"rows": [], "truncated": False}
 
 
 def test_an_unknown_api_route_is_a_json_404_not_the_spa(client):

@@ -151,7 +151,27 @@ def escalation_trajectory(conn: kuzu.Connection, dyad_id: str) -> dict[str, Any]
 
 
 def network_metrics(conn: kuzu.Connection, window_start: str, window_end: str) -> dict[str, Any]:
-    return _not_yet("network_metrics", "Phase 2")
+    """Persisted structural measures for one window — deterministic numbers
+    from graph/analytics.py, never derived at call time.
+
+    An empty result means the window has not been COMPUTED, never that the
+    network has no structure; the standard windows are decades and regime
+    spans, so ask with those bounds first.
+    """
+    rows = kuzu_store.query(
+        conn,
+        "MATCH (m:NetworkMetric) "
+        "WHERE m.window_start = $start_date AND m.window_end = $end_date "
+        "RETURN m.subject_id AS subject_id, m.metric_name AS metric_name, "
+        "m.value AS value, m.method AS method "
+        "ORDER BY m.metric_name, m.subject_id LIMIT $limit",
+        {"start_date": window_start, "end_date": window_end, "limit": MAX_ROWS + 1},
+    )
+    return {
+        "window": f"{window_start}..{window_end}",
+        "rows": rows[:MAX_ROWS],
+        "truncated": len(rows) > MAX_ROWS,
+    }
 
 
 def event_effects(conn: kuzu.Connection, event_id: str) -> dict[str, Any]:
