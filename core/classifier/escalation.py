@@ -41,8 +41,11 @@ def _scale_map() -> dict[str, Any]:
         return cast(dict[str, Any], yaml.safe_load(fh))
 
 
-def harmonize(source_scale: str, raw_value: int | str) -> float:
+def harmonize(source_scale: str, raw_value: float | str) -> float:
     """A COW hostility level or ICB severity → its Goldstein-equivalent.
+    A goldstein-scale value passes through unchanged, floats included — a
+    Goldstein score IS a float; the categorical scales arrive as ints or
+    strings.
 
     Raises KeyError-with-a-message on an unmapped value rather than guessing:
     an unmappable deep-tier record is dropped and counted, never smoothed.
