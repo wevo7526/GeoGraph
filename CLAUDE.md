@@ -154,8 +154,20 @@ hops apart.
   from the model's own predictions (§4). Estimate updates are NEW
   AttributeEstimate nodes (`method='sensor_update'`), not overwrites.
 - **Region packs are a contract** (`core/packs.py`): seven YAMLs, core runs
-  unchanged, nothing in `core/` may special-case a region name. `packs/china`
-  is deliberately incomplete until Phase 6 — absent, not broken.
+  unchanged, nothing in `core/` may special-case a region NAME. Three packs
+  now — `mena`, `china`, `eurasia` — and an incomplete pack directory is
+  simply not listed (absent, not broken). The contract permits the core to
+  learn a GENERAL capability a new region needs: `external_powers` moved from
+  a hardcoded `{USA, RUS}` in the GDELT loader onto the pack (Eurasia's spine
+  IS the Washington–Moscow dyad), with the old constant preserved as the
+  default. That is the contract holding, not bending — the test to apply is
+  "would a fourth region need this too?", not "does this mention a region?".
+- **Shared market nodes must be described identically by every pack that
+  names them.** Packs seed alphabetically, so two descriptions of
+  `market:brent` is one description plus a silent loser — and the
+  transmission engine reads `inception_date` and `native_frequency`, so the
+  loser changes measurements. `test_shared_market_nodes_agree_across_packs`
+  refuses the divergence (it caught a live one in `packs/china`).
 - **`/api/health` returns 200 even with no graph** — a health check that
   waits for data restart-loops a working Railway container. Unbuilt endpoints
   return 501 naming their phase, so an agent reports "not built" instead of
@@ -189,6 +201,30 @@ regime-gated analogy, sensor loop, near-term base-rate scenarios — FROZEN
 into Forecast nodes at boot, served at /api/forecasts, rendered in the
 explorer when the slider crosses "now", with the PAPER BOOK
 (/api/forecasts/{id}/paper) marking each frozen call's implications to
-market on $1M notional. Still stubbed: the LLM halves (agent.py narration,
-vector-index analogy — need ANTHROPIC_API_KEY), BigQuery transport
-(alternative to raw files), Phase 6 (China pack).
+market on $1M notional. Phase 6 COMPLETE — and then some: `packs/china`
+proved the contract (no `core/` diff accompanied it), and `packs/eurasia`
+(Russia, Europe and the stepland) is region three, which cost the core only
+the `external_powers` generalization noted above. Still stubbed: the LLM
+halves (agent.py narration, vector-index analogy — need ANTHROPIC_API_KEY),
+and the BigQuery transport (an alternative to the raw files, which work).
+
+## The surface is set on paper (2026-08-12)
+
+**A deliberate, cited deviation from build-spec §15**, which specifies a
+near-black ground with parchment text. The landing was reset as a broadsheet
+front page and the contrast against a dark app read as two products, so the
+print language now carries the whole surface: parchment ground, ink text,
+masthead rules, dot-leader ledgers. §15's actual requirement — restrained,
+serious, one accent, nothing decorative — is honoured in full; its ground and
+text are inverted. The long comment at the top of `web/src/styles.css` is the
+citation. **Do not "restore" the dark theme as a bug fix.**
+
+Two consequences worth knowing before touching colour:
+- **The 3D canvas stays dark** (`--plate`). The categorical actor colours were
+  validated against a dark surface and are drawn nowhere else; repainting for
+  paper would break a correct encoding.
+- **`--accent` and `--alert` carry the SIGN of a number** (gain/loss,
+  de-escalation/escalation), so they are a diverging pair, not decoration.
+  They were chosen by running the dataviz skill's `validate_palette.js`, not
+  by eye — the first pick failed the lightness band and chroma floor. Re-run
+  it against the `#f2ecdd` ground before changing either.
