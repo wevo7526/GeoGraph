@@ -318,6 +318,64 @@ export interface ForwardView {
   } | null
 }
 
+export interface WhatIfOptions {
+  region: string
+  actors: Array<{ id: string; name: string; actor_type: string }>
+  codes: Array<{ code: string; label: string; goldstein: number; quad_class: string }>
+}
+
+export interface WhatIfResult {
+  region: string
+  hypothetical: {
+    initiator: string
+    target: string
+    date: string
+    cameo: string
+    label: string
+    goldstein: number
+    quad_class: string
+  }
+  dyad: {
+    node_id: string
+    name: string | null
+    baseline: number | null
+    baseline_as_of: string | null
+    escalation_baseline: number
+    escalation_direction: 'escalating' | 'deescalating' | 'stable'
+    escalation_magnitude: number
+    note?: string
+  }
+  analogues: Array<{
+    event_id: string
+    name: string
+    event_time: string
+    similarity: number
+    goldstein: number | null
+    quad_class: string | null
+    escalation_direction: string | null
+    measured_effects: number
+  }>
+  transmission: {
+    rows: Array<{
+      ticker: string
+      market: string
+      window: string
+      mean_abnormal_return: number
+      n: number
+    }>
+    label: string
+  }
+  method: string
+}
+
+export interface Assessment {
+  question: string
+  region_pack: string
+  assessment: string
+  model: string
+  method: string
+}
+
 export interface CaseStudyIndexEntry {
   slug: string
   pack: string

@@ -1,4 +1,5 @@
 import type {
+  Assessment,
   BacktestLedger,
   CaseStudy,
   CaseStudyIndexEntry,
@@ -18,6 +19,8 @@ import type {
   Segmentation,
   Stats,
   Trajectory,
+  WhatIfOptions,
+  WhatIfResult,
 } from './types'
 
 // Null on any failure, deliberately: the explorer renders its built-in sample
@@ -103,6 +106,42 @@ export const getBacktest = (region: string) =>
 
 export const getForward = (region: string) =>
   get<ForwardView>(`/api/trading/forward?region=${encodeURIComponent(region)}`)
+
+export const getWhatIfOptions = (region: string) =>
+  get<WhatIfOptions>(`/api/reasoning/options?region=${encodeURIComponent(region)}`)
+
+export const getWhatIf = (params: {
+  region: string
+  initiator: string
+  target: string
+  cameo: string
+  date: string
+}) => {
+  const query = new URLSearchParams(params)
+  return get<WhatIfResult>(`/api/reasoning/what-if?${query}`)
+}
+
+/** The assess call keeps the error DETAIL: a dark agent answers with a 503
+ *  whose message is the page's honest content, not a null to swallow. */
+export async function postAssess(
+  question: string,
+  region: string,
+): Promise<{ ok: boolean; detail?: string; result?: Assessment }> {
+  try {
+    const res = await fetch('/api/reasoning/assess', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ question, region }),
+    })
+    const body = await res.json().catch(() => null)
+    if (!res.ok) {
+      return { ok: false, detail: body?.detail ?? `the API answered ${res.status}` }
+    }
+    return { ok: true, result: body as Assessment }
+  } catch {
+    return { ok: false, detail: 'the API is unreachable' }
+  }
+}
 
 export const getCaseStudies = () =>
   get<{ rows: CaseStudyIndexEntry[] }>('/api/case-studies')

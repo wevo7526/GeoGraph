@@ -118,6 +118,25 @@ def label_for(cameo_code: str | int) -> str:
     raise KeyError(f"CAMEO code {cameo_code!r} has no label in {_CODEBOOK.name}.")
 
 
+def codebook_entries() -> list[dict[str, Any]]:
+    """Every scorable code the codebook carries, with its derived values —
+    the what-if composer's vocabulary. Derived from the YAML on each call
+    path (the YAML itself is lru_cached), never stored a second time."""
+    codes = _codebook()["codes"]
+    out: list[dict[str, Any]] = []
+    for code in sorted(codes):
+        entry = codes[code]
+        if entry.get("goldstein") is None:
+            continue
+        out.append({
+            "code": code,
+            "label": str(entry.get("label", "")),
+            "goldstein": float(entry["goldstein"]),
+            "quad_class": quad_class_for(code),
+        })
+    return out
+
+
 def map_deep_event(dataset: str, category: int | str) -> dict[str, Any] | None:
     """Path 2: a COW/ICB category → CAMEO-equivalent, deterministically.
 

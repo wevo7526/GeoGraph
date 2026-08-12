@@ -56,7 +56,10 @@ def _similarity(query: dict[str, Any], candidate: dict[str, Any]) -> float:
     return round((goldstein + magnitude + baseline + min(role, 1.0)) / 4.0, 4)
 
 
-_EVENT_QUERY = (
+#: The candidate shape the similarity formula reads — public so the API can
+#: fetch candidates over its OWN connection (a request-time what-if must not
+#: open a second connection against the single-writer graph).
+EVENT_QUERY = (
     "MATCH (e:Event) "
     "OPTIONAL MATCH (e)-[:INITIATED_BY]->(i:Actor) "
     "OPTIONAL MATCH (e)-[:DIRECTED_AT]->(t:Actor) "
@@ -68,6 +71,30 @@ _EVENT_QUERY = (
     "i.node_id AS initiator_id, t.node_id AS target_id "
     "ORDER BY e.event_time, e.node_id"
 )
+
+
+def rank_candidates(
+    query: dict[str, Any],
+    candidates: list[dict[str, Any]],
+    *,
+    query_date: str,
+    regime_kind: str = "monetary_order",
+    k: int = 5,
+) -> list[tuple[float, dict[str, Any]]]:
+    """Admissibility-gate then score PROVIDED candidates against a query
+    shape — the pure half of `find_analogues`, which also serves the
+    what-if surface (where the query is a HYPOTHETICAL event and nothing is
+    persisted). Admissibility before similarity, always: an out-of-regime
+    candidate is refused before any score exists."""
+    scored: list[tuple[float, dict[str, Any]]] = []
+    for row in candidates:
+        if row.get("node_id") == query.get("node_id"):
+            continue
+        if not regimes.comparable(query_date, str(row["event_time"]), kind=regime_kind):
+            continue
+        scored.append((_similarity(query, row), row))
+    scored.sort(key=lambda pair: (-pair[0], pair[1]["node_id"]))
+    return scored[:k]
 
 
 def find_analogues(
@@ -87,25 +114,18 @@ def find_analogues(
     """
     conn = kuzu_store.connect(db_path)
     try:
-        rows = kuzu_store.query(conn, _EVENT_QUERY)
+        rows = kuzu_store.query(conn, EVENT_QUERY)
         by_id = {row["node_id"]: row for row in rows}
         query = by_id.get(query_ref)
         if query is None:
             raise KeyError(f"no such event in the graph: {query_ref}")
 
-        query_date = str(query["event_time"])
-        candidates = []
-        for row in rows:
-            if row["node_id"] == query_ref:
-                continue
-            if not regimes.comparable(
-                query_date, str(row["event_time"]), kind=regime_kind
-            ):
-                continue
-            candidates.append((_similarity(query, row), row))
-
-        candidates.sort(key=lambda pair: (-pair[0], pair[1]["node_id"]))
-        top = candidates[:k]
+        top = rank_candidates(
+            query, rows,
+            query_date=str(query["event_time"]),
+            regime_kind=regime_kind,
+            k=k,
+        )
 
         analogues: list[dict[str, Any]] = []
         for similarity, row in top:
