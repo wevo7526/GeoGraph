@@ -14,3 +14,17 @@ assets:
     note: US-hours Saudi exposure — trades while Tadawul sleeps, useful for lead-lag.
   - ticker: UAE
     name: iShares MSCI UAE
+
+# ── 13F filers ───────────────────────────────────────────────────────────────
+# The SWFs whose EDGAR 13F-HR filings become FLOW edges (build-spec §5.2).
+# CIKs resolved against EDGAR's company search on 2026-08-11 and pinned here —
+# curated data, never runtime guesses. ADIA is DELIBERATELY ABSENT: no 13F
+# filer is locatable under its name as of that date, and recording the absence
+# beats inventing a CIK.
+swf_filers:
+  - actor: actor:swf-pif
+    cik: 1767640
+    name: Public Investment Fund
+  - actor: actor:swf-mubadala
+    cik: 1704268
+    name: Mubadala Investment Company

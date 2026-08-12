@@ -331,3 +331,77 @@ def test_igo_membership_spells_fold_and_censor(conn, tmp_path):
     assert igo["t"] == "org"
     assert igo["n"] == "NATO"
     assert kuzu_store.check_provenance(conn) == []
+
+
+# ── 13F flows (P4's credential-free half) ────────────────────────────────────
+
+
+_INFOTABLE = """<?xml version="1.0"?>
+<informationTable xmlns="http://www.sec.gov/edgar/document/thirteenf/informationtable">
+  <infoTable>
+    <nameOfIssuer>ACME CORP</nameOfIssuer>
+    <value>1500</value>
+    <shrsOrPrnAmt><sshPrnamt>10</sshPrnamt></shrsOrPrnAmt>
+  </infoTable>
+  <infoTable>
+    <nameOfIssuer>OTHER INC</nameOfIssuer>
+    <value>2500</value>
+    <shrsOrPrnAmt><sshPrnamt>20</sshPrnamt></shrsOrPrnAmt>
+  </infoTable>
+</informationTable>
+"""
+
+
+def test_13f_values_normalize_by_the_reporting_unit_transition():
+    from core.ingestion import edgar_13f
+
+    # Before 2023 the table reports THOUSANDS; after, dollars. Same XML,
+    # different report period, different honest total.
+    old = edgar_13f.parse_information_table(
+        _INFOTABLE.encode(), report_date="2021-12-31"
+    )
+    new = edgar_13f.parse_information_table(
+        _INFOTABLE.encode(), report_date="2024-12-31"
+    )
+    assert old == 4_000_000  # (1500 + 2500) thousands
+    assert new == 4_000      # dollars as filed
+
+
+def test_13f_refuses_xml_that_is_not_an_information_table():
+    from core.ingestion import edgar_13f
+
+    with pytest.raises(ValueError, match="not a 13F information table"):
+        edgar_13f.parse_information_table(
+            b"<?xml version='1.0'?><coverPage><name>x</name></coverPage>",
+            report_date="2024-12-31",
+        )
+
+
+def test_13f_flows_land_as_quarterly_edges(conn, monkeypatch):
+    from core import packs as packs_module
+    from core.ingestion import edgar_13f
+
+    seed_pack.seed(conn, packs_module.load("mena"))
+    monkeypatch.setattr(
+        edgar_13f, "fetch_filings",
+        lambda cik, limit=8: [
+            {"report_date": "2025-03-31", "accession": "a1", "value_usd": 5_000_000},
+            {"report_date": "2025-06-30", "accession": "a2", "value_usd": 6_000_000},
+        ],
+    )
+    written = edgar_13f.load_flows(
+        conn,
+        [{"actor": "actor:swf-pif", "cik": 1767640, "name": "PIF"}],
+        market_node_id="market:gspc",
+    )
+    assert written == 2  # as_of is identity: two quarters, two edges
+    rows = kuzu_store.query(
+        conn,
+        "MATCH (a:Actor)-[f:FLOW]->(m:Market) RETURN a.node_id AS actor, "
+        "f.as_of AS as_of, f.value_usd AS value_usd, f.source_id AS source_id "
+        "ORDER BY as_of",
+    )
+    assert [r["as_of"] for r in rows] == ["2025-03-31", "2025-06-30"]
+    assert rows[0]["value_usd"] == 5_000_000
+    assert all(r["source_id"] == "source:edgar-13f" for r in rows)
+    assert kuzu_store.check_provenance(conn) == []

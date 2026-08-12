@@ -81,21 +81,79 @@ def relations(
     if relation_type:
         clauses.append("r.relation_type = $relation_type")
         params["relation_type"] = relation_type
-    where = f"WHERE {' AND '.join(clauses)} " if clauses else ""
-    rows = kuzu_store.query(
-        conn,
-        f"MATCH (a:Actor)-[r:RELATES_TO]->(b:Actor) {where}"
+    columns = (
         "RETURN a.node_id AS a_id, a.name AS a_name, "
         "b.node_id AS b_id, b.name AS b_name, "
         "r.relation_type AS relation_type, r.valid_from AS valid_from, "
         "r.valid_to AS valid_to, r.source_id AS source_id "
-        "ORDER BY relation_type, a_id, b_id LIMIT $limit",
-        params,
+        "ORDER BY relation_type, a_id, b_id LIMIT $limit"
     )
+    if relation_type:
+        where = f"WHERE {' AND '.join(clauses)} "
+        rows = kuzu_store.query(
+            conn,
+            f"MATCH (a:Actor)-[r:RELATES_TO]->(b:Actor) {where}{columns}",
+            params,
+        )
+    else:
+        # TWO queries, membership LAST: the alphabetical cap was silently
+        # truncating proxy and rivalry rows behind eighteen thousand IGO
+        # membership spells. The sparse layers always arrive whole; the bulk
+        # layer fills whatever room the cap leaves.
+        sparse_clauses = [*clauses, "r.relation_type <> 'membership'"]
+        rows = kuzu_store.query(
+            conn,
+            f"MATCH (a:Actor)-[r:RELATES_TO]->(b:Actor) "
+            f"WHERE {' AND '.join(sparse_clauses)} {columns}",
+            params,
+        )
+        room = MAX_RELATION_ROWS + 1 - len(rows)
+        if room > 0:
+            bulk_clauses = [*clauses, "r.relation_type = 'membership'"]
+            rows += kuzu_store.query(
+                conn,
+                f"MATCH (a:Actor)-[r:RELATES_TO]->(b:Actor) "
+                f"WHERE {' AND '.join(bulk_clauses)} {columns}",
+                {**params, "limit": room},
+            )
     return {
         "rows": rows[:MAX_RELATION_ROWS],
         "truncated": len(rows) > MAX_RELATION_ROWS,
     }
+
+
+@router.get("/flows")
+def flows(
+    request: Request,
+    start: str | None = None,
+    end: str | None = None,
+) -> dict[str, Any]:
+    """SWF capital deployment: FLOW edges from 13F filings, filer → market.
+
+    The money layer's own caveat rides along in the class description and
+    here: a COARSE, LAGGED (45-day), US-LONG-ONLY view — an edge says where
+    reported capital sat at quarter end, never what it did since.
+    """
+    conn = _conn(request)
+    clauses: list[str] = []
+    params: dict[str, Any] = {}
+    if start:
+        clauses.append("f.as_of >= $start_date")
+        params["start_date"] = start
+    if end:
+        clauses.append("f.as_of <= $end_date")
+        params["end_date"] = end
+    where = f"WHERE {' AND '.join(clauses)} " if clauses else ""
+    rows = kuzu_store.query(
+        conn,
+        f"MATCH (a:Actor)-[f:FLOW]->(m:Market) {where}"
+        "RETURN a.node_id AS actor_id, a.name AS actor_name, "
+        "m.node_id AS market_id, m.name AS market_name, m.ticker AS ticker, "
+        "f.as_of AS as_of, f.value_usd AS value_usd, f.source_id AS source_id "
+        "ORDER BY as_of, actor_id, market_id",
+        params,
+    )
+    return {"rows": rows}
 
 
 @router.get("/actors")

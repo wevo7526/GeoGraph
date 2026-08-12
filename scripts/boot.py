@@ -238,7 +238,9 @@ def _run_study(pack_names: list[str]) -> dict[str, Any] | None:
         _run_step(
             f"event study {name}",
             [sys.executable, str(_STUDY_SCRIPT), name, "--all"],
-            timeout=_SEED_TIMEOUT_SECONDS,
+            # The archive is thousands of events now — the study reads the
+            # panel per event per market and earns the longer ceiling.
+            timeout=_LOAD_TIMEOUT_SECONDS,
             echo=False,
         )
         for name in pack_names

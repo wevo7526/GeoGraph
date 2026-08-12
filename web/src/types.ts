@@ -61,8 +61,19 @@ export interface PackEvent {
 
 export interface Pack {
   name: string
-  actors: { actors: PackActor[] }
+  actors: { actors: PackActor[]; igo_spotlight?: string[] }
   marquee_events: { events: PackEvent[] }
+}
+
+export interface Flow {
+  actor_id: string
+  actor_name: string
+  market_id: string
+  market_name: string
+  ticker: string
+  as_of: string
+  value_usd: number
+  source_id: string
 }
 
 // ── the graph, as the API serves it ─────────────────────────────────────────

@@ -69,6 +69,14 @@ def seed(conn: Any, pack: packs.Pack) -> dict[str, int]:
     counts["actors"] = kuzu_store.merge_nodes(conn, "Actor", [
         {"node_id": a["id"], "name": a["name"], "actor_type": a["actor_type"],
          "cow_ccode": a.get("cow_ccode"), "iso3": a.get("iso3", ""),
+         # Founding/dissolution windows for the NON-STATE actors (OPEC 1960,
+         # Hezbollah 1982, PIF 1971 — the org layer is time-varying too).
+         # States leave these to the COW state-system loader, which is
+         # authoritative and OVERWRITES; None-valued keys merge as
+         # leave-unset, so re-seeding after the deep tier cannot erase the
+         # COW dates.
+         "state_from": str(a["state_from"]) if a.get("state_from") else None,
+         "state_to": str(a["state_to"]) if a.get("state_to") else None,
          "region_pack": pack.name}
         for a in pack.actors
     ])

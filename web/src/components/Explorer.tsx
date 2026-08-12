@@ -6,6 +6,7 @@ import {
   getEvent,
   getEventEffects,
   getEvents,
+  getFlows,
   getPack,
   getRegimes,
   getRelations,
@@ -15,6 +16,8 @@ import Graph3D, {
   ACTOR_COLOR,
   EDGE_SWATCH_ACTIVE,
   EDGE_SWATCH_ESCALATING,
+  FLOW_SWATCH,
+  MARKET_NODE,
   RELATION_SWATCH,
   TYPE_LABEL,
   type Graph3DHandle,
@@ -25,6 +28,7 @@ import type {
   Dyad,
   Effect,
   EventDetail,
+  Flow,
   GraphActor,
   GraphEvent,
   Pack,
@@ -499,6 +503,7 @@ export default function Explorer({ onNavigate }: { onNavigate: (route: string) =
   const [regimes, setRegimes] = useState<Segmentation | null>(null)
   const [pack, setPack] = useState<Pack | null>(null)
   const [dyads, setDyads] = useState<Dyad[]>([])
+  const [flows, setFlows] = useState<Flow[]>([])
   const [actors, setActors] = useState<GraphActor[]>([])
   const [relations, setRelations] = useState<Relation[]>([])
   const [coverage, setCoverage] = useState<Record<string, number> | null>(null)
@@ -517,6 +522,7 @@ export default function Explorer({ onNavigate }: { onNavigate: (route: string) =
     getRegimes().then(setRegimes)
     getPack('mena').then(setPack)
     getDyads().then((r) => setDyads(r?.rows ?? []))
+    getFlows().then((r) => setFlows(r?.rows ?? []))
     getCoverage().then((r) => {
       setCoverage(r?.years ?? {})
       setTotal(r?.total ?? 0)
@@ -588,40 +594,83 @@ export default function Explorer({ onNavigate }: { onNavigate: (route: string) =
     [inWindow, focusActor],
   )
 
-  // THE WINDOW'S CAST, seen through the pack's lens: the roster and the
-  // window's event participants are the core; their durable non-membership
-  // ties pull in direct neighbours (1914: the alliance system around the
-  // powers that acted); IGO membership draws only toward an IGO already in
-  // the cast, so one shared UN membership cannot flood the screen with every
-  // state alive. Honest AND legible — the cap is the lens, not the archive.
+  // THE WINDOW'S CAST, seen through the pack's lens — and the WINDOW WINS
+  // OVER THE ROSTER: a roster actor outside its membership/founding window
+  // (the UAE in 1914, the PIF before 1971) is not drawn, because the players
+  // coming and going IS the story of the region. The window's event
+  // participants join; their durable non-membership ties pull in direct
+  // neighbours; spotlight IGOs (NATO, Arab League, OIC) join when they have
+  // members in the cast, so Turkey's NATO tie is on screen without the UN
+  // making any two states one hop apart. SWF capital (13F FLOW) adds its
+  // markets as a distinct node kind.
   const cast = useMemo(() => {
-    const lookup = new Map<string, { id: string; name: string; actor_type: PackActor['actor_type'] }>()
-    for (const a of actors) {
-      lookup.set(a.node_id, { id: a.node_id, name: a.name, actor_type: a.actor_type })
+    const live = actors.length > 0
+    const lookup = new Map<
+      string, { id: string; name: string; actor_type: PackActor['actor_type'] }
+    >()
+    if (live) {
+      // /api/actors is already windowed by membership/founding dates — the
+      // lookup IS the aliveness gate.
+      for (const a of actors) {
+        lookup.set(a.node_id, { id: a.node_id, name: a.name, actor_type: a.actor_type })
+      }
+    } else {
+      for (const a of pack?.actors.actors ?? []) {
+        lookup.set(a.id, { id: a.id, name: a.name, actor_type: a.actor_type })
+      }
     }
+    // CORE first: the roster and the window's participants. Durable ties draw
+    // as SPOKES FROM THE CORE — a neighbour joins the picture, but the
+    // neighbours' own mutual mesh does not: expanding it once turned the
+    // modern window into the entire global alliance system as a blue ball.
+    const core = new Set<string>()
     for (const a of pack?.actors.actors ?? []) {
-      if (!lookup.has(a.id)) lookup.set(a.id, { id: a.id, name: a.name, actor_type: a.actor_type })
+      if (lookup.has(a.id)) core.add(a.id)
     }
-    const ids = new Set<string>()
-    for (const a of pack?.actors.actors ?? []) ids.add(a.id)
     for (const e of inWindow) {
-      if (e.initiator_id) ids.add(e.initiator_id)
-      if (e.target_id) ids.add(e.target_id)
+      if (e.initiator_id && lookup.has(e.initiator_id)) core.add(e.initiator_id)
+      if (e.target_id && lookup.has(e.target_id)) core.add(e.target_id)
     }
+    const ids = new Set(core)
     for (const r of relations) {
       if (r.relation_type === 'membership') continue
-      if (ids.has(r.a_id) || ids.has(r.b_id)) {
-        ids.add(r.a_id)
+      if (core.has(r.a_id) || core.has(r.b_id)) {
+        if (lookup.has(r.a_id)) ids.add(r.a_id)
+        if (lookup.has(r.b_id)) ids.add(r.b_id)
+      }
+    }
+    const spotlight = new Set(pack?.actors.igo_spotlight ?? [])
+    for (const r of relations) {
+      if (r.relation_type !== 'membership') continue
+      if (spotlight.has(r.b_id) && core.has(r.a_id) && lookup.has(r.b_id)) {
         ids.add(r.b_id)
       }
     }
-    const castRelations = relations.filter((r) => ids.has(r.a_id) && ids.has(r.b_id))
+    const castRelations = relations.filter((r) => {
+      if (!ids.has(r.a_id) || !ids.has(r.b_id)) return false
+      if (r.relation_type === 'membership') return true // spotlight spokes only
+      return core.has(r.a_id) || core.has(r.b_id)
+    })
     const castActors = [...ids]
       .map((id) => lookup.get(id))
       .filter((a): a is NonNullable<typeof a> => Boolean(a))
       .sort((a, b) => a.id.localeCompare(b.id))
-    return { actors: castActors, relations: castRelations }
-  }, [actors, relations, pack, inWindow])
+
+    // Capital deployment: the LATEST in-window filing per (fund, market).
+    // 13F is US-listed long equity only — the edge label says so.
+    const latest = new Map<string, Flow>()
+    for (const f of flows) {
+      if (f.as_of < windowFrom || f.as_of >= windowTo) continue
+      if (!ids.has(f.actor_id)) continue
+      const key = `${f.actor_id}|${f.market_id}`
+      const prior = latest.get(key)
+      if (!prior || f.as_of > prior.as_of) latest.set(key, f)
+    }
+    const castFlows = [...latest.values()].sort((a, b) =>
+      `${a.actor_id}|${a.market_id}`.localeCompare(`${b.actor_id}|${b.market_id}`),
+    )
+    return { actors: castActors, relations: castRelations, flows: castFlows }
+  }, [actors, relations, pack, inWindow, flows, windowFrom, windowTo])
 
   const focusedActor = useMemo(
     () => cast.actors.find((a) => a.id === focusActor) ?? null,
@@ -742,6 +791,7 @@ export default function Explorer({ onNavigate }: { onNavigate: (route: string) =
             <Graph3D
               actors={cast.actors}
               relations={cast.relations}
+              flows={cast.flows}
               dyads={dyads}
               events={events ?? []}
               windowFrom={windowFrom}
@@ -814,6 +864,22 @@ export default function Explorer({ onNavigate }: { onNavigate: (route: string) =
                 style={{ background: EDGE_SWATCH_ACTIVE }}
               />
               active in window
+            </span>
+            <span className="inline-flex items-center gap-1.5">
+              <span
+                aria-hidden
+                className="inline-block h-2 w-2"
+                style={{ background: MARKET_NODE }}
+              />
+              market (cube)
+            </span>
+            <span className="inline-flex items-center gap-1.5">
+              <span
+                aria-hidden
+                className="inline-block h-0.5 w-4"
+                style={{ background: FLOW_SWATCH }}
+              />
+              SWF capital (13F)
             </span>
           </div>
         </section>

@@ -4,7 +4,7 @@ import ForceGraph3D, { type ForceGraphMethods } from 'react-force-graph-3d'
 import { forceCenter, forceCollide, forceX, forceY, forceZ } from 'd3-force-3d'
 import * as THREE from 'three'
 import SpriteText from 'three-spritetext'
-import type { Dyad, GraphEvent, PackActor, Relation } from '../types'
+import type { Dyad, Flow, GraphEvent, PackActor, Relation } from '../types'
 
 /** Actor-type encoding, shared with the legend overlay in Explorer.tsx.
  * Duplicated deliberately — WebGL cannot read CSS custom properties, and a
@@ -44,6 +44,12 @@ export const RELATION_SWATCH: Record<string, string> = {
   rivalry: '#a44a3f',
 }
 
+/** The capital layer: SWF → market deployment from 13F. Fund-green edges,
+ * cube nodes — a market is not an actor and does not pretend to be one. */
+const FLOW_EDGE = 'rgba(47, 153, 96, 0.65)'
+export const FLOW_SWATCH = '#2f9960'
+export const MARKET_NODE = '#8a93a6'
+
 /** Event-flow edges (dyads active in the slider window). */
 const EDGE_ESCALATING = 'rgba(164, 74, 63, 0.85)'
 const EDGE_ACTIVE = 'rgba(138, 147, 166, 0.65)'
@@ -59,6 +65,7 @@ const INK = '#0b0e14'
 const TEXT = '#d9d4c5'
 
 interface Sim extends PackActor {
+  kind: 'actor' | 'market'
   x?: number
   y?: number
   z?: number
@@ -71,7 +78,7 @@ interface Sim extends PackActor {
   activity: number
 }
 
-export type LinkKind = 'relation' | 'dyad'
+export type LinkKind = 'relation' | 'dyad' | 'flow'
 
 interface SimLink {
   source: string | Sim
@@ -83,6 +90,7 @@ interface SimLink {
   particles: number
   relation?: Relation
   dyad?: Dyad
+  flow?: Flow
   /** Events on this dyad inside the window. */
   count: number
   escalating: boolean
@@ -103,6 +111,7 @@ export interface LinkSelection {
 interface Props {
   actors: PackActor[]
   relations: Relation[]
+  flows: Flow[]
   dyads: Dyad[]
   events: GraphEvent[]
   windowFrom: string
@@ -117,6 +126,7 @@ interface Props {
 export default function Graph3D({
   actors,
   relations,
+  flows,
   dyads,
   events,
   windowFrom,
@@ -176,6 +186,7 @@ export default function Graph3D({
       const n = activity.byActor.get(a.id) ?? 0
       return {
         ...a,
+        kind: 'actor' as const,
         activity: n,
         // Cube-root-ish growth: an actor in twenty events must read bigger,
         // not twenty times bigger.
@@ -183,6 +194,27 @@ export default function Graph3D({
         color: ACTOR_COLOR[a.actor_type],
       }
     })
+    // The capital layer's markets: cube nodes, sized by total deployed value
+    // across the window's filings — a market is a SENSOR here, not an actor.
+    const marketTotals = new Map<string, { name: string; total: number }>()
+    for (const f of flows) {
+      if (!ids.has(f.actor_id)) continue
+      const entry = marketTotals.get(f.market_id) ?? { name: f.market_name, total: 0 }
+      entry.total += f.value_usd
+      marketTotals.set(f.market_id, entry)
+    }
+    for (const [marketId, entry] of [...marketTotals.entries()].sort()) {
+      ids.add(marketId)
+      nodes.push({
+        id: marketId,
+        name: entry.name,
+        actor_type: 'org',
+        kind: 'market',
+        activity: 0,
+        val: 4 + Math.min(8, Math.max(0, Math.log10(entry.total) - 8)),
+        color: MARKET_NODE,
+      })
+    }
 
     const links: SimLink[] = []
     for (const r of relations) {
@@ -218,8 +250,25 @@ export default function Graph3D({
         escalating: state?.escalating ?? false,
       })
     }
+    for (const f of flows) {
+      if (!ids.has(f.actor_id) || !ids.has(f.market_id)) continue
+      links.push({
+        source: f.actor_id,
+        target: f.market_id,
+        kind: 'flow',
+        key: `flow:${f.actor_id}--${f.market_id}`,
+        color: FLOW_EDGE,
+        // Width scales with the ORDER OF MAGNITUDE of deployed capital:
+        // $100M and $25B must read as different classes of relationship.
+        width: 0.8 + Math.min(3, Math.max(0, Math.log10(f.value_usd) - 8)),
+        particles: 2,
+        flow: f,
+        count: 0,
+        escalating: false,
+      })
+    }
     return { nodes, links }
-  }, [actors, relations, dyads, activity])
+  }, [actors, relations, flows, dyads, activity])
 
   // A durable relation outside its validity window is NOT drawn — an
   // alliance signed in 1949 is a false claim on the 1914 screen. The check
@@ -338,6 +387,14 @@ export default function Graph3D({
       const window = r.valid_to ? `${r.valid_from}–${r.valid_to}` : `since ${r.valid_from}`
       return `${r.a_name} → ${r.b_name} · ${r.relation_type} ${window}`
     }
+    if (l.kind === 'flow' && l.flow) {
+      const f = l.flow
+      const billions = (f.value_usd / 1e9).toFixed(1)
+      return (
+        `${f.actor_name} → ${f.market_name}: $${billions}B as of ${f.as_of} · ` +
+        'US-listed long equity only (13F, 45-day lag)'
+      )
+    }
     const tail = l.count
       ? `${l.count} event${l.count === 1 ? '' : 's'} in window${l.escalating ? ' · escalating' : ''}`
       : 'quiet in window'
@@ -352,20 +409,40 @@ export default function Graph3D({
   const sparse = data.nodes.length <= 40
   const nodeLabelObject = useCallback(
     (n: Sim) => {
+      const dimmed = focus !== null && !focus.neighbours.has(n.id)
+      const label = (height: number): THREE.Object3D => {
+        const sprite = new SpriteText(n.name)
+        sprite.color = n.id === selectedActor ? '#ffffff' : dimmed ? '#3a4356' : TEXT
+        sprite.fontFace = 'Georgia'
+        sprite.textHeight = height
+        ;(sprite as unknown as { position: { set: (x: number, y: number, z: number) => void } })
+          .position.set(0, -(n.val + 5), 0)
+        return sprite as unknown as THREE.Object3D
+      }
+      if (n.kind === 'market') {
+        // A market is a CUBE — a different kind of thing, said with shape,
+        // not another hue for the categorical set to absorb.
+        const group = new THREE.Group()
+        const side = n.val * 1.6
+        const cube = new THREE.Mesh(
+          new THREE.BoxGeometry(side, side, side),
+          new THREE.MeshLambertMaterial({
+            color: dimmed ? DIM_NODE : n.color,
+            transparent: true,
+            opacity: 0.92,
+          }),
+        )
+        group.add(cube)
+        group.add(label(sparse ? 4.6 : 3.8))
+        return group as unknown as THREE.Object3D
+      }
       const wanted =
         sparse ||
         n.activity > 0 ||
         n.id === selectedActor ||
         (focus !== null && focus.neighbours.has(n.id))
       if (!wanted) return undefined as unknown as THREE.Object3D
-      const sprite = new SpriteText(n.name)
-      const dimmed = focus !== null && !focus.neighbours.has(n.id)
-      sprite.color = n.id === selectedActor ? '#ffffff' : dimmed ? '#3a4356' : TEXT
-      sprite.fontFace = 'Georgia'
-      sprite.textHeight = n.id === selectedActor ? 6 : sparse ? 4.6 : 3.8
-      ;(sprite as unknown as { position: { set: (x: number, y: number, z: number) => void } })
-        .position.set(0, -(n.val + 5), 0)
-      return sprite as unknown as THREE.Object3D
+      return label(n.id === selectedActor ? 6 : sparse ? 4.6 : 3.8)
     },
     [focus, selectedActor, sparse],
   )
@@ -389,7 +466,7 @@ export default function Graph3D({
         nodeOpacity={0.92}
         nodeResolution={16}
         nodeLabel={() => ''}
-        nodeThreeObjectExtend
+        nodeThreeObjectExtend={(n) => n.kind !== 'market'}
         nodeThreeObject={nodeLabelObject}
         linkColor={(l) => {
           if (l.kind === 'relation' && !inWindow(l.relation)) return 'rgba(0,0,0,0)'
@@ -412,13 +489,16 @@ export default function Graph3D({
         onNodeHover={(n) =>
           onHover(
             n
-              ? `${n.name} — ${TYPE_LABEL[n.actor_type]} · ${n.activity} event${
-                  n.activity === 1 ? '' : 's'
-                } in window`
+              ? n.kind === 'market'
+                ? `${n.name} — market · SWF capital deployed here (13F)`
+                : `${n.name} — ${TYPE_LABEL[n.actor_type]} · ${n.activity} event${
+                    n.activity === 1 ? '' : 's'
+                  } in window`
               : null,
           )
         }
         onLinkClick={(l) => {
+          if (l.kind === 'flow') return // the hover line carries the number
           if (l.kind === 'relation' && !inWindow(l.relation)) return
           onSelectLink(
             l.kind === 'relation'

@@ -38,6 +38,26 @@ actors:
     actor_type: state
     cow_ccode: 651
     iso3: EGY
+  - id: actor:cow-652
+    name: Syria
+    actor_type: state
+    cow_ccode: 652
+    iso3: SYR
+    note: >-
+      Was missing until 2026-08 — the roster was built from the marquee
+      spine's initiators, and no spine event named Syria. Roster membership
+      is what keeps a state in EVERY explorer window; its thin event coverage
+      is the enrichment task, not a reason to omit the state.
+  - id: actor:cow-660
+    name: Lebanon
+    actor_type: state
+    cow_ccode: 660
+    iso3: LBN
+  - id: actor:cow-663
+    name: Jordan
+    actor_type: state
+    cow_ccode: 663
+    iso3: JOR
   - id: actor:cow-666
     name: Israel
     actor_type: state
@@ -58,6 +78,11 @@ actors:
     actor_type: state
     cow_ccode: 690
     iso3: KWT
+  - id: actor:cow-692
+    name: Bahrain
+    actor_type: state
+    cow_ccode: 692
+    iso3: BHR
   - id: actor:cow-694
     name: Qatar
     actor_type: state
@@ -68,39 +93,53 @@ actors:
     actor_type: state
     cow_ccode: 696
     iso3: ARE
+  - id: actor:cow-698
+    name: Oman
+    actor_type: state
+    cow_ccode: 698
+    iso3: OMN
 
   # ── organizations ──────────────────────────────────────────────────────────
   - id: actor:opec
     name: OPEC
     actor_type: org
+    state_from: "1960-09-14"
     note: Production quotas are the single most market-coupled lever in the region.
   - id: actor:gcc
     name: Gulf Cooperation Council
     actor_type: org
+    state_from: "1981-05-25"
   - id: actor:ansar-allah
     name: Ansar Allah (Houthis)
     actor_type: org
+    state_from: "1994"
     note: Non-state; Red Sea shipping attacks make it a market-relevant actor.
   - id: actor:hezbollah
     name: Hezbollah
     actor_type: org
+    state_from: "1982"
   - id: actor:hamas
     name: Hamas
     actor_type: org
+    state_from: "1987-12"
   - id: actor:al-qaeda
     name: al-Qaeda
     actor_type: org
+    state_from: "1988"
 
   # ── sovereign wealth funds ─────────────────────────────────────────────────
   - id: actor:swf-pif
     name: Public Investment Fund (Saudi Arabia)
     actor_type: swf
+    state_from: "1971"
   - id: actor:swf-mubadala
     name: Mubadala Investment Company (Abu Dhabi)
     actor_type: swf
+    state_from: "2002"
   - id: actor:swf-adia
     name: Abu Dhabi Investment Authority
     actor_type: swf
+    state_from: "1976"
 
 # ── durable relations ────────────────────────────────────────────────────────
 # RELATES_TO edges: the standing structure between the roster's actors, seeded
@@ -109,6 +148,18 @@ actors:
 # is honest, not sloppy). `proxy` is DIRECTED patron → client: Iran's clients
 # are fingers of the same hand, and the network should show the hand.
 relations:
+  - a: actor:cow-630            # Iran
+    b: actor:cow-666            # Israel
+    relation_type: rivalry
+    valid_from: "1979"
+    source: source:crs-iran-proxies
+    note: From revolution onward — the axis the proxy web projects against.
+  - a: actor:cow-630            # Iran
+    b: actor:cow-670            # Saudi Arabia
+    relation_type: rivalry
+    valid_from: "1979"
+    source: source:crs-iran-proxies
+    note: The regional cold war; thaw episodes (2023 normalization) do not end the structure.
   - a: actor:cow-630            # Iran
     b: actor:hezbollah
     relation_type: proxy
@@ -127,3 +178,15 @@ relations:
     valid_from: "2014"
     source: source:crs-iran-proxies
     note: Support scaled with the Sana'a takeover; missile/UAV transfer thereafter.
+
+# ── IGO spotlight ────────────────────────────────────────────────────────────
+# COW's IGO layer holds ~530 organizations; drawing every shared membership
+# would put any two states one hop apart. These are the organizations the
+# REGION'S STORY runs through — the explorer draws their membership spokes
+# when they have members in the window's cast. (COW also carries its own
+# OPEC node, actor:igo-opec; the pack's curated actor:opec stays the marquee
+# OPEC and the two are knowingly distinct until an alias crosswalk lands.)
+igo_spotlight:
+  - actor:igo-nato        # the US–Turkey tie that keeps Turkey off an island
+  - actor:igo-loas        # League of Arab States
+  - actor:igo-oic         # Organisation of Islamic Cooperation

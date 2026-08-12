@@ -5,6 +5,7 @@ import type {
   Effect,
   EventDetail,
   EventList,
+  Flow,
   GraphActor,
   Health,
   Pack,
@@ -56,6 +57,8 @@ export const getTrajectory = (dyadId: string) =>
   get<Trajectory>(`/api/escalation/${encodeURIComponent(dyadId)}`)
 
 export const getDyads = () => get<{ rows: Dyad[] }>('/api/dyads')
+
+export const getFlows = () => get<{ rows: Flow[] }>('/api/flows')
 
 export const getRelations = (params: { start?: string; end?: string } = {}) => {
   const query = new URLSearchParams()
