@@ -17,6 +17,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 
 @dataclass(frozen=True)
@@ -28,7 +29,7 @@ class Window:
     end: str
 
 
-def export_subgraph(db_path: Path, window: Window):  # -> networkx.Graph
+def export_subgraph(db_path: Path, window: Window) -> Any:  # networkx.Graph
     """Actors alive in the window (COW state-system membership respected),
     RELATES_TO edges valid in it, and event flow between them, as a networkx
     graph. Read-only connection — analytics never writes mid-export."""
@@ -43,7 +44,7 @@ def compute_metrics(db_path: Path, window: Window) -> int:
     raise NotImplementedError("Phase 2 — see docs/build-spec.md section 12")
 
 
-def regime_shift_report(db_path: Path) -> list[dict]:
+def regime_shift_report(db_path: Path) -> list[dict[str, Any]]:
     """How each actor's structural position moves across regime boundaries and
     decades — the 120-year reconfiguration the time slider animates."""
     raise NotImplementedError("Phase 2 — see docs/build-spec.md section 12")

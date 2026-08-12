@@ -24,6 +24,7 @@ rejects `--` comments.
 
 from __future__ import annotations
 
+import contextlib
 import decimal
 from pathlib import Path
 from typing import Any
@@ -34,11 +35,12 @@ from core.ontology import kuzu_schema as ontology
 
 __all__ = [
     "GraphUnavailable",
-    "connect",
     "apply_schema",
-    "merge_nodes",
-    "merge_edges",
     "check_provenance",
+    "close",
+    "connect",
+    "merge_edges",
+    "merge_nodes",
     "query",
 ]
 
@@ -51,7 +53,7 @@ def connect(db_path: Path, *, read_only: bool = False) -> kuzu.Connection:
     """Open the embedded graph. Diagnoses the single-writer lock explicitly."""
     try:
         db = kuzu.Database(str(db_path), read_only=read_only)
-        return kuzu.Connection(db)
+        conn = kuzu.Connection(db)
     except RuntimeError as exc:  # kuzu raises RuntimeError for IO/lock errors
         message = str(exc)
         if "lock" in message.lower():
@@ -60,7 +62,40 @@ def connect(db_path: Path, *, read_only: bool = False) -> kuzu.Connection:
                 "single-writer: stop the other writer (the API process, or a "
                 "running ingest/transmission job) or open read-only."
             ) from exc
+        if "virtualalloc" in message.lower() or "buffer manager" in message.lower():
+            raise GraphUnavailable(
+                f"Cannot open {db_path}: the process is out of virtual address "
+                "space for graphs. EACH open Kuzu database reserves an 8 TiB "
+                "virtual allocation, so ONE PROCESS CAN HOLD ONLY ~15 AT ONCE — "
+                "call kuzu_store.close() on graphs you are done with rather than "
+                "dropping the reference. Original: " + message
+            ) from exc
         raise GraphUnavailable(f"Cannot open graph at {db_path}: {message}") from exc
+    # Keep the Database reachable from the Connection so `close` can shut both.
+    # Dropping the Python reference does NOT reliably release the write lock or
+    # the reservation; only closing does.
+    conn._geograph_db = db  # type: ignore[attr-defined]
+    return conn
+
+
+def close(conn: kuzu.Connection | None) -> None:
+    """Release a graph: close the connection AND its database.
+
+    WHY THIS IS NOT OPTIONAL HYGIENE. Two separate limits bite without it.
+    Kuzu is single-writer, so a graph left open blocks the next writer — the
+    API cannot take a lock a finished batch job still holds. And each open
+    database reserves an 8 TiB virtual allocation, so a process that opens
+    graphs in a loop dies at roughly the fifteenth with a buffer-manager error
+    that names memory rather than the real cause.
+    """
+    if conn is None:
+        return
+    database = getattr(conn, "_geograph_db", None)
+    for target in (conn, database):
+        if target is None:
+            continue
+        with contextlib.suppress(Exception):
+            target.close()
 
 
 def apply_schema(conn: kuzu.Connection) -> None:
@@ -91,6 +126,8 @@ def query(
 ) -> list[dict[str, Any]]:
     """Run one Cypher statement, returning plain dict rows."""
     result = conn.execute(cypher, parameters=params or {})
+    if isinstance(result, list):  # kuzu returns a list only for `;`-chained statements
+        result = result[-1]
     columns = result.get_column_names()
     rows: list[dict[str, Any]] = []
     while result.has_next():

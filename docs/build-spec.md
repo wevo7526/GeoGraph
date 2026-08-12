@@ -24,7 +24,7 @@ GeoGraph is three things at once:
 
 One-line pitch: a system that operationalizes applied history at the scale of the longue durée. It reasons about the present from a structured memory of the last 120 years, thinks in networks rather than headlines, conditions on structural regime, and is honest about uncertainty.
 
-GeoGraph is a separate repository with its own front door, bootstrapped from the MarketGraph scaffold, cross-linked to MarketGraph as a sibling. Built by Will and a colleague from the William and Mary MBA.
+GeoGraph is a separate repository with its own front door, bootstrapped from the MarketGraph scaffold, cross-linked to MarketGraph as a sibling.
 
 ## 2. The intellectual frames it speaks in
 
@@ -102,7 +102,7 @@ Market data (daily, then intraday recently):
 - Ingestion: yfinance, fredapi, google-cloud-bigquery, httpx, a SEC EDGAR client, and loaders for the COW, ICB, JST, and Shiller flat files.
 - LLM: Anthropic Claude via the SDK. Used for CAMEO coding of modern non-GDELT text, the reasoning agent, and analogy retrieval. Never for numbers.
 - Agent surface: MCP server exposing graph and analytics tools.
-- Web: TypeScript, React, Vite, Tailwind; force-directed graph via d3-force or sigma.js.
+- Web: TypeScript, React, Vite, Tailwind; explorable 3D force-directed graph via react-force-graph-3d/three in the MarketGraph Graph3D lineage (amended from d3-force/sigma.js when the explorer went 3D).
 - Deploy: Railway. Kuzu is an embedded file on a persistent volume, single-writer (batch ingestion and transmission jobs write one at a time; API reads are concurrent). Postgres runs as a Railway service.
 
 Environment variables: `ANTHROPIC_API_KEY`, `BIGQUERY_PROJECT`, `GOOGLE_APPLICATION_CREDENTIALS`, `FRED_API_KEY`, `GPR_INDEX_URL`, `KUZU_DB_PATH`, `DATABASE_URL`.

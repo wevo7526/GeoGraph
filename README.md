@@ -73,10 +73,22 @@ web/              Vite + React + Tailwind explorer with the 120-year time slider
 
 ## Status
 
-Phase 0 scaffold: ontology, stores, crosswalks, regime segmentation,
-escalation head, calendars, the MENA pack and the explorer shell are in and
-tested. The build proceeds by the phased milestones in
-`docs/build-spec.md` §18 — next: the marquee spine end to end, then the
-transmission engine on one modern episode (the twelve-day war, 2025).
+**Phase 0 is complete** (`docs/build-spec.md` §18: spine coded, one modern
+episode worked end to end and viewable):
 
-Built by two William & Mary MBAs
+- The CAMEO codebook drives everything — a code implies its Goldstein weight
+  and its quad class, so a pack cannot declare one that contradicts its own
+  code.
+- The MENA marquee spine seeds fully coded: classifier Head B folds it into
+  per-dyad EWMA baselines in time order, writing escalation onto the events.
+- The market panel loads yfinance daily bars into Postgres with a per-ticker
+  depth report, because a feed that starts decades after the exchange did
+  shortens every study that uses it.
+- The transmission engine measures the **twelve-day war** (June 2025) across
+  the markets that existed, at each market's own first tradable session —
+  `first_mover` flips between the two strikes, and Rising Lion's six-session
+  windows are flagged overlapping rather than averaged.
+- A container boot seeds, loads and measures itself, then serves the API,
+  the explorer and the narrated case study from one origin.
+
+Next: Phase 1 generalises the engine across the whole spine.

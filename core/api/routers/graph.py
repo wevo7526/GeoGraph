@@ -7,6 +7,8 @@ the graph currently holds one region pack and no deep tier yet will claim
 
 from __future__ import annotations
 
+from typing import Any
+
 from fastapi import APIRouter, HTTPException, Request
 
 from core.graph import kuzu_store
@@ -15,7 +17,7 @@ from core.ontology import kuzu_schema as ontology
 router = APIRouter(tags=["graph"])
 
 
-def _conn(request: Request):
+def _conn(request: Request) -> Any:
     conn = request.app.state.graph
     if conn is None:
         raise HTTPException(
@@ -26,13 +28,13 @@ def _conn(request: Request):
 
 
 @router.get("/ontology")
-def ontology_summary() -> dict:
+def ontology_summary() -> dict[str, Any]:
     """The running schema, inspectable rather than taken on trust."""
     return ontology.summary()
 
 
 @router.get("/stats")
-def stats(request: Request) -> dict:
+def stats(request: Request) -> dict[str, Any]:
     """Node and edge counts per table — the coverage statement, honest even
     (especially) when the answer is zero."""
     conn = _conn(request)
@@ -47,8 +49,29 @@ def stats(request: Request) -> dict:
     return {"nodes": node_counts, "edges": edge_counts}
 
 
+@router.get("/relations")
+def relations(request: Request) -> dict[str, Any]:
+    """The durable network: RELATES_TO edges with their validity windows.
+
+    This is the structure the explorer draws UNDER the event flow — the proxy
+    web, the alliances — as distinct from the dyads Head B measures escalation
+    against. `proxy` rows are directed patron → client.
+    """
+    conn = _conn(request)
+    rows = kuzu_store.query(
+        conn,
+        "MATCH (a:Actor)-[r:RELATES_TO]->(b:Actor) "
+        "RETURN a.node_id AS a_id, a.name AS a_name, "
+        "b.node_id AS b_id, b.name AS b_name, "
+        "r.relation_type AS relation_type, r.valid_from AS valid_from, "
+        "r.valid_to AS valid_to, r.source_id AS source_id "
+        "ORDER BY relation_type, a_id, b_id",
+    )
+    return {"rows": rows}
+
+
 @router.get("/provenance")
-def provenance(request: Request) -> dict:
+def provenance(request: Request) -> dict[str, Any]:
     """The invariant, checkable over HTTP: every sourced edge cites a Source
     that exists. An empty violation list is the claim this project makes."""
     violations = kuzu_store.check_provenance(_conn(request))

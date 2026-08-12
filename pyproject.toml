@@ -3,7 +3,6 @@ name = "geograph"
 version = "0.0.1"
 description = "An applied-history engine for geopolitics and markets: a 120-year network archive, a measured transmission layer, and a reasoning layer with two forecasting modes."
 requires-python = ">=3.12"
-authors = [{ name = "Will Evans" }]
 
 # Deliberately small at the core. Every dependency here is load-bearing:
 #   httpx           HTTP client for GPR, flat-file downloads, and the EDGAR client
@@ -84,6 +83,10 @@ strict = true
 # The graph driver returns Any from result rows by design; strict mode would
 # otherwise force a cast at every read site and teach nothing.
 disallow_any_expr = false
+# The container entrypoint is POSIX-only by nature (os.chown, setuid — the
+# volume-over-directory dance): those attributes do not exist when mypy runs
+# on a Windows dev machine, and the file executes only inside the container.
+exclude = 'docker-entrypoint\.py'
 
 [[tool.mypy.overrides]]
 # linkml-runtime ships no py.typed marker. Its SchemaView surface is used
@@ -95,6 +98,20 @@ ignore_missing_imports = true
 [[tool.mypy.overrides]]
 module = ["yaml.*", "kuzu.*", "yfinance.*", "fredapi.*", "statsmodels.*", "scipy.*"]
 ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+# All live in optional extras, so a core-only checkout does not have them
+# installed at all — and `mypy .` must still pass there, because every
+# deterministic layer runs without the LLM and the graph reads without Postgres.
+module = ["anthropic.*", "psycopg.*", "mcp.*"]
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+# The MCP SDK's @server.tool() decorator is untyped from mypy's view whenever
+# the SDK is absent (it lives in the [mcp] extra, see above) — the tools keep
+# their own full annotations either way.
+module = ["core.mcp.server"]
+disallow_untyped_decorators = false
 
 [[tool.mypy.overrides]]
 # Tests are checked, but not for return annotations: `-> None` on dozens of

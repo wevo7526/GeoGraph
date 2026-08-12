@@ -16,6 +16,7 @@ monthly → yfinance daily for US equities). Deep-past series may carry a single
 
 from __future__ import annotations
 
+import math
 from typing import Any
 
 from core.settings import Settings
@@ -54,7 +55,11 @@ DDL: tuple[str, ...] = (
         run_id        BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
         event_node_id TEXT        NOT NULL,
         market_ticker TEXT        NOT NULL,
-        window        TEXT        NOT NULL,
+        -- `window` is RESERVED in Postgres (since window functions), so a bare
+        -- `window TEXT` is a syntax error, not a style question — the same trap
+        -- `when` and `end` are in Kuzu. The graph's AFFECTED key slot is still
+        -- called `window`; only this column carries the prefix.
+        effect_window TEXT        NOT NULL,
         resolution    TEXT        NOT NULL,
         status        TEXT        NOT NULL CHECK (status IN
             ('computed', 'skipped_no_market', 'skipped_no_data', 'overlapping')),
@@ -65,7 +70,7 @@ DDL: tuple[str, ...] = (
         p_value          DOUBLE PRECISION,
         method        TEXT        NOT NULL,
         computed_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
-        UNIQUE (event_node_id, market_ticker, window)
+        UNIQUE (event_node_id, market_ticker, effect_window)
     )
     """,
 )
@@ -75,7 +80,7 @@ class PanelUnavailable(RuntimeError):
     """Postgres cannot be reached or is not configured. Names the fix."""
 
 
-def connect(settings: Settings):
+def connect(settings: Settings) -> Any:
     """A psycopg connection to the panel, or a diagnosis.
 
     Lazy import so the core installs without the `panel` extra — reading the
@@ -126,3 +131,130 @@ def upsert_observations(conn: Any, rows: list[dict[str, Any]]) -> int:
             cur.execute(sql, full)
     conn.commit()
     return len(rows)
+
+
+def upsert_intraday(conn: Any, rows: list[dict[str, Any]]) -> int:
+    """Recent intraday prints. Same idempotence rule as the daily panel."""
+    sql = """
+        INSERT INTO market_intraday (market_ticker, ts, price)
+        VALUES (%(market_ticker)s, %(ts)s, %(price)s)
+        ON CONFLICT (market_ticker, ts) DO UPDATE SET price = EXCLUDED.price
+    """
+    with conn.cursor() as cur:
+        for row in rows:
+            cur.execute(sql, row)
+    conn.commit()
+    return len(rows)
+
+
+def record_runs(conn: Any, effects: list[Any], skips: list[Any]) -> int:
+    """The event-study working set: every ATTEMPT, computed or skipped.
+
+    A skip is a row, not an absence. "Tadawul has no 1973 reaction" and "we
+    never looked" are different claims, and only a recorded skip can tell them
+    apart — so coverage becomes something you query rather than infer.
+    """
+    sql = """
+        INSERT INTO event_study_runs
+            (event_node_id, market_ticker, effect_window, resolution, status,
+             raw_return, expected_return, abnormal_return, t_stat, p_value, method)
+        VALUES (%(event_node_id)s, %(market_ticker)s, %(effect_window)s, %(resolution)s,
+                %(status)s, %(raw_return)s, %(expected_return)s, %(abnormal_return)s,
+                %(t_stat)s, %(p_value)s, %(method)s)
+        ON CONFLICT (event_node_id, market_ticker, effect_window) DO UPDATE SET
+            resolution = EXCLUDED.resolution, status = EXCLUDED.status,
+            raw_return = EXCLUDED.raw_return, expected_return = EXCLUDED.expected_return,
+            abnormal_return = EXCLUDED.abnormal_return, t_stat = EXCLUDED.t_stat,
+            p_value = EXCLUDED.p_value, method = EXCLUDED.method,
+            computed_at = now()
+    """
+    rows: list[dict[str, Any]] = [
+        {
+            "event_node_id": e.event_node_id, "market_ticker": e.market_ticker,
+            "effect_window": e.window, "resolution": e.resolution,
+            "status": "overlapping" if e.overlapping else "computed",
+            "raw_return": _finite(e.raw_return),
+            "expected_return": _finite(e.expected_return),
+            "abnormal_return": _finite(e.abnormal_return),
+            "t_stat": _finite(e.t_stat), "p_value": _finite(e.p_value),
+            "method": e.method,
+        }
+        for e in effects
+    ] + [
+        {
+            "event_node_id": s.event_node_id, "market_ticker": s.market_ticker,
+            "effect_window": s.window, "resolution": s.resolution,
+            "status": s.status, "raw_return": None, "expected_return": None,
+            "abnormal_return": None, "t_stat": None, "p_value": None,
+            "method": s.reason,
+        }
+        for s in skips
+    ]
+    with conn.cursor() as cur:
+        for row in rows:
+            cur.execute(sql, row)
+    conn.commit()
+    return len(rows)
+
+
+def _finite(value: float | None) -> float | None:
+    """NaN is not a measurement. Postgres would store it; nothing downstream
+    could tell it from a real number, so it becomes NULL here."""
+    if value is None:
+        return None
+    return None if math.isnan(value) or math.isinf(value) else float(value)
+
+
+def coverage(conn: Any, ticker: str, *, frequency: str = "daily") -> dict[str, Any]:
+    """What the panel actually holds for one ticker.
+
+    THE PANEL IS THE RECORD OF WHAT DATA EXISTS. A market's inception_date is
+    the pack's claim about when the exchange opened; this is the measured
+    answer to "what can we compute with", and the two are not the same number
+    (build-spec section 5.2 — verify depth on ingest).
+    """
+    sql = """
+        SELECT count(*) AS rows, min(obs_date) AS first, max(obs_date) AS last
+        FROM market_observations WHERE market_ticker = %s AND frequency = %s
+    """
+    with conn.cursor() as cur:
+        cur.execute(sql, (ticker, frequency))
+        count, first, last = cur.fetchone()
+    return {
+        "ticker": ticker,
+        "frequency": frequency,
+        "rows": int(count),
+        "first": first.isoformat() if first else None,
+        "last": last.isoformat() if last else None,
+    }
+
+
+def series(
+    conn: Any,
+    ticker: str,
+    *,
+    start: str,
+    end: str,
+    frequency: str = "daily",
+) -> list[dict[str, Any]]:
+    """One market's observations over an inclusive date range, in date order.
+
+    Returns `price` as whichever column carries it — `close` for an index or a
+    commodity, `value` for a yield — so callers do not each re-implement that
+    choice. Rows with neither are not returned at all; a gap stays a gap.
+    """
+    sql = """
+        SELECT obs_date, close, value FROM market_observations
+        WHERE market_ticker = %s AND frequency = %s AND obs_date BETWEEN %s AND %s
+        ORDER BY obs_date
+    """
+    with conn.cursor() as cur:
+        cur.execute(sql, (ticker, frequency, start, end))
+        rows = cur.fetchall()
+    out: list[dict[str, Any]] = []
+    for obs_date, close, value in rows:
+        price = close if close is not None else value
+        if price is None:
+            continue
+        out.append({"obs_date": obs_date.isoformat(), "price": float(price)})
+    return out

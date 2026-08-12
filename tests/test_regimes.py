@@ -3,6 +3,8 @@ the dates everyone will check first."""
 
 from __future__ import annotations
 
+from typing import Any
+
 import pytest
 
 from core.reasoning import regimes
@@ -10,6 +12,13 @@ from core.reasoning import regimes
 
 def test_both_kinds_exist():
     assert set(regimes.segmentation()) == {"monetary_order", "polarity_epoch"}
+
+
+def _at(date: str, kind: str) -> dict[str, Any]:
+    """regime_at, asserted present — these dates all sit inside the segmentation."""
+    entry = regimes.regime_at(date, kind)
+    assert entry is not None, f"no {kind} regime at {date}"
+    return entry
 
 
 @pytest.mark.parametrize("kind", ["monetary_order", "polarity_epoch"])
@@ -22,15 +31,15 @@ def test_no_gaps_from_1905_to_now(kind):
 
 
 def test_the_dates_everyone_checks():
-    assert regimes.regime_at("1955-06-01", "monetary_order")["id"] == "bretton-woods"
-    assert regimes.regime_at("1955-06-01", "polarity_epoch")["id"] == "bipolar-cold-war"
-    assert regimes.regime_at("1912-01-01", "monetary_order")["id"] == "classical-gold-standard"
-    assert regimes.regime_at("2026-01-01", "monetary_order")["id"] == "fiat-floating"
-    assert regimes.regime_at("2026-01-01", "polarity_epoch")["id"] == "multipolar-drift"
+    assert _at("1955-06-01", "monetary_order")["id"] == "bretton-woods"
+    assert _at("1955-06-01", "polarity_epoch")["id"] == "bipolar-cold-war"
+    assert _at("1912-01-01", "monetary_order")["id"] == "classical-gold-standard"
+    assert _at("2026-01-01", "monetary_order")["id"] == "fiat-floating"
+    assert _at("2026-01-01", "polarity_epoch")["id"] == "multipolar-drift"
 
 
 def test_boundary_days_belong_to_the_new_regime():
-    assert regimes.regime_at("1971-08-15", "monetary_order")["id"] == "fiat-floating"
+    assert _at("1971-08-15", "monetary_order")["id"] == "fiat-floating"
 
 
 def test_before_the_archive_is_none_not_a_guess():

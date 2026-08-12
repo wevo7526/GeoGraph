@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 from fastapi import APIRouter, HTTPException
 
 from core import packs as packs_module
@@ -10,12 +12,12 @@ router = APIRouter(tags=["packs"])
 
 
 @router.get("/packs")
-def list_packs() -> dict:
+def list_packs() -> dict[str, Any]:
     return {"packs": packs_module.available()}
 
 
 @router.get("/packs/{name}")
-def get_pack(name: str) -> dict:
+def get_pack(name: str) -> dict[str, Any]:
     try:
         pack = packs_module.load(name)
     except packs_module.PackError as exc:

@@ -100,3 +100,11 @@ sources:
     citation: >-
       Curated by the GeoGraph authors; each event's own provenance is the
       public record, dates cross-checked against ICB/UCDP where covered.
+  - id: source:crs-iran-proxies
+    name: CRS — Iran's foreign and defense policies (proxy network)
+    kind: report
+    url: https://crsreports.congress.gov/product/pdf/R/R44017
+    citation: >-
+      Congressional Research Service, "Iran's Foreign and Defense Policies"
+      (R44017, updated periodically): documents Tehran's sponsorship of
+      Hezbollah, Hamas and Ansar Allah — funding, arms and direction.

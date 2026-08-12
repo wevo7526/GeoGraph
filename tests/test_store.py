@@ -4,6 +4,8 @@ backstop catches what the chokepoint cannot."""
 
 from __future__ import annotations
 
+from typing import Any
+
 import pytest
 
 from core.graph import kuzu_store
@@ -12,12 +14,16 @@ from core.ontology.kuzu_schema import OntologyError
 
 @pytest.fixture()
 def conn(tmp_path):
+    # CLOSED after each test, not just dereferenced: each open Kuzu database
+    # reserves an 8 TiB virtual allocation, so a suite that leaks them dies
+    # around the fifteenth graph with a buffer-manager error.
     connection = kuzu_store.connect(tmp_path / "test.kuzu")
     kuzu_store.apply_schema(connection)
-    return connection
+    yield connection
+    kuzu_store.close(connection)
 
 
-def _seed(conn):
+def _seed(conn: Any) -> None:
     kuzu_store.merge_nodes(conn, "Source", [
         {"node_id": "source:test", "name": "Test source", "kind": "dataset",
          "url": "", "citation": ""},

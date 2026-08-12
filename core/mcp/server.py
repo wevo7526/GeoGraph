@@ -35,57 +35,69 @@ def build_server() -> Any:
     server = MCPServer("geograph")
 
     @server.tool()
-    def find_actor(name: str) -> dict:
+    def find_actor(name: str) -> dict[str, Any]:
         """Find actors by name (substring). Rows are capped; `truncated` says
         when. The actor set is TIME-VARYING — check state_from/state_to before
         claiming an actor existed at a date."""
         return tools.find_actor(conn, name)
 
     @server.tool()
-    def neighbors(node_id: str) -> dict:
+    def neighbors(node_id: str) -> dict[str, Any]:
         """One hop out along traversable edges from any node."""
         return tools.neighbors(conn, node_id)
 
     @server.tool()
-    def regime_at(date: str) -> dict:
+    def regime_at(date: str) -> dict[str, Any]:
         """The monetary order and polarity epoch covering an ISO date.
         Analogies are only admissible WITHIN a regime — never reason naively
         across the 120-year span."""
         return tools.regime_at(date)
 
     @server.tool()
-    def events_between(actor_a: str, actor_b: str, start: str = "", end: str = "") -> dict:
-        """Events between two actors in a window. (Phase 0.)"""
+    def events_between(
+        actor_a: str, actor_b: str, start: str = "", end: str = ""
+    ) -> dict[str, Any]:
+        """Events on the dyad two actors form, in time order, with each event's
+        escalation against that dyad's own baseline. Pass actor node_ids
+        (`actor:cow-2`). The dyad is UNORDERED — one relationship, whichever
+        side acted. Read the `coverage` note before concluding an event is
+        absent from history rather than from this archive."""
         return tools.events_between(conn, actor_a, actor_b, start or None, end or None)
 
     @server.tool()
-    def escalation_trajectory(dyad_id: str) -> dict:
-        """A dyad's escalation path against its own EWMA baseline —
-        escalation is relational, never an absolute label. (Phase 2.)"""
+    def escalation_trajectory(dyad_id: str) -> dict[str, Any]:
+        """A dyad's escalation path against its own EWMA baseline. Escalation
+        is RELATIONAL: the same Goldstein score is routine in a rivalry and a
+        rupture in an alliance, so cite the baseline whenever you cite a
+        magnitude. A first observation has no history and reads as `stable`
+        with magnitude 0 — that means "nothing to compare to", not "calm"."""
         return tools.escalation_trajectory(conn, dyad_id)
 
     @server.tool()
-    def network_metrics(window_start: str, window_end: str) -> dict:
+    def network_metrics(window_start: str, window_end: str) -> dict[str, Any]:
         """Centrality, brokerage and coalitions for a time window —
         deterministic numbers from graph/analytics.py. (Phase 2.)"""
         return tools.network_metrics(conn, window_start, window_end)
 
     @server.tool()
-    def event_effects(event_id: str) -> dict:
+    def event_effects(event_id: str) -> dict[str, Any]:
         """MEASURED market effects of an event, with the resolution each was
         measured at. Deep-past effects are annual/monthly and coarse — weight
         them accordingly, and never read an abnormal return as a causal
-        assertion. (Phase 1.)"""
+        assertion. An empty result means nothing was MEASURED (the engine may
+        not have run, or every market was skipped), never that the event had no
+        effect. `overlapping` marks a window another event falls inside: report
+        that caveat with the number, do not quietly drop it."""
         return tools.event_effects(conn, event_id)
 
     @server.tool()
-    def analogues_for(query_ref: str) -> dict:
+    def analogues_for(query_ref: str) -> dict[str, Any]:
         """Regime-admissible historical analogues with similarity and
         rationale. (Phase 5.)"""
         return tools.analogues_for(query_ref)
 
     @server.tool()
-    def forecast(question: str, mode: str = "near_term") -> dict:
+    def forecast(question: str, mode: str = "near_term") -> dict[str, Any]:
         """Reasoned scenarios. near_term carries likelihoods (Brier-scored);
         long_horizon maps structural pressure over windows and NEVER calls
         dates — surface its boundary statement verbatim. (Phase 5.)"""

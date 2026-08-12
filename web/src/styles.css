@@ -12,6 +12,16 @@
   --muted: #7d8598;
   --accent: #b08d57; /* old gold — the one flourish */
   --alert: #a44a3f;
+
+  /* Categorical series for the network view — actor types. These are
+     chromatic steps in the brand's register, validated as a set (lightness
+     band, chroma floor, CVD and normal-vision separation, contrast) against
+     the panel surface. The UI tokens above are inks and surfaces; they fail
+     as series colors by design — never encode identity with --text/--muted. */
+  --series-state: #c0872a;
+  --series-person: #b04a5c;
+  --series-org: #4a82d4;
+  --series-swf: #2f9960;
 }
 
 html,
@@ -28,4 +38,118 @@ body {
 
 .mono {
   font-family: ui-monospace, 'Cascadia Code', Consolas, monospace;
+}
+
+/* ── The explorer workspace: everything visible, nothing scrolls the page ────
+   One viewport-height grid — topbar / main / time slider — in the MarketGraph
+   shell lineage. Panels that overflow scroll INSIDE their own box
+   (.pane-scroll); the page itself never does. `minmax(0, …)` and `min-height:
+   0` are load-bearing: without them a long event list stretches the row and
+   silently re-introduces page scroll. */
+.explorer-shell {
+  height: 100dvh;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  overflow: hidden;
+}
+
+.explorer-main {
+  display: grid;
+  grid-template-columns: 19rem minmax(0, 1fr) 21rem;
+  min-height: 0;
+}
+
+@media (max-width: 1100px) {
+  .explorer-main {
+    grid-template-columns: 15rem minmax(0, 1fr) 17rem;
+  }
+}
+
+.pane-scroll {
+  overflow-y: auto;
+  min-height: 0;
+}
+
+/* The 3D canvas column. The graph is absolutely positioned and measured with
+   a ResizeObserver — ForceGraph3D with no size draws a WINDOW-sized canvas
+   that overflows its column (the documented MarketGraph bug). Overlays sit on
+   top of the canvas, out of layout. */
+.canvas3d {
+  position: relative;
+  background: var(--ink);
+  min-width: 0;
+}
+
+.canvas3d-fill {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+}
+
+.canvas3d-caption {
+  position: absolute;
+  left: 0.9rem;
+  right: 0.9rem;
+  bottom: 0.7rem;
+  pointer-events: none;
+}
+
+.canvas3d-fit {
+  position: absolute;
+  top: 0.8rem;
+  right: 0.9rem;
+}
+
+.canvas3d-legend {
+  position: absolute;
+  left: 0.9rem;
+  top: 0.8rem;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.35rem;
+  pointer-events: none;
+}
+
+/* The 120-year scrubber. A native range input is invisible on a near-black
+   ground in most engines, so the track and thumb are drawn explicitly.
+   Track and thumb pseudo-elements cannot share a rule across engines —
+   a selector one engine does not recognise voids the whole block. */
+input[type='range'].timeline {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 100%;
+  height: 20px;
+  margin: 0;
+  background: transparent;
+  cursor: pointer;
+}
+input[type='range'].timeline::-webkit-slider-runnable-track {
+  height: 2px;
+  background: var(--line);
+}
+input[type='range'].timeline::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  margin-top: -6px;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--accent);
+  border: 2px solid var(--ink);
+}
+input[type='range'].timeline::-moz-range-track {
+  height: 2px;
+  background: var(--line);
+}
+input[type='range'].timeline::-moz-range-thumb {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--accent);
+  border: 2px solid var(--ink);
+}
+input[type='range'].timeline:focus-visible {
+  outline: 1px solid var(--accent);
+  outline-offset: 6px;
 }

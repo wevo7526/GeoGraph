@@ -1,4 +1,5 @@
-import type { Segmentation } from '../types'
+import { useMemo } from 'react'
+import type { GraphEvent, Segmentation } from '../types'
 
 // The signature interaction (build-spec section 15): scrub 120 years and
 // watch the network reconfigure through regimes. The range runs PAST the
@@ -12,13 +13,27 @@ interface Props {
   year: number
   onChange: (year: number) => void
   regimes: Segmentation | null
+  events?: GraphEvent[] | null
 }
 
-export default function TimeSlider({ year, onChange, regimes }: Props) {
+export default function TimeSlider({ year, onChange, regimes, events }: Props) {
   const span = YEAR_MAX - YEAR_MIN
+  const pct = (y: number) => `${((y - YEAR_MIN) / span) * 100}%`
   const boundaries = (regimes?.polarity_epoch ?? [])
     .map((r) => Number(r.start.slice(0, 4)))
     .filter((y) => y > YEAR_MIN)
+
+  // Coverage, drawn: a mark per year the archive actually holds an event, so
+  // an empty stretch of slider reads as "not ingested yet", not "history was
+  // quiet". The same honesty rule as the explorer's empty states.
+  const coveredYears = useMemo(() => {
+    const years = new Set<number>()
+    for (const e of events ?? []) {
+      const y = Number(e.event_time.slice(0, 4))
+      if (y >= YEAR_MIN && y <= YEAR_MAX) years.add(y)
+    }
+    return [...years]
+  }, [events])
 
   return (
     <div className="px-6 py-4 border-t" style={{ borderColor: 'var(--line)' }}>
@@ -26,36 +41,52 @@ export default function TimeSlider({ year, onChange, regimes }: Props) {
         <span className="mono text-2xl" style={{ color: 'var(--accent)' }}>
           {year}
         </span>
-        <span className="text-sm" style={{ color: 'var(--muted)' }}>
+        <span className="text-sm text-right" style={{ color: 'var(--muted)' }}>
           {year > YEAR_NOW
             ? 'forecast horizon — structural scenario space, not history'
             : regimeLabel(regimes, year)}
         </span>
       </div>
-      <div className="relative">
+
+      <div className="relative" style={{ height: 30 }}>
+        {/* coverage strip sits above the track */}
+        <div aria-hidden className="absolute inset-x-0 top-0" style={{ height: 5 }}>
+          {coveredYears.map((y) => (
+            <span
+              key={y}
+              className="absolute top-0 h-full"
+              style={{ left: pct(y), width: 2, background: 'var(--accent)', opacity: 0.55 }}
+            />
+          ))}
+        </div>
+        {/* regime boundaries and the now-marker cross the track itself */}
         {boundaries.map((b) => (
           <span
             key={b}
-            className="absolute top-0 h-2 w-px"
-            style={{ left: `${((b - YEAR_MIN) / span) * 100}%`, background: 'var(--muted)' }}
+            aria-hidden
+            className="absolute w-px"
+            style={{ left: pct(b), top: 7, height: 16, background: 'var(--muted)', opacity: 0.6 }}
             title={`regime boundary ${b}`}
           />
         ))}
         <span
-          className="absolute top-0 h-2 w-px"
-          style={{ left: `${((YEAR_NOW - YEAR_MIN) / span) * 100}%`, background: 'var(--alert)' }}
+          aria-hidden
+          className="absolute w-px"
+          style={{ left: pct(YEAR_NOW), top: 7, height: 16, background: 'var(--alert)' }}
           title="now"
         />
         <input
           type="range"
+          className="timeline absolute inset-x-0"
+          style={{ top: 5 }}
           min={YEAR_MIN}
           max={YEAR_MAX}
           value={year}
           onChange={(e) => onChange(Number(e.target.value))}
-          className="w-full accent-[--accent]"
           aria-label="archive year"
         />
       </div>
+
       <div className="flex justify-between text-xs mono" style={{ color: 'var(--muted)' }}>
         <span>{YEAR_MIN}</span>
         <span>{YEAR_NOW} · now</span>

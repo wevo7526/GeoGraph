@@ -13,15 +13,43 @@ business day before it reaches New York.
 from __future__ import annotations
 
 import datetime as dt
+import json
+from collections.abc import Mapping
+from typing import Any
 
 #: TradingCalendar enum value → Python weekday numbers (Mon=0 … Sun=6) on
 #: which the market trades. Mirrors the ontology's TradingCalendar enum; the
 #: ontology test asserts the two stay in step.
 TRADING_DAYS: dict[str, frozenset[int]] = {
     "us": frozenset({0, 1, 2, 3, 4}),             # Mon–Fri
-    "gulf": frozenset({6, 0, 1, 2, 3}),           # Sun–Thu
+    "gulf": frozenset({6, 0, 1, 2, 3}),           # Sun–Thu (Saudi Arabia)
+    "uae": frozenset({0, 1, 2, 3}),               # Mon–Thu (UAE from 2022)
     "global_futures": frozenset({0, 1, 2, 3, 4}),  # daily bars Mon–Fri
 }
+
+
+def calendar_for(market: Mapping[str, Any], date: dt.date) -> str:
+    """Which calendar a market kept ON A GIVEN DATE.
+
+    A MARKET'S WEEK IS NOT CONSTANT ACROSS 120 YEARS. The UAE moved to a
+    Monday–Friday working week on 2022-01-03 and its exchanges moved with it,
+    while Saudi Arabia stayed Sunday–Thursday — so DFM is `gulf` for a 2019
+    event and `us` for a 2025 one, and asking for its reaction on a Sunday in
+    2025 finds an exchange that is shut.
+
+    `calendar_eras` is era-keyed exactly like `native_frequency`: a start year
+    maps to the calendar in force from then on. Absent, `trading_calendar`
+    holds for all time.
+    """
+    base = str(market["trading_calendar"])
+    raw = market.get("calendar_eras")
+    if not raw:
+        return base
+    table = json.loads(raw) if isinstance(raw, str) else dict(raw)
+    applicable = [(int(year), name) for year, name in table.items() if int(year) <= date.year]
+    if not applicable:
+        return base
+    return str(max(applicable)[1])
 
 
 def is_trading_day(calendar: str, date: dt.date) -> bool:

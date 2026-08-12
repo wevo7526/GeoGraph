@@ -13,8 +13,10 @@ No LLM anywhere in this file, by design.
 from __future__ import annotations
 
 import functools
+from collections.abc import Iterable, Mapping
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import yaml
 
@@ -36,7 +38,7 @@ STABLE_BAND = 0.5
 @functools.lru_cache(maxsize=1)
 def _scale_map() -> dict[str, Any]:
     with open(_CROSSWALK, encoding="utf-8") as fh:
-        return yaml.safe_load(fh)
+        return cast(dict[str, Any], yaml.safe_load(fh))
 
 
 def harmonize(source_scale: str, raw_value: int | str) -> float:
@@ -114,3 +116,95 @@ class DyadTracker:
 
     def baseline(self, dyad_id: str) -> float | None:
         return self._baselines.get(dyad_id)
+
+
+def _bare(actor_id: str) -> str:
+    """`actor:cow-630` → `cow-630`, so a dyad id reads as the pair it is."""
+    return actor_id.split(":", 1)[-1]
+
+
+def dyad_id(actor_a: str, actor_b: str) -> str:
+    """The canonical id for an actor pair — SORTED, and therefore UNORDERED.
+
+    A rivalry is ONE relationship whichever side acted last. Iran striking
+    Israel in April 2024 and Israel striking Iran in June 2025 are the same
+    dyad escalating; keying the baseline by direction would split that history
+    in half and hide the trajectory that makes the twelve-day war legible. The
+    ontology's `actor_a_id`/`actor_b_id` hold the pair in sorted order so the
+    id is STABLE — they do not encode a direction. Direction lives where it
+    belongs, on INITIATED_BY and DIRECTED_AT.
+    """
+    a, b = sorted((actor_a, actor_b))
+    return f"dyad:{_bare(a)}--{_bare(b)}"
+
+
+@dataclass(frozen=True)
+class Coding:
+    """One Head B pass: escalation slots per event, EWMA state per dyad.
+
+    `events` rows carry `node_id`, `dyad_id` and the three escalation slots,
+    ready to merge onto Event nodes. `dyads` rows are Dyad nodes carrying the
+    baseline as of the last event folded in.
+    """
+
+    events: list[dict[str, Any]]
+    dyads: list[dict[str, Any]]
+
+
+def code_events(
+    events: Iterable[Mapping[str, Any]],
+    *,
+    names: Mapping[str, str] | None = None,
+    alpha: float = DEFAULT_ALPHA,
+) -> Coding:
+    """Head B over a whole event stream. PURE — no graph, no I/O, no model.
+
+    Each event needs `node_id`, `event_time`, `goldstein`, and its two actors
+    as `actor_a`/`actor_b` (a one-sided or internal event passes the same actor
+    twice — an internal rupture still has a relationship with itself, and the
+    Iranian and Egyptian revolutions are exactly that).
+
+    THE SORT IS THE ALGORITHM. A baseline is history, so events are folded in
+    chronologically; ties break on node_id so a re-run of the same input
+    produces the same baselines rather than a coin flip. ISO-8601 strings sort
+    correctly at every resolution the archive holds, which is why dates are
+    stored as strings.
+    """
+    names = names or {}
+    tracker = DyadTracker(alpha=alpha)
+    coded: list[dict[str, Any]] = []
+    dyads: dict[str, dict[str, Any]] = {}
+
+    ordered = sorted(events, key=lambda e: (str(e["event_time"]), str(e["node_id"])))
+    for event in ordered:
+        score = event.get("goldstein")
+        if score is None:
+            raise ValueError(
+                f"{event['node_id']} has no goldstein score, so Head B has nothing to "
+                "measure. Score it from its CAMEO code first "
+                "(classifier.typing.goldstein_for) — escalation is never guessed."
+            )
+        actor_a = str(event["actor_a"])
+        actor_b = str(event["actor_b"] or actor_a)
+        did = dyad_id(actor_a, actor_b)
+        result = tracker.observe(did, float(score))
+        coded.append({"node_id": event["node_id"], "dyad_id": did, **result})
+
+        pair = sorted((actor_a, actor_b))
+        label = (
+            f"{names.get(pair[0], _bare(pair[0]))} (internal)"
+            if pair[0] == pair[1]
+            else f"{names.get(pair[0], _bare(pair[0]))} – {names.get(pair[1], _bare(pair[1]))}"
+        )
+        dyads[did] = {
+            "node_id": did,
+            "name": label,
+            "actor_a_id": pair[0],
+            "actor_b_id": pair[1],
+            # The baseline AFTER this event — the dyad node holds current state,
+            # while each Event keeps the baseline it was measured against.
+            "ewma_baseline": tracker.baseline(did),
+            "ewma_as_of": str(event["event_time"]),
+        }
+
+    return Coding(events=coded, dyads=list(dyads.values()))

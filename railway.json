@@ -5,7 +5,8 @@
     "dockerfilePath": "Dockerfile"
   },
   "deploy": {
-    "startCommand": "python -m core.api.app",
+    "$comment": "boot.py seeds the stores and then execs the API — it is not a wrapper that can be skipped. A startCommand of `python -m core.api.app` boots an API over an empty volume, because Kuzu is single-writer and the API holds the lock.",
+    "startCommand": "python /app/scripts/boot.py",
     "healthcheckPath": "/api/health",
     "healthcheckTimeout": 120,
     "restartPolicyType": "ON_FAILURE",

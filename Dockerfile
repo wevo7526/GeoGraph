@@ -71,4 +71,9 @@ ENV PORT=8000
 EXPOSE 8000
 
 ENTRYPOINT ["python", "/usr/local/bin/docker-entrypoint.py"]
-CMD ["python", "-m", "core.api.app"]
+
+# Boot sequence: the entrypoint fixes the volume's ownership and drops
+# privileges, then boot.py seeds the stores and execs the API. Seeding has to
+# happen HERE because Kuzu is single-writer — once the API holds the write
+# lock there is no later moment to fill an empty volume. See scripts/boot.py.
+CMD ["python", "/app/scripts/boot.py"]

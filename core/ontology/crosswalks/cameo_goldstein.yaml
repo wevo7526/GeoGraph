@@ -1,0 +1,195 @@
+# The CAMEO codebook's two derived values — Goldstein score and quad class —
+# for the whole archive (build-spec sections 9 and 10).
+#
+# WHY THIS FILE EXISTS. Head B needs a Goldstein score as its base, and the
+# modern tier arrives with CAMEO codes, not scores. GDELT ships both, so from
+# Phase 4 on the firehose is trusted directly; the curated marquee spine and
+# any live-coded event carry a CAMEO code only, and get their score HERE.
+# Deterministic data, never the LLM (section 17): the model may type an event,
+# it may not price one.
+#
+# BOTH VALUES ARE FUNCTIONS OF THE CODE, NOT INDEPENDENT FACTS. A CAMEO code
+# implies its Goldstein weight and its quad class; storing them separately
+# invites the two to disagree. So they are derived here and only here, and
+# `packs._validate` refuses a pack whose hand-written quad_class contradicts
+# its own CAMEO code.
+#
+# LOOKUP IS HIERARCHICAL, and that is a feature. A code resolves to its most
+# specific entry and falls back toward its root: 1451 → 145 → 14. Sub-codes
+# below therefore cover only what the archive actually cites; everything else
+# in CAMEO's ~300 codes degrades to a defensible root value instead of failing.
+# An unknown ROOT raises — that is not a CAMEO code at all.
+#
+# ACCURACY AND ITS LIMITS. The twenty root values are the published Goldstein
+# root anchors and are stable across every version of the scale. The sub-code
+# values are the ones the archive cites, and a handful of them differ by a few
+# tenths between published versions of `CAMEO.goldsteinscale.txt`. Two
+# consequences, both deliberate: 138 is held at -5.8 to match the anchor
+# `escalation_scale_map.yaml` already cites for COW hostility level 2, so the
+# deep and modern tiers agree on what a military threat is worth; and Phase 4
+# is the verification pass, because GDELT delivers a Goldstein score per event
+# and disagreements with this file become measurable rather than theoretical.
+#
+# CAMEO codes are STRINGS with leading zeros preserved ("057", not 57).
+
+# The quad class is a partition of the root codes — GDELT's own mapping.
+# Note where it puts things, because the placement is not intuitive and it is
+# the vocabulary's call, not ours: signing a treaty (057) is VERBAL
+# cooperation, since material cooperation means resources actually moving
+# (06-08); and reducing relations (16x) is MATERIAL conflict, not verbal,
+# because breaking off relations does something rather than says something.
+quad_class_by_root:
+  verbal_cooperation: ["01", "02", "03", "04", "05"]
+  material_cooperation: ["06", "07", "08"]
+  verbal_conflict: ["09", "10", "11", "12", "13"]
+  material_conflict: ["14", "15", "16", "17", "18", "19", "20"]
+
+codes:
+  # ── the twenty roots: complete, and the fallback floor for every sub-code ──
+  "01":
+    label: Make public statement
+    goldstein: 0.0
+  "02":
+    label: Appeal
+    goldstein: 3.0
+  "03":
+    label: Express intent to cooperate
+    goldstein: 4.0
+  "04":
+    label: Consult
+    goldstein: 1.0
+  "05":
+    label: Engage in diplomatic cooperation
+    goldstein: 3.5
+  "06":
+    label: Engage in material cooperation
+    goldstein: 6.0
+  "07":
+    label: Provide aid
+    goldstein: 7.4
+  "08":
+    label: Yield
+    goldstein: 5.0
+  "09":
+    label: Investigate
+    goldstein: -2.0
+  "10":
+    label: Demand
+    goldstein: -5.0
+  "11":
+    label: Disapprove
+    goldstein: -2.0
+  "12":
+    label: Reject
+    goldstein: -4.0
+  "13":
+    label: Threaten
+    goldstein: -6.5
+  "14":
+    label: Protest
+    goldstein: -6.5
+  "15":
+    label: Exhibit force posture
+    goldstein: -7.2
+  "16":
+    label: Reduce relations
+    goldstein: -4.0
+  "17":
+    label: Coerce
+    goldstein: -7.0
+  "18":
+    label: Assault
+    goldstein: -9.0
+  "19":
+    label: Fight
+    goldstein: -10.0
+  "20":
+    label: Use unconventional mass violence
+    goldstein: -10.0
+
+  # ── sub-codes the archive cites ───────────────────────────────────────────
+  # The marquee spine (packs/*/marquee_events.yaml) and the deep-tier targets
+  # in cow_to_cameo.yaml. Add a code here when a loader starts citing it.
+  "046":
+    label: Engage in negotiation
+    goldstein: 7.0
+  "057":
+    label: Sign formal agreement
+    goldstein: 8.0
+  "084":
+    label: Return, release
+    goldstein: 7.0
+  "085":
+    label: Ease economic sanctions, boycott or embargo
+    goldstein: 7.0
+  "087":
+    label: De-escalate military engagement
+    goldstein: 7.0
+  "130":
+    label: Threaten, not specified
+    goldstein: -6.5
+  "138":
+    # Held at the anchor escalation_scale_map.yaml cites for COW hostility 2 —
+    # see the header. The deep tier and the modern tier must agree here or a
+    # 1912 threat and a 2012 threat are not comparable.
+    label: Threaten with military force
+    goldstein: -5.8
+  "145":
+    label: Protest violently, riot
+    goldstein: -7.5
+  "1451":
+    label: Protest violently for leadership change
+    goldstein: -7.5
+  "150":
+    label: Exhibit military posture, not specified
+    goldstein: -7.2
+  "153":
+    label: Mobilize or increase armed forces
+    goldstein: -7.2
+  "160":
+    label: Reduce relations, not specified
+    goldstein: -4.0
+  "161":
+    label: Reduce or break diplomatic relations
+    goldstein: -4.0
+  "163":
+    # 16x sub-codes diverge sharply from their root, which is itself
+    # informative: breaking off relations is a gesture, an embargo is a weapon.
+    label: Impose embargo, boycott or sanctions
+    goldstein: -8.0
+  "180":
+    label: Use unconventional violence, not specified
+    goldstein: -9.0
+  "183":
+    label: Conduct suicide, car or other non-military bombing
+    goldstein: -9.5
+  "185":
+    label: Attempt to assassinate
+    goldstein: -9.5
+  "186":
+    label: Assassinate
+    goldstein: -10.0
+  "190":
+    label: Use conventional military force, not specified
+    goldstein: -10.0
+  "191":
+    label: Impose blockade, restrict movement
+    goldstein: -9.5
+  "192":
+    label: Occupy territory
+    goldstein: -9.5
+  "193":
+    label: Fight with small arms and light weapons
+    goldstein: -10.0
+  "194":
+    label: Fight with artillery and tanks
+    goldstein: -10.0
+  "195":
+    label: Employ aerial weapons
+    goldstein: -10.0
+  "202":
+    label: Engage in mass killings
+    goldstein: -10.0
+  "204":
+    label: Use weapons of mass destruction
+    goldstein: -10.0

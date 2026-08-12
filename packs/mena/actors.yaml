@@ -101,3 +101,29 @@ actors:
   - id: actor:swf-adia
     name: Abu Dhabi Investment Authority
     actor_type: swf
+
+# ── durable relations ────────────────────────────────────────────────────────
+# RELATES_TO edges: the standing structure between the roster's actors, seeded
+# alongside them. SOURCED edges — every row cites sources.yaml — with validity
+# windows (dates are ISO strings at whatever resolution is known; a bare year
+# is honest, not sloppy). `proxy` is DIRECTED patron → client: Iran's clients
+# are fingers of the same hand, and the network should show the hand.
+relations:
+  - a: actor:cow-630            # Iran
+    b: actor:hezbollah
+    relation_type: proxy
+    valid_from: "1982"
+    source: source:crs-iran-proxies
+    note: Founded with IRGC sponsorship during the Lebanon war; the template client.
+  - a: actor:cow-630            # Iran
+    b: actor:hamas
+    relation_type: proxy
+    valid_from: "1992"
+    source: source:crs-iran-proxies
+    note: Funding and arms from the early 1990s; alignment varies (2012 Syria rift).
+  - a: actor:cow-630            # Iran
+    b: actor:ansar-allah
+    relation_type: proxy
+    valid_from: "2014"
+    source: source:crs-iran-proxies
+    note: Support scaled with the Sana'a takeover; missile/UAV transfer thereafter.

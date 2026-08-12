@@ -101,8 +101,23 @@ carries `inception_date` and an era-keyed native frequency. Consequences:
 | `sum(x)` over INT64 | returns Decimal → FastAPI serialises a JSON **string** | `kuzu_store._plain` normalises at the boundary — never per-query |
 
 Also: `when` AND `end` are reserved words (loud parser errors — `end` is why
-Regime carries `start_date`/`end_date`); properties bind per label; the
-parser rejects `--` comments. Classification edges (`OCCURRED_IN`,
+Regime carries `start_date`/`end_date`), **and that covers QUERY PARAMETER
+names too**: `$end` is a parser error, so range filters use
+`$start_date`/`$end_date`. Properties bind per label; the parser rejects `--`
+comments.
+
+**Closing a graph is not optional hygiene** (`kuzu_store.close`). Dropping the
+Python reference releases neither the single-writer lock nor the database's
+address-space reservation, and EACH open database reserves 8 TiB of virtual
+memory — so one process can hold only about FIFTEEN graphs before
+`kuzu.Database` fails with a buffer-manager error that names memory rather
+than the real cause. Anything that opens graphs in a loop (a test suite, a
+per-pack batch job) must close them; `connect` diagnoses that failure mode
+explicitly because the raw message misdirects.
+
+Postgres has the same class of trap: **`window` is reserved there**, so the
+panel's event-study column is `effect_window`. A bare `window TEXT` is a
+syntax error, not a style question. Classification edges (`OCCURRED_IN`,
 `DERIVED_FROM`) are excluded from `traversable_edges` — every event points at
 the same few Regime/Source nodes, so leaving them in makes any two events two
 hops apart.

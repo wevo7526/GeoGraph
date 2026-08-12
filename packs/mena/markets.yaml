@@ -25,18 +25,32 @@ markets:
     trading_calendar: gulf
     inception_date: "1985-01-01"   # Tadawul founded 1985; NO earlier data exists
     native_frequency: '{"1985": "day"}'
+  # The UAE exchanges changed their week in January 2022 when the country did;
+  # Saudi Arabia did not. MEASURED from the loaded panel over 2024-2025:
+  #   ^TASI.SR   Sun 71  Mon 78  Tue 79  Wed 79  Thu 79  Fri 0  → gulf, Sun-Thu
+  #   DFMGI.AE   Sun  0  Mon 78  Tue 79  Wed 80  Thu 81  Fri 0  → uae,  Mon-Thu
+  # So DFM is neither `gulf` (it is shut on Sunday) nor `us` (shut on Friday,
+  # 0 sessions out of 78). Without the era override the engine would look for
+  # DFM's reaction on a day the exchange is closed and mis-assign first_mover
+  # in the twelve-day-war case study.
   - id: market:dfmgi
     name: Dubai Financial Market General Index
     ticker: "DFMGI.AE"
     market_type: equity_index
     trading_calendar: gulf
+    calendar_eras: '{"2000": "gulf", "2022": "uae"}'
     inception_date: "2000-03-26"
     native_frequency: '{"2000": "day"}'
   - id: market:adx
     name: FTSE ADX General Index (Abu Dhabi)
+    # NO DATA on this ticker as of 2026-08: Yahoo reports it delisted, so the
+    # transmission engine records skipped_no_data for every event rather than
+    # measuring it. Kept in the pack because the market is real and the ticker
+    # is the fixable part — the depth report is what surfaces this.
     ticker: "FADX15.FGI"
     market_type: equity_index
     trading_calendar: gulf
+    calendar_eras: '{"2000": "gulf", "2022": "uae"}'
     inception_date: "2000-11-15"
     native_frequency: '{"2000": "day"}'
   - id: market:brent

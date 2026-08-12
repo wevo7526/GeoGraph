@@ -79,6 +79,13 @@ enums:
         description: IGO or bloc membership (COW IGO data in the deep past).
       trade:
         description: Material trade dependence worth modeling as structure.
+      proxy:
+        description: >-
+          Patron–client sponsorship — one actor arms, funds or directs the
+          other. DIRECTED patron → client (Iran → Hezbollah is the type case).
+          Distinct from alliance: the client projects the patron's reach while
+          the patron keeps deniability, which is exactly the structure network
+          analysis should see.
 
   Attribute:
     description: >-
@@ -116,7 +123,16 @@ enums:
       us:
         description: Monday–Friday.
       gulf:
-        description: Sunday–Thursday (Tadawul, DFM, ADX).
+        description: >-
+          Sunday–Thursday. The Saudi week (Tadawul), and the Emirati week
+          before 2022 — see `uae`.
+      uae:
+        description: >-
+          Monday–Thursday. The Emirati exchanges from 2022, when the UAE
+          changed its working week. MEASURED, not assumed: over 2024-2025 the
+          feed has DFM sessions on Mon-Thu and NONE on any of 78 Fridays,
+          which is why this is not simply `us`. Markets reach it through
+          `calendar_eras`, because DFM's week changed mid-history.
       global_futures:
         description: Near-continuous futures sessions (Brent, gold); daily bars Monday–Friday.
 
@@ -432,6 +448,14 @@ classes:
       trading_calendar:
         range: TradingCalendar
         required: true
+      calendar_eras:
+        description: >-
+          Era-keyed trading-calendar overrides, same shape as
+          native_frequency: {"2000": "gulf", "2022": "us"}. ONE ENUM VALUE
+          CANNOT BE RIGHT ACROSS THE ARCHIVE — the UAE moved to a Monday-Friday
+          week in January 2022 while Saudi Arabia stayed Sunday-Thursday, so
+          DFM's own week changed mid-history. Empty means trading_calendar
+          holds for all time.
       inception_date:
         description: First date any data exists for this market.
         range: date
