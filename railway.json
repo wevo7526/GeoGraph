@@ -8,8 +8,8 @@
     "$comment": "boot.py seeds the stores and then execs the API — it is not a wrapper that can be skipped. A startCommand of `python -m core.api.app` boots an API over an empty volume, because Kuzu is single-writer and the API holds the lock.",
     "startCommand": "python /app/scripts/boot.py",
     "healthcheckPath": "/api/health",
-    "$timeout_comment": "The FIRST boot after a data epoch does real work before the API binds: deep-tier fetch+load, a new lens's GDELT artifact, that lens's full study backlog and the forecast freeze. The 2026-08-12 deploy measured that worst case at ~1830s — the china GDELT load (520s) plus the mena study backlog (995s) landed in ONE boot and missed the old 1800s window by seconds, so the ceiling is set at double the observed worst. Later boots skip the loaded parts and come up in minutes.",
-    "healthcheckTimeout": 3600,
+    "$timeout_comment": "The FIRST boot after a data epoch does real work before the API binds, and it CANNOT be deferred: Kuzu is single-writer and the API holds the lock for as long as it serves, so there is no moment after startup when the graph can be filled. A COLD VOLUME must load all three GDELT artifacts (china 66,669 + eurasia 95,070 + mena 104,860 = ~267k merges) plus the deep tier, the study backlog and the forecast freeze. Measured on Railway at roughly 110 events/sec, that is ~40min of GDELT alone, so the window is 5400s. This is a ONE-TIME cost per volume: every later boot finds the counts already satisfied and skips in milliseconds. A window too SHORT is the expensive failure — it kills a container that was working, which is what happened on 2026-08-12.",
+    "healthcheckTimeout": 5400,
     "restartPolicyType": "ON_FAILURE",
     "restartPolicyMaxRetries": 3
   }

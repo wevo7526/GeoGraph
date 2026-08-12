@@ -24,7 +24,9 @@ import os
 import sys
 import urllib.request
 import zipfile
+from collections.abc import Iterable, Iterator
 from pathlib import Path
+from typing import Any
 
 from core import packs
 from core import settings as settings_module
@@ -60,6 +62,54 @@ def _archives(start_year: int, end_year: int) -> list[str]:
             "~9 MB per day; extend deliberately."
         )
     return names
+
+
+#: Events per write batch on the --from-filtered path. Large enough that the
+#: per-batch overhead is noise against ~100k merges, small enough that a
+#: killed process loses seconds of work rather than an hour of it.
+_BATCH_LINES = 10_000
+
+
+def _existing_event_ids(conn: Any, pack_name: str) -> set[str]:
+    """GDELT node ids the graph already holds for this lens.
+
+    One query and a set of ~100k short strings — a few MB — against the
+    alternative of re-merging every event that is already there.
+    """
+    rows = kuzu_store.query(
+        conn,
+        "MATCH (e:Event) WHERE e.node_id STARTS WITH 'event:gdelt-' "
+        "AND e.region_pack = $pack RETURN e.node_id AS node_id",
+        {"pack": pack_name},
+    )
+    return {str(row["node_id"]) for row in rows}
+
+
+def _fresh_lines(lines: Iterable[str], existing: set[str]) -> Iterator[str]:
+    """Artifact lines whose event is NOT already in the graph.
+
+    The id is field 0 of the export line, and `parse_lines` builds the node
+    id from it the same way — so this filter and the writer agree by
+    construction rather than by a second parse.
+    """
+    if not existing:
+        yield from lines
+        return
+    for line in lines:
+        if f"event:gdelt-{line.split(chr(9), 1)[0]}" in existing:
+            continue
+        yield line
+
+
+def _batched(items: Iterable[str], size: int) -> Iterator[list[str]]:
+    batch: list[str] = []
+    for item in items:
+        batch.append(item)
+        if len(batch) >= size:
+            yield batch
+            batch = []
+    if batch:
+        yield batch
 
 
 def _fetch(name: str) -> Path:
@@ -116,17 +166,30 @@ def main() -> None:
         total_written = 0
         total_dropped = 0
         if args.from_filtered:
+            # RESUMABLE AND BATCHED, because this step is the one that gets
+            # killed. A single parse-everything-then-write-once pass loses all
+            # of its work to a timeout and then redoes every merge on the next
+            # attempt, so a load too slow to finish once can never finish at
+            # all. Skipping ids the graph already holds makes a resumed load
+            # cost only what is left, and writing per batch means an
+            # interrupted run keeps the batches it completed.
+            existing = _existing_event_ids(conn, pack.name)
+            if existing:
+                print(f"graph already holds {len(existing)} events for this lens")
             with gzip.open(args.from_filtered, "rt", encoding="latin-1") as fh:
-                events, edges, result = gdelt.parse_lines(
-                    fh,
-                    actors_by_iso3=actors_by_iso3,
-                    region_pack=pack.name,
-                    min_mentions=args.min_mentions,
-                    external_powers=pack.external_powers,
-                )
-            gdelt.write_events(conn, events, edges)
-            total_written, total_dropped = result.written, result.dropped
-            print(f"{Path(args.from_filtered).name}: {result.written} events")
+                for batch in _batched(_fresh_lines(fh, existing), _BATCH_LINES):
+                    events, edges, result = gdelt.parse_lines(
+                        batch,
+                        actors_by_iso3=actors_by_iso3,
+                        region_pack=pack.name,
+                        min_mentions=args.min_mentions,
+                        external_powers=pack.external_powers,
+                    )
+                    gdelt.write_events(conn, events, edges)
+                    total_written += result.written
+                    total_dropped += result.dropped
+                    print(f"  +{result.written} ({total_written} this run)", flush=True)
+            print(f"{Path(args.from_filtered).name}: {total_written} events")
         else:
             for name in _archives(args.start, args.end):
                 archive = _fetch(name)

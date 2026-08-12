@@ -37,6 +37,7 @@ same numbers.
 
 from __future__ import annotations
 
+import gzip
 import json
 import os
 import subprocess
@@ -71,6 +72,23 @@ _SEED_TIMEOUT_SECONDS = 300
 #: The price fetch talks to yfinance for every market, so it gets a longer
 #: ceiling than the seed — but still a ceiling.
 _LOAD_TIMEOUT_SECONDS = 900
+
+#: The GDELT artifact load gets its OWN, much larger ceiling: it is ~100k
+#: MERGEs into a graph that is already large, it happens ONCE per lens, and
+#: an interrupted load is the expensive failure (the 2026-08-12 Eurasia
+#: deploy hit the 900s price fetch ceiling partway through 95,070 events).
+#: Every later boot skips in milliseconds, so this ceiling is paid once.
+_GDELT_TIMEOUT_SECONDS = 2400
+
+#: …but SHARED ACROSS PACKS, not paid per pack. A per-pack ceiling multiplies
+#: by the number of regions, and three packs at 2400s each is 7200s of
+#: pre-API work against a 5400s healthcheck window — the boot would be killed
+#: for being thorough. The budget bounds the whole step instead, so adding a
+#: fourth region cannot push the container past its own health check. Running
+#: out of budget leaves the remaining lens short, which is REPORTED (the
+#: count check below) rather than silently accepted, and the API still comes
+#: up — a served archive that names its gap beats a dead container.
+_GDELT_BUDGET_SECONDS = 3600
 
 #: The full-archive study's ceiling. With the measured-events watermark only
 #: NEW events pay compute, so a normal boot uses seconds of this — the
@@ -278,14 +296,26 @@ def _load_deep_tier() -> dict[str, Any]:
     return {k: v for k, v in result.items() if k != "step"}
 
 
-def _graph_has_gdelt(pack_name: str) -> bool | None:
-    """Does the graph hold GDELT events for THIS lens? None if unaskable."""
+def _artifact_events(artifact: Path) -> int:
+    """How many events the shipped artifact holds — one line each.
+
+    The artifact was written by `parse_lines` with `keep_lines`, so it holds
+    ONLY lines that already passed the filter: its line count IS the number
+    of events a complete load produces. Counting costs ~0.1s on a 3 MB gz,
+    which is what makes the completeness check below affordable every boot.
+    """
+    with gzip.open(artifact, "rb") as fh:
+        return sum(1 for _ in fh)
+
+
+def _graph_gdelt_count(pack_name: str) -> int | None:
+    """How many GDELT events the graph holds for THIS lens. None if unaskable."""
     from core import settings as settings_module
     from core.graph import kuzu_store
 
     settings = settings_module.load()
     if not settings.kuzu_db_path.exists():
-        return False
+        return 0
     try:
         conn = kuzu_store.connect(settings.kuzu_db_path, read_only=True)
     except kuzu_store.GraphUnavailable:
@@ -294,10 +324,10 @@ def _graph_has_gdelt(pack_name: str) -> bool | None:
         rows = kuzu_store.query(
             conn,
             "MATCH (e:Event) WHERE e.node_id STARTS WITH 'event:gdelt-' "
-            "AND e.region_pack = $pack RETURN e.node_id AS id LIMIT 1",
+            "AND e.region_pack = $pack RETURN count(e) AS n",
             {"pack": pack_name},
         )
-        return bool(rows)
+        return int(rows[0]["n"]) if rows else 0
     finally:
         kuzu_store.close(conn)
 
@@ -305,30 +335,59 @@ def _graph_has_gdelt(pack_name: str) -> bool | None:
 def _load_gdelt(pack_names: list[str]) -> dict[str, Any]:
     """The GDELT backfill from the SHIPPED ARTIFACTS, one per region lens
     (Phase 4, credential-free). The image carries the filtered lines
-    (data/derived/gdelt-<pack>-*.tsv.gz); loading is a couple of minutes ONCE
-    per pack — the volume graph keeps the events, so every later boot skips
-    in milliseconds."""
+    (data/derived/gdelt-<pack>-*.tsv.gz); loading is minutes ONCE per pack —
+    the volume graph keeps the events, so every later boot skips in
+    milliseconds.
+
+    THE SKIP IS A COUNT, NOT AN EXISTENCE CHECK, and the difference is a bug
+    the 2026-08-12 Eurasia deploy paid for. The test used to be "does the
+    graph hold ANY event for this lens" (LIMIT 1), so when the load hit its
+    ceiling partway through 95,070 events, the partial result satisfied the
+    check and every later boot skipped the rest — the lens would have stayed
+    silently short forever, which is exactly the failure mode the archive's
+    honesty rules exist to prevent. Comparing against the artifact's own line
+    count makes an incomplete load visible and self-healing: the loader skips
+    ids already present, so a resumed load costs only what is left.
+    """
     if os.getenv("GEOGRAPH_GDELT_ON_BOOT", "1").strip().lower() in {"0", "false", "no"}:
         return {"ok": True, "skipped": "disabled by GEOGRAPH_GDELT_ON_BOOT"}
     results = []
+    budget = float(_GDELT_BUDGET_SECONDS)
     for name in pack_names:
         artifacts = sorted(_DERIVED_DIR.glob(f"gdelt-{name}-*.tsv.gz"))
         if not artifacts:
             results.append({"pack": name, "ok": True,
                             "skipped": "no derived artifact in the image"})
             continue
-        if _graph_has_gdelt(name):
+        expected = _artifact_events(artifacts[-1])
+        held = _graph_gdelt_count(name)
+        if held is not None and held >= expected:
             results.append({"pack": name, "ok": True,
-                            "skipped": "graph already holds this lens"})
+                            "skipped": f"graph holds {held}/{expected}"})
             continue
+        if budget <= 0:
+            _log(f"gdelt {name}: out of budget — {held}/{expected}, deferred")
+            results.append({"pack": name, "ok": True, "expected": expected,
+                            "held": held, "skipped": "GDELT budget spent"})
+            continue
+        if held:
+            _log(f"gdelt {name}: graph holds {held}/{expected} — resuming the rest")
+        started = time.monotonic()
         step = _run_step(
             f"gdelt backfill {name}",
             [sys.executable, str(_GDELT_SCRIPT), name,
              "--from-filtered", str(artifacts[-1])],
-            timeout=_LOAD_TIMEOUT_SECONDS,
+            timeout=int(min(_GDELT_TIMEOUT_SECONDS, budget)),
             echo=False,
         )
-        results.append({"pack": name, **{k: v for k, v in step.items() if k != "step"}})
+        budget -= time.monotonic() - started
+        after = _graph_gdelt_count(name)
+        results.append({
+            "pack": name, "expected": expected, "held": after,
+            **{k: v for k, v in step.items() if k != "step"},
+        })
+        if after is not None and after < expected:
+            _log(f"gdelt {name}: STILL SHORT — {after}/{expected}")
     return {"ok": all(r["ok"] for r in results), "packs": results}
 
 
