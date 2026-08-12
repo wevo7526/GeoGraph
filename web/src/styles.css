@@ -40,6 +40,45 @@ body {
   font-family: ui-monospace, 'Cascadia Code', Consolas, monospace;
 }
 
+/* ── The top bar: region on the left, the pages, one status dot ─────────────*/
+.topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1.5rem;
+  padding: 0 1.25rem;
+  min-height: 3.25rem;
+  flex: none;
+}
+
+.region-select {
+  background: var(--panel);
+  color: var(--text);
+  border: 1px solid var(--line);
+  padding: 0.25rem 0.5rem;
+  cursor: pointer;
+}
+.region-select:focus-visible {
+  outline: 1px solid var(--accent);
+}
+
+/* Pages under the top bar fill the rest of the viewport; each page manages
+   its own internal scrolling. */
+.app-frame {
+  height: 100dvh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.app-page {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+.app-page--scroll {
+  overflow-y: auto;
+}
+
 /* ── The explorer workspace: everything visible, nothing scrolls the page ────
    One viewport-height grid — topbar / main / time slider — in the MarketGraph
    shell lineage. Panels that overflow scroll INSIDE their own box
@@ -47,9 +86,9 @@ body {
    0` are load-bearing: without them a long event list stretches the row and
    silently re-introduces page scroll. */
 .explorer-shell {
-  height: 100dvh;
+  height: 100%;
   display: grid;
-  grid-template-rows: auto minmax(0, 1fr) auto;
+  grid-template-rows: minmax(0, 1fr) auto;
   overflow: hidden;
 }
 

@@ -710,7 +710,7 @@ function ForecastPanel() {
   )
 }
 
-export default function Explorer({ onNavigate }: { onNavigate: (route: string) => void }) {
+export default function Explorer({ region }: { region: string }) {
   const [regimes, setRegimes] = useState<Segmentation | null>(null)
   const [pack, setPack] = useState<Pack | null>(null)
   const [dyads, setDyads] = useState<Dyad[]>([])
@@ -730,15 +730,18 @@ export default function Explorer({ onNavigate }: { onNavigate: (route: string) =
   >(new Map())
 
   useEffect(() => {
+    windowCache.current.clear()
+    setSelection(null)
+    setFocusActor(null)
     getRegimes().then(setRegimes)
-    getPack('mena').then(setPack)
+    getPack(region).then(setPack)
     getDyads().then((r) => setDyads(r?.rows ?? []))
     getFlows().then((r) => setFlows(r?.rows ?? []))
-    getCoverage().then((r) => {
+    getCoverage(region).then((r) => {
       setCoverage(r?.years ?? {})
       setTotal(r?.total ?? 0)
     })
-  }, [])
+  }, [region])
 
   // A five-year trailing window: long enough that the network shows structure,
   // short enough that the slider still tells a story. ISO strings compare
@@ -901,37 +904,6 @@ export default function Explorer({ onNavigate }: { onNavigate: (route: string) =
 
   return (
     <div className="explorer-shell">
-      <header
-        className="px-5 flex items-center justify-between gap-6 border-b"
-        style={{ borderColor: 'var(--line)', minHeight: '3.25rem' }}
-      >
-        <button
-          type="button"
-          onClick={() => onNavigate('/')}
-          className="text-left"
-          style={{ background: 'none', border: 'none', cursor: 'pointer' }}
-        >
-          <h1 className="text-xl tracking-wide" style={{ color: 'var(--accent)' }}>
-            Geo<span style={{ color: 'var(--text)' }}>Graph</span>
-          </h1>
-        </button>
-        <nav className="flex items-baseline gap-5 text-sm">
-          <button
-            type="button"
-            onClick={() => onNavigate('/case/twelve-day-war')}
-            className="underline underline-offset-4"
-            style={{ color: 'var(--muted)', background: 'none', border: 'none', cursor: 'pointer' }}
-          >
-            Case study
-          </button>
-          <span className="mono text-xs" style={{ color: 'var(--muted)' }}>
-            {total === null
-              ? '…'
-              : `${total} events · ${dyads.length} dyads · ${relations.length} relations`}
-          </span>
-        </nav>
-      </header>
-
       <main className="explorer-main">
         <section className="pane-scroll border-r px-4 py-4" style={{ borderColor: 'var(--line)' }}>
           <div className="flex items-baseline justify-between gap-3">

@@ -32,6 +32,7 @@ async function get<T>(path: string): Promise<T | null> {
 }
 
 export const getHealth = () => get<Health>('/api/health')
+export const getPacks = () => get<{ packs: string[] }>('/api/packs')
 export const getStats = () => get<Stats>('/api/stats')
 export const getRegimes = () => get<Segmentation>('/api/regimes')
 export const getPack = (name: string) => get<Pack>(`/api/packs/${name}`)
@@ -45,8 +46,10 @@ export const getEvents = (params: { start?: string; end?: string; limit?: number
   return get<EventList>(`/api/events${suffix}`)
 }
 
-export const getCoverage = () =>
-  get<{ years: Record<string, number>; total: number }>('/api/events/coverage')
+export const getCoverage = (pack?: string) =>
+  get<{ years: Record<string, number>; total: number }>(
+    pack ? `/api/events/coverage?pack=${encodeURIComponent(pack)}` : '/api/events/coverage',
+  )
 
 export const getEvent = (nodeId: string) =>
   get<EventDetail>(`/api/events/${encodeURIComponent(nodeId)}`)

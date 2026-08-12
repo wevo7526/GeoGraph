@@ -1,15 +1,26 @@
 import { Suspense, lazy, useEffect, useState } from 'react'
 import Landing from './components/Landing'
+import TopBar from './components/TopBar'
 
 // Lazy on purpose: the explorer carries three.js (~1.5 MB minified), and the
-// front door must not pay for it. The landing renders from the base chunk;
-// the 3D workspace loads when someone actually enters it.
+// front door must not pay for it. Working pages load when entered.
 const CaseStudyView = lazy(() => import('./components/CaseStudyView'))
 const Explorer = lazy(() => import('./components/Explorer'))
+const ReasoningPage = lazy(() => import('./components/ReasoningPage'))
+const TradingPage = lazy(() => import('./components/TradingPage'))
+const CasesPage = lazy(() => import('./components/CasesPage'))
+
+// Hash routing rather than a router dependency: a handful of views, and the
+// hash keeps URLs shareable — a reader can send someone the case study, which
+// is the same reason node_ids are typed and stable rather than rowids.
+function currentRoute(): string {
+  const hash = window.location.hash.replace(/^#/, '')
+  return hash.startsWith('/') ? hash : '/'
+}
 
 function Loading() {
   return (
-    <div className="min-h-full grid place-items-center">
+    <div className="h-full grid place-items-center">
       <p className="mono text-xs uppercase tracking-widest" style={{ color: 'var(--muted)' }}>
         Loading the archive…
       </p>
@@ -17,16 +28,13 @@ function Loading() {
   )
 }
 
-// Hash routing rather than a router dependency: three views, and the hash
-// keeps URLs shareable — a reader can send someone the case study, which is
-// the same reason node_ids are typed and stable rather than rowids.
-function currentRoute(): string {
-  const hash = window.location.hash.replace(/^#/, '')
-  return hash.startsWith('/') ? hash : '/'
-}
-
 export default function App() {
   const [route, setRoute] = useState(currentRoute)
+  // The region is the LENS every page looks through. It survives reloads —
+  // a China analyst should not wake up in MENA every morning.
+  const [region, setRegion] = useState(
+    () => window.localStorage.getItem('geograph.region') ?? 'mena',
+  )
 
   useEffect(() => {
     const onHashChange = () => setRoute(currentRoute())
@@ -41,19 +49,39 @@ export default function App() {
     window.scrollTo(0, 0)
   }
 
+  const chooseRegion = (next: string) => {
+    window.localStorage.setItem('geograph.region', next)
+    setRegion(next)
+  }
+
+  if (route === '/' || route === '') {
+    return <Landing onEnter={navigate} />
+  }
+
+  let page: React.ReactNode
+  let scrollPage = false
   if (route.startsWith('/case/')) {
-    return (
-      <Suspense fallback={<Loading />}>
-        <CaseStudyView slug={route.slice('/case/'.length)} onNavigate={navigate} />
-      </Suspense>
-    )
+    page = <CaseStudyView slug={route.slice('/case/'.length)} onNavigate={navigate} />
+    scrollPage = true
+  } else if (route.startsWith('/cases')) {
+    page = <CasesPage region={region} onNavigate={navigate} />
+    scrollPage = true
+  } else if (route.startsWith('/reasoning')) {
+    page = <ReasoningPage region={region} onNavigate={navigate} />
+    scrollPage = true
+  } else if (route.startsWith('/trading')) {
+    page = <TradingPage region={region} onNavigate={navigate} />
+    scrollPage = true
+  } else {
+    page = <Explorer region={region} />
   }
-  if (route.startsWith('/explore')) {
-    return (
-      <Suspense fallback={<Loading />}>
-        <Explorer onNavigate={navigate} />
-      </Suspense>
-    )
-  }
-  return <Landing onEnter={navigate} />
+
+  return (
+    <div className="app-frame">
+      <TopBar route={route} region={region} onRegion={chooseRegion} onNavigate={navigate} />
+      <div className={scrollPage ? 'app-page app-page--scroll' : 'app-page'}>
+        <Suspense fallback={<Loading />}>{page}</Suspense>
+      </div>
+    </div>
+  )
 }
