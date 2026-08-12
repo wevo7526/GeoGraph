@@ -99,9 +99,27 @@ def close(conn: kuzu.Connection | None) -> None:
 
 
 def apply_schema(conn: kuzu.Connection) -> None:
-    """Create every table the ontology declares. Idempotent (IF NOT EXISTS)."""
+    """Create every table the ontology declares, then ADD any property an
+    existing table is missing. Idempotent.
+
+    The second half is THE MIGRATION PATH. `CREATE ... IF NOT EXISTS` skips a
+    table that already exists, so a graph created before the model gained a
+    column (a Railway volume survives deploys — that is its job) would refuse
+    the next seed with a binder error naming the property. Additive columns
+    are the only migration the ontology can imply; a REMOVED or retyped
+    property still needs a rebuild, which for this graph is a delete-and-
+    reseed — every fact reloads from the packs and crosswalks by design.
+    """
     for statement in ontology.ddl():
         conn.execute(statement)
+
+    tables = [(spec.table, spec.props) for spec in ontology.nodes().values()]
+    tables += [(spec.rel, spec.props) for spec in ontology.edges().values()]
+    for table, props in tables:
+        live = {row["name"] for row in query(conn, f"CALL table_info('{table}') RETURN *")}
+        for prop in props:
+            if prop.name not in live:
+                conn.execute(f"ALTER TABLE {table} ADD {prop.name} {prop.kuzu_type}")
 
 
 def _plain(value: Any) -> Any:

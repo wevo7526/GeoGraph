@@ -34,6 +34,41 @@ def _seed(conn: Any) -> None:
     ])
 
 
+def test_apply_schema_adds_columns_the_model_gained(tmp_path):
+    # THE RAILWAY VOLUME CASE: a graph created before the ontology gained a
+    # property survives the deploy (that is what the volume is for), and
+    # CREATE IF NOT EXISTS skips it — so without the ALTER pass the next seed
+    # dies with a binder error naming the new column, and boot keeps serving
+    # the STALE graph. Reproduced here by pre-creating Market one column
+    # short of the current model.
+    connection = kuzu_store.connect(tmp_path / "old.kuzu")
+    try:
+        from core.ontology import kuzu_schema as ontology
+
+        market = ontology.nodes()["Market"]
+        assert any(p.name == "calendar_eras" for p in market.props)
+        stripped = ", ".join(
+            f"{p.name} {p.kuzu_type}" for p in market.props if p.name != "calendar_eras"
+        )
+        connection.execute(
+            f"CREATE NODE TABLE Market(node_id STRING, {stripped}, PRIMARY KEY(node_id))"
+        )
+        kuzu_store.apply_schema(connection)
+        live = {
+            row["name"]
+            for row in kuzu_store.query(connection, "CALL table_info('Market') RETURN *")
+        }
+        assert "calendar_eras" in live
+        # And the write that used to be refused now lands.
+        kuzu_store.merge_nodes(connection, "Market", [{
+            "node_id": "market:x", "name": "X", "ticker": "X", "market_type": "equity_index",
+            "trading_calendar": "us", "calendar_eras": "", "inception_date": "2000-01-01",
+            "native_frequency": "", "region_pack": "mena",
+        }])
+    finally:
+        kuzu_store.close(connection)
+
+
 def test_schema_applies_and_merge_is_idempotent(conn):
     _seed(conn)
     _seed(conn)  # merging twice is one node, not two

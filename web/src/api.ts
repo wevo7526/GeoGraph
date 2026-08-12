@@ -2,6 +2,7 @@ import type {
   CaseStudy,
   CaseStudyIndexEntry,
   Dyad,
+  Effect,
   EventDetail,
   EventList,
   Health,
@@ -41,6 +42,11 @@ export const getEvents = (params: { start?: string; end?: string; limit?: number
 
 export const getEvent = (nodeId: string) =>
   get<EventDetail>(`/api/events/${encodeURIComponent(nodeId)}`)
+
+export const getEventEffects = (nodeId: string) =>
+  get<{ event: string; measured: number; rows: Effect[] }>(
+    `/api/events/${encodeURIComponent(nodeId)}/effects`,
+  )
 
 export const getTrajectory = (dyadId: string) =>
   get<Trajectory>(`/api/escalation/${encodeURIComponent(dyadId)}`)

@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   getDyads,
   getEvent,
+  getEventEffects,
   getEvents,
   getPack,
   getRegimes,
@@ -20,6 +21,7 @@ import Graph3D, {
 import TimeSlider, { YEAR_NOW } from './TimeSlider'
 import type {
   Dyad,
+  Effect,
   EventDetail,
   GraphEvent,
   Pack,
@@ -98,19 +100,84 @@ function Trajectoryline({ trajectory }: { trajectory: Trajectory }) {
   )
 }
 
+/** Measured market effects for one event — THE MONEY EDGE, in the drawer.
+ *  A p-value gets a weight, not a verdict: significance is shown by emphasis
+ *  and stated numerically, never converted into a claim the study did not
+ *  make. An empty measurement is said out loud — silence would read as "no
+ *  effect", which is a different claim entirely. */
+function EffectsSection({ effects }: { effects: Effect[] | null }) {
+  const pct = (v: number | null | undefined) =>
+    v == null ? '—' : `${v >= 0 ? '+' : ''}${(v * 100).toFixed(2)}%`
+  if (effects === null) return null
+  return (
+    <div className="mt-5 pt-4 border-t" style={{ borderColor: 'var(--line)' }}>
+      <Microcaps>Measured market effects</Microcaps>
+      {effects.length === 0 ? (
+        <p className="mt-2 text-sm" style={{ color: 'var(--muted)' }}>
+          Nothing measured for this event yet — the transmission engine has
+          not run for it, or every market was skipped. That is not the same
+          claim as "no effect".
+        </p>
+      ) : (
+        <ul className="mt-2 space-y-2">
+          {effects.map((fx) => {
+            const strong = fx.p_value != null && fx.p_value < 0.05
+            return (
+              <li
+                key={`${fx.ticker}-${fx.window}`}
+                className="flex items-baseline justify-between gap-3 text-sm"
+              >
+                <span>
+                  {fx.market}
+                  <span className="mono text-xs" style={{ color: 'var(--muted)' }}>
+                    {' '}
+                    {fx.window} · {fx.resolution}
+                    {fx.first_mover ? ' · first mover' : ''}
+                    {fx.overlapping ? ' · overlapping' : ''}
+                  </span>
+                </span>
+                <span
+                  className="mono text-right"
+                  style={{
+                    fontWeight: strong ? 700 : 400,
+                    color:
+                      fx.abnormal_return == null
+                        ? 'var(--muted)'
+                        : fx.abnormal_return >= 0
+                          ? 'var(--text)'
+                          : 'var(--alert)',
+                  }}
+                >
+                  {pct(fx.abnormal_return)}
+                  <span className="text-xs block" style={{ color: 'var(--muted)' }}>
+                    {fx.p_value == null ? 'no test' : `p ${fx.p_value.toFixed(3)}`}
+                  </span>
+                </span>
+              </li>
+            )
+          })}
+        </ul>
+      )}
+    </div>
+  )
+}
+
 function EventDetailPanel({ nodeId }: { nodeId: string }) {
   const [detail, setDetail] = useState<EventDetail | null>(null)
   const [trajectory, setTrajectory] = useState<Trajectory | null>(null)
+  const [effects, setEffects] = useState<Effect[] | null>(null)
 
   useEffect(() => {
     let active = true
     setDetail(null)
     setTrajectory(null)
+    setEffects(null)
     getEvent(nodeId).then((result) => {
       if (!active) return
       setDetail(result)
       if (result?.dyad) getTrajectory(result.dyad.node_id).then((t) => active && setTrajectory(t))
     })
+    getEventEffects(nodeId).then((r) => active && setEffects(r?.rows ?? []))
     return () => {
       active = false
     }
@@ -172,6 +239,8 @@ function EventDetailPanel({ nodeId }: { nodeId: string }) {
           </dd>
         </div>
       </dl>
+
+      <EffectsSection effects={effects} />
 
       {detail.dyad && (
         <div className="mt-5 pt-4 border-t" style={{ borderColor: 'var(--line)' }}>
