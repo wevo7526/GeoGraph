@@ -77,6 +77,11 @@ target-version = "py312"
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "SIM"]
 
+[tool.ruff.lint.per-file-ignores]
+# Fixture CSVs mirror the real datasets' column layouts verbatim; wrapping
+# their header lines would stop them being the format they test.
+"tests/test_deep_tier.py" = ["E501"]
+
 [tool.mypy]
 python_version = "3.12"
 strict = true
