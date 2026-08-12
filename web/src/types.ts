@@ -336,6 +336,14 @@ export interface WhatIfOptions {
   region: string
   actors: Array<{ id: string; name: string; actor_type: string }>
   codes: Array<{ code: string; label: string; goldstein: number; quad_class: string }>
+  /** A composition drawn from this region's own spine, so the composer opens
+   *  on a question the reader recognises rather than on an empty form. */
+  example: {
+    initiator: string
+    target: string
+    cameo: string
+    drawn_from: { event_id: string; name: string; date: string }
+  } | null
 }
 
 export interface WhatIfResult {
@@ -388,6 +396,13 @@ export interface Assessment {
   assessment: string
   model: string
   method: string
+  /** Exactly what the agent was handed. Returned so section 17 — the agent
+   *  never originates a number — is checkable by the reader, not just stated. */
+  context?: {
+    frozen_forecasts?: Array<{ node_id: string; mode: string; question: string }>
+    most_conflictual_dyads?: Array<{ node_id: string; name: string; baseline: number | null }>
+    note?: string
+  }
 }
 
 export interface CaseStudyIndexEntry {

@@ -99,6 +99,50 @@ def test_the_what_if_reads_the_archive_deterministically(seeded_graph, monkeypat
         ).status_code == 422
 
 
+def test_every_pack_offers_a_worked_example_from_its_own_spine():
+    # The composer opens on this rather than on the first two actors
+    # alphabetically. It must be a COMPLETE, SCORABLE composition for every
+    # region, or the page it seeds is broken for that region only.
+    from core.api.routers import reasoning
+
+    for name in packs.available():
+        pack = packs.load(name)
+        example = reasoning._worked_example(pack)
+        assert example is not None, f"{name} offers the composer nothing to open on"
+        roster = {a["id"] for a in pack.actors}
+        assert example["initiator"] in roster
+        assert example["target"] in roster
+        # Scorable, or stage 1 opens on a 422.
+        assert event_typing.goldstein_for(example["cameo"]) is not None
+        assert example["drawn_from"]["event_id"]
+
+
+def test_the_worked_example_is_the_packs_latest_coded_event():
+    from core.api.routers import reasoning
+
+    pack = packs.load("mena")
+    example = reasoning._worked_example(pack)
+    latest = max(
+        (e for e in pack.marquee_events
+         if e.get("cameo") and e.get("initiator") and e.get("target")),
+        key=lambda e: str(e["date"]),
+    )
+    assert example is not None
+    assert example["drawn_from"]["event_id"] == latest["id"]
+
+
+def test_a_pack_with_no_coded_spine_offers_no_example_rather_than_a_broken_one():
+    from core.api.routers import reasoning
+
+    pack = packs.load("mena")
+    data = dict(pack.data)
+    data["marquee_events"] = {"events": [
+        {"id": "event:x", "date": "2020-01-01", "name": "uncoded"},
+    ]}
+    stripped = packs.Pack(name="mena", path=pack.path, data=data)
+    assert reasoning._worked_example(stripped) is None
+
+
 def test_the_agent_is_honestly_dark_without_a_key(seeded_graph, monkeypatch):
     from fastapi.testclient import TestClient
 

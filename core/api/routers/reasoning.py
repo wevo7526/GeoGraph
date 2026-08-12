@@ -41,10 +41,39 @@ def _conn(request: Request) -> Any:
     return conn
 
 
+def _worked_example(pack: packs.Pack) -> dict[str, Any] | None:
+    """A composition the region can open on, DERIVED from its own spine.
+
+    An empty composer is the reason this surface reads as inscrutable: the
+    first two actors alphabetically doing whatever code sorts first is not a
+    question anyone would ask, so the engine's output looked like noise
+    before the reader had any way to judge it. The pack's most recent fully
+    coded marquee event is a question they already recognise — asked again,
+    at today's date, which is what makes it a hypothetical rather than a
+    replay. Derived per pack, so a new region brings its own example and no
+    region name appears here.
+    """
+    coded = [
+        event
+        for event in pack.marquee_events
+        if event.get("cameo") and event.get("initiator") and event.get("target")
+    ]
+    if not coded:
+        return None
+    latest = max(coded, key=lambda e: str(e["date"]))
+    return {
+        "initiator": latest["initiator"],
+        "target": latest["target"],
+        "cameo": str(latest["cameo"]),
+        "drawn_from": {"event_id": latest["id"], "name": latest["name"],
+                       "date": str(latest["date"])},
+    }
+
+
 @router.get("/reasoning/options")
 def what_if_options(region: str = "mena") -> dict[str, Any]:
-    """The composer's vocabulary: the pack's roster and the codebook's
-    scorable CAMEO codes — both derived, neither invented here."""
+    """The composer's vocabulary: the pack's roster, the codebook's scorable
+    CAMEO codes, and a worked example — all derived, none invented here."""
     try:
         pack = packs.load(region)
     except packs.PackError as exc:
@@ -56,6 +85,7 @@ def what_if_options(region: str = "mena") -> dict[str, Any]:
             for a in pack.actors
         ],
         "codes": event_typing.codebook_entries(),
+        "example": _worked_example(pack),
     }
 
 
@@ -241,6 +271,13 @@ def assess(request: Request, body: AssessRequest) -> dict[str, Any]:
         ),
     }
     try:
-        return agent.assess(body.question, region_pack=body.region, context=context)
+        result = agent.assess(body.question, region_pack=body.region, context=context)
     except agent.AgentUnavailable as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
+    # THE CONTEXT COMES BACK WITH THE ANSWER. Section 17 says the agent never
+    # originates a number; a reader can only hold it to that if they can see
+    # what it was handed. Returning the exact context makes the rule checkable
+    # instead of merely asserted — every figure in the prose should appear
+    # here, and one that does not is a bug the reader can now catch.
+    result["context"] = context
+    return result

@@ -1,18 +1,45 @@
 import { useEffect, useState } from 'react'
 import { getForecasts, getWhatIf, getWhatIfOptions, postAssess } from '../api'
-import type { ForecastSummary, WhatIfOptions, WhatIfResult } from '../types'
+import type { Assessment, ForecastSummary, WhatIfOptions, WhatIfResult } from '../types'
 
-/** The reasoning layer's two halves, degrading honestly: the deterministic
- *  what-if engine (always on — codebook, dyad baselines, admissible
- *  analogues, measured transmission BY ANALOGY), and the LLM agent, which
- *  is dark until ANTHROPIC_API_KEY exists and says so in its own words. */
+/** The reasoning layer, presented as ONE FLOW RATHER THAN THREE WIDGETS.
+ *
+ *  The three sections are the same machinery pointed at different questions,
+ *  and the page used to leave the reader to infer that:
+ *
+ *    1. THE STANDING CALLS — what this region's archive has already frozen,
+ *       and how each is being judged. The archive commits first.
+ *    2. WHAT IF — the same structural engine, pointed at a question the
+ *       reader poses instead of one the archive posed. Deterministic end to
+ *       end, and it opens on a worked example drawn from the region's own
+ *       spine, because an empty composer explains nothing.
+ *    3. THE AGENT — narration over 1 and 2, and NOTHING ELSE. It returns the
+ *       context it was given so the reader can check the numbers came from
+ *       upstream (§17), rather than taking the claim on trust.
+ *
+ *  Only 3 needs a key. 1 and 2 run on the deterministic core forever. */
 
 const selectStyle = {
-  background: 'var(--panel)',
+  background: 'var(--ground)',
   color: 'var(--text)',
-  border: '1px solid var(--line)',
+  border: '1px solid var(--rule-strong)',
   padding: '0.35rem 0.5rem',
 } as const
+
+/** A numbered stage heading — what makes the page read as a sequence. */
+function Stage({ n, title, children }: { n: number; title: string; children: React.ReactNode }) {
+  return (
+    <header className="mt-14 first:mt-0">
+      <div className="flex items-baseline gap-3">
+        <span className="kicker" style={{ color: 'var(--accent)' }}>{n}</span>
+        <h2 className="text-xl" style={{ color: 'var(--text)' }}>{title}</h2>
+      </div>
+      <p className="mt-2 text-sm leading-relaxed max-w-3xl" style={{ color: 'var(--muted)' }}>
+        {children}
+      </p>
+    </header>
+  )
+}
 
 function DirectionChip({ direction, magnitude }: { direction: string; magnitude: number }) {
   const hot = direction === 'escalating'
@@ -43,63 +70,115 @@ export default function ReasoningPage({
   const [running, setRunning] = useState(false)
   const [result, setResult] = useState<WhatIfResult | null>(null)
 
+  const [drawnFrom, setDrawnFrom] = useState<WhatIfOptions['example'] | null>(null)
+
   const [question, setQuestion] = useState('')
   const [asking, setAsking] = useState(false)
-  const [answer, setAnswer] = useState<{ dark: boolean; text: string } | null>(null)
+  const [answer, setAnswer] = useState<
+    { dark: boolean; text: string; context?: Assessment['context'] } | null
+  >(null)
   const [trail, setTrail] = useState<ForecastSummary[] | null>(null)
 
   useEffect(() => {
+    let live = true
     setOptions(undefined)
     setResult(null)
     setAnswer(null)
     setTrail(null)
-    getForecasts(region).then((r) => setTrail(r?.rows ?? []))
+    setDrawnFrom(null)
+    getForecasts(region).then((r) => live && setTrail(r?.rows ?? []))
     getWhatIfOptions(region).then((o) => {
+      if (!live) return
       setOptions(o)
-      if (o) {
-        setInitiator(o.actors[0]?.id ?? '')
-        setTarget(o.actors[1]?.id ?? o.actors[0]?.id ?? '')
-        setCameo(o.codes[0]?.code ?? '')
-      }
+      if (!o) return
+      // Open on the region's OWN worked example when it has one — a composer
+      // seeded with the first two actors alphabetically produces a question
+      // nobody asked and an answer nobody can judge.
+      const seed = o.example
+      const today = new Date().toISOString().slice(0, 10)
+      const nextInitiator = seed?.initiator ?? o.actors[0]?.id ?? ''
+      const nextTarget = seed?.target ?? o.actors[1]?.id ?? o.actors[0]?.id ?? ''
+      const nextCameo = seed?.cameo ?? o.codes[0]?.code ?? ''
+      setInitiator(nextInitiator)
+      setTarget(nextTarget)
+      setCameo(nextCameo)
+      setDate(today)
+      setDrawnFrom(seed)
+      // …and RUN it, so the engine demonstrates itself on arrival rather than
+      // waiting behind a button for a reader who does not yet know what it does.
+      if (seed) void execute(nextInitiator, nextTarget, nextCameo, today, () => live)
     })
+    return () => {
+      live = false
+    }
+    // `region` is the only input that should re-seed the composer; `execute`
+    // is stable for a given region and re-running on every keystroke would
+    // fight the reader's own edits.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [region])
 
-  const run = async () => {
-    if (!initiator || !target || !cameo) return
+  const execute = async (
+    who: string, whom: string, code: string, when: string, stillLive: () => boolean = () => true,
+  ) => {
+    if (!who || !whom || !code) return
     setRunning(true)
-    const r = await getWhatIf({ region, initiator, target, cameo, date })
+    // Clear first: a stale result sitting under a spinner reads as the answer
+    // to the question being asked right now.
+    setResult(null)
+    const r = await getWhatIf({ region, initiator: who, target: whom, cameo: code, date: when })
+    if (!stillLive()) return
     setResult(r)
     setRunning(false)
   }
 
+  const run = () => execute(initiator, target, cameo, date)
+
   const ask = async () => {
     if (!question.trim()) return
     setAsking(true)
+    setAnswer(null)
     const r = await postAssess(question.trim(), region)
     setAnswer(
       r.ok
-        ? { dark: false, text: r.result?.assessment ?? '' }
+        ? { dark: false, text: r.result?.assessment ?? '', context: r.result?.context }
         : { dark: true, text: r.detail ?? 'the agent is unavailable' },
     )
     setAsking(false)
   }
 
+  const composed = Boolean(initiator && target && cameo)
+
   return (
     <div className="max-w-5xl mx-auto px-6 py-10">
-      <p className="mono text-xs uppercase tracking-widest" style={{ color: 'var(--muted)' }}>
-        Reasoning · {region.toUpperCase()}
+      <p className="kicker">Reasoning · {region.toUpperCase()}</p>
+
+      <p className="mt-4 text-base leading-relaxed max-w-3xl" style={{ color: 'var(--text)' }}>
+        Three things happen on this page, and they are the same machinery
+        pointed at different questions: the archive's own frozen calls and how
+        they are scoring, the engine that will read a question you pose
+        instead, and an agent that argues over both without computing
+        anything. The first two need no API key and never will.
       </p>
 
-      {/* ── The what-if engine ──────────────────────────────────────────── */}
-      <h2 className="text-xl mt-6" style={{ color: 'var(--text)' }}>
-        What if —
-      </h2>
-      <p className="mt-2 text-sm leading-relaxed max-w-3xl" style={{ color: 'var(--muted)' }}>
+      {/* ── 1 · the what-if engine ──────────────────────────────────────── */}
+      <Stage n={1} title="What if —">
         Pose a hypothetical event and read it through the archive: its coded
         weight, how it lands against the dyad's own standing baseline, the
         regime-admissible analogues, and what those analogues measurably did
         to markets. Deterministic end to end — an analogy, never a prediction.
-      </p>
+        {drawnFrom && (
+          <>
+            {' '}
+            <span style={{ color: 'var(--text)' }}>
+              Loaded with a worked example — {drawnFrom.drawn_from.name} (
+              {drawnFrom.drawn_from.date}), posed again at today's date. The
+              event it was drawn from will usually rank among its own
+              analogues; that is the engine agreeing with itself, and a useful
+              thing to see it do once. Change any field and read again.
+            </span>
+          </>
+        )}
+      </Stage>
 
       {options === undefined ? (
         <p className="mt-6 text-sm mono" style={{ color: 'var(--muted)' }}>Reaching the archive…</p>
@@ -155,11 +234,13 @@ export default function ReasoningPage({
             <button
               type="button"
               onClick={run}
-              disabled={running}
+              disabled={running || !composed}
               className="mono text-xs uppercase tracking-widest px-4 py-2 border"
               style={{
                 borderColor: 'var(--accent)', color: 'var(--accent)',
-                cursor: running ? 'wait' : 'pointer', background: 'transparent',
+                cursor: running ? 'wait' : composed ? 'pointer' : 'not-allowed',
+                background: 'transparent',
+                opacity: composed ? 1 : 0.5,
               }}
             >
               {running ? 'Reading…' : 'Read the archive'}
@@ -198,8 +279,13 @@ export default function ReasoningPage({
               <div>
                 <h3 className="text-lg" style={{ color: 'var(--text)' }}>Admissible analogues</h3>
                 {result.analogues.length === 0 ? (
-                  <p className="mt-2 text-sm" style={{ color: 'var(--muted)' }}>
-                    No event in a comparable regime matches this shape.
+                  <p className="mt-2 text-sm leading-relaxed max-w-3xl" style={{ color: 'var(--muted)' }}>
+                    No event in a comparable regime matches this shape. That is
+                    the admissibility gate doing its job, not an empty archive:
+                    analogues must sit inside the same monetary order as the
+                    date you asked about, so moving the date across a regime
+                    boundary changes which history is eligible before any
+                    similarity is computed.
                   </p>
                 ) : (
                   <ul className="mt-3 space-y-2">
@@ -265,17 +351,15 @@ export default function ReasoningPage({
         </>
       )}
 
-      {/* ── The trail ───────────────────────────────────────────────────── */}
-      <h2 className="text-xl mt-14" style={{ color: 'var(--text)' }}>
-        The trail
-      </h2>
-      <p className="mt-2 text-sm leading-relaxed max-w-3xl" style={{ color: 'var(--muted)' }}>
+      {/* ── 2 · the trail ───────────────────────────────────────────────── */}
+      <Stage n={2} title="The trail">
         Every frozen call this region has made, with how it is being judged:
         near-term calls are Brier-scored the day their horizon closes, and
         long-horizon calls carry the structural method's retrodiction — its
         record when run against the past. An open horizon is an open
-        question, not a zero.
-      </p>
+        question, not a zero. These were frozen at boot by the same
+        deterministic engine stage 1 just ran for you.
+      </Stage>
       {trail === null ? (
         <p className="mt-4 text-sm mono" style={{ color: 'var(--muted)' }}>Reaching the archive…</p>
       ) : trail.length === 0 ? (
@@ -344,15 +428,16 @@ export default function ReasoningPage({
         </ul>
       )}
 
-      {/* ── The agent ───────────────────────────────────────────────────── */}
-      <h2 className="text-xl mt-14" style={{ color: 'var(--text)' }}>
-        Ask the agent
-      </h2>
-      <p className="mt-2 text-sm leading-relaxed max-w-3xl" style={{ color: 'var(--muted)' }}>
-        A narrated assessment over the frozen numbers — the agent argues, it
-        never computes. It runs only when the archive has an API key to think
-        with, and answers honestly when it does not.
-      </p>
+      {/* ── 3 · the agent ───────────────────────────────────────────────── */}
+      <Stage n={3} title="Ask the agent">
+        A narrated assessment over the frozen numbers above — the agent
+        argues, it never computes. It is handed this region's frozen calls and
+        its most conflictual dyad baselines, and it gets nothing else; the
+        answer comes back with that exact context attached so you can check
+        every figure it cites against what it was given. It runs only when the
+        archive has an API key to think with, and says so plainly when it does
+        not.
+      </Stage>
       <div className="mt-4 max-w-3xl">
         <textarea
           value={question}
@@ -376,18 +461,50 @@ export default function ReasoningPage({
           {asking ? 'Thinking…' : 'Ask'}
         </button>
         {answer && (
-          <div
-            className="border p-5 mt-4"
-            style={{ borderColor: 'var(--line)', background: 'var(--panel)' }}
-          >
+          <div className="boxed p-5 mt-4">
             {answer.dark ? (
               <p className="text-sm italic leading-relaxed" style={{ color: 'var(--muted)' }}>
                 {answer.text}
               </p>
             ) : (
-              <p className="text-sm leading-relaxed whitespace-pre-wrap" style={{ color: 'var(--text)' }}>
-                {answer.text}
-              </p>
+              <>
+                <p className="text-sm leading-relaxed whitespace-pre-wrap" style={{ color: 'var(--text)' }}>
+                  {answer.text}
+                </p>
+                {answer.context && (
+                  <details className="mt-5">
+                    <summary className="kicker" style={{ cursor: 'pointer' }}>
+                      What the agent was given
+                    </summary>
+                    <p className="mt-3 text-xs leading-relaxed" style={{ color: 'var(--muted)' }}>
+                      Every number in the prose above should appear here. One
+                      that does not is the agent originating a figure, which
+                      section 17 forbids — and which you can now catch.
+                    </p>
+                    <ul className="mt-3 space-y-1">
+                      {(answer.context.frozen_forecasts ?? []).map((f) => (
+                        <li key={f.node_id} className="mono text-[11px]" style={{ color: 'var(--text)' }}>
+                          {f.node_id}{' '}
+                          <span style={{ color: 'var(--muted)' }}>{f.question}</span>
+                        </li>
+                      ))}
+                      {(answer.context.most_conflictual_dyads ?? []).map((d) => (
+                        <li key={d.node_id} className="mono text-[11px]" style={{ color: 'var(--text)' }}>
+                          {d.name ?? d.node_id}{' '}
+                          <span style={{ color: 'var(--muted)' }}>
+                            baseline {d.baseline === null ? 'none' : d.baseline.toFixed(2)}
+                          </span>
+                        </li>
+                      ))}
+                    </ul>
+                    {answer.context.note && (
+                      <p className="mt-3 text-xs italic" style={{ color: 'var(--muted)' }}>
+                        {answer.context.note}
+                      </p>
+                    )}
+                  </details>
+                )}
+              </>
             )}
           </div>
         )}
