@@ -1,10 +1,12 @@
 import { useEffect, useState } from 'react'
 import { getHealth, getPacks } from '../api'
 
-/** The one bar every working page shares: REGION on the left (the lens every
- *  layer looks through), the pages in the middle, and a single status dot on
- *  the right instead of a stats readout — coverage lives in the pages, not
- *  the chrome. */
+/** The one bar every working page shares, set as the paper's MASTHEAD: REGION
+ *  on the left (the lens every layer looks through), the pages in the middle,
+ *  and a single status dot on the right instead of a stats readout — coverage
+ *  lives in the pages, not the chrome. The double rule under it is the same
+ *  one the front page carries, which is what makes the working pages read as
+ *  later pages of one paper rather than as a different application. */
 export default function TopBar({
   route,
   region,
@@ -34,17 +36,24 @@ export default function TopBar({
   ]
 
   return (
-    <header className="topbar border-b" style={{ borderColor: 'var(--line)' }}>
+    <header className="topbar masthead">
       <div className="flex items-center gap-4 min-w-0">
         <button
           type="button"
           onClick={() => onNavigate('/')}
-          className="text-xl tracking-wide shrink-0"
-          style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--accent)' }}
+          className="text-xl shrink-0"
+          style={{
+            background: 'none',
+            border: 'none',
+            cursor: 'pointer',
+            color: 'var(--text)',
+            fontVariantCaps: 'small-caps',
+            letterSpacing: '0.14em',
+          }}
         >
-          Geo<span style={{ color: 'var(--text)' }}>Graph</span>
+          GeoGraph
         </button>
-        <label className="flex items-center gap-2 mono text-xs" style={{ color: 'var(--muted)' }}>
+        <label className="flex items-center gap-2 kicker">
           region
           <select
             value={region}
@@ -74,8 +83,8 @@ export default function TopBar({
                 background: 'none',
                 border: 'none',
                 cursor: 'pointer',
-                color: active ? 'var(--accent)' : 'var(--muted)',
-                borderBottom: active ? '1px solid var(--accent)' : '1px solid transparent',
+                color: active ? 'var(--text)' : 'var(--muted)',
+                borderBottom: active ? '2px solid var(--accent)' : '2px solid transparent',
               }}
             >
               {label}

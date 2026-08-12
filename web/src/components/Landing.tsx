@@ -3,8 +3,10 @@ import { getCaseStudies, getHealth, getPacks, getStats } from '../api'
 import type { CaseStudyIndexEntry, Health, Stats } from '../types'
 
 /** The front door, set as a broadsheet front page: masthead, headline,
- *  standfirst, and the archive's figures as a ledger. Paper outside,
- *  instrument inside — the app behind this door stays dark. The coverage
+ *  standfirst, and the archive's figures as a ledger. The print components it
+ *  introduced are shared vocabulary now (styles.css) rather than scoped here —
+ *  the whole archive is set on the same paper, so the front door is the first
+ *  page of the paper rather than a cover on a different product. The coverage
  *  statement stays honest and current: it names what the archive holds and
  *  what is still a later phase. */
 export default function Landing({ onEnter }: { onEnter: (route: string) => void }) {
@@ -33,7 +35,7 @@ export default function Landing({ onEnter }: { onEnter: (route: string) => void 
   ]
 
   return (
-    <div className="broadsheet min-h-full flex flex-col">
+    <div className="min-h-full flex flex-col">
       <main className="flex-1 px-6 py-10 sm:py-14">
         <div className="w-full max-w-3xl mx-auto">
           {/* Masthead */}
@@ -44,7 +46,7 @@ export default function Landing({ onEnter }: { onEnter: (route: string) => void 
             >
               GeoGraph
             </span>
-            <span className="mono text-[11px] tracking-[0.2em]" style={{ color: 'var(--paper-muted)' }}>
+            <span className="mono text-[11px] tracking-[0.2em]" style={{ color: 'var(--muted)' }}>
               AN APPLIED-HISTORY ENGINE · 1905 — PRESENT
             </span>
           </div>
@@ -55,7 +57,7 @@ export default function Landing({ onEnter }: { onEnter: (route: string) => void 
           </h1>
           <p
             className="mt-6 text-lg leading-relaxed"
-            style={{ color: 'var(--paper-muted)', maxWidth: '58ch' }}
+            style={{ color: 'var(--muted)', maxWidth: '58ch' }}
           >
             Actors, relationships and events held as a network; a deterministic
             transmission layer that measures what each event actually did to
@@ -64,8 +66,8 @@ export default function Landing({ onEnter }: { onEnter: (route: string) => void 
           </p>
 
           {/* The ledger */}
-          <section className="mt-12 border-t border-b py-5" style={{ borderColor: 'var(--paper-rule)' }}>
-            <p className="mono text-[11px] tracking-[0.25em] mb-4" style={{ color: 'var(--paper-muted)' }}>
+          <section className="mt-12 border-t border-b py-5" style={{ borderColor: 'var(--rule-strong)' }}>
+            <p className="mono text-[11px] tracking-[0.25em] mb-4" style={{ color: 'var(--muted)' }}>
               THE ARCHIVE TODAY
             </p>
             <dl className="space-y-2 max-w-xl">
@@ -77,7 +79,7 @@ export default function Landing({ onEnter }: { onEnter: (route: string) => void 
                 </div>
               ))}
             </dl>
-            <p className="mt-5 text-sm leading-relaxed" style={{ color: 'var(--paper-muted)', maxWidth: '62ch' }}>
+            <p className="mt-5 text-sm leading-relaxed" style={{ color: 'var(--muted)', maxWidth: '62ch' }}>
               {live ? (
                 <>
                   The record runs from the Correlates-of-War deep tier through
@@ -117,7 +119,7 @@ export default function Landing({ onEnter }: { onEnter: (route: string) => void 
 
       <footer
         className="px-6 py-4 border-t flex flex-wrap items-baseline justify-between gap-3"
-        style={{ borderColor: 'var(--paper-rule)', color: 'var(--paper-muted)' }}
+        style={{ borderColor: 'var(--rule-strong)', color: 'var(--muted)' }}
       >
         <span className="mono text-[11px] tracking-[0.15em]">
           GRAPH: {(health ? health.graph : 'offline').toUpperCase()}

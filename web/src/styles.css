@@ -1,23 +1,44 @@
 @import "tailwindcss";
 
-/* Restrained, serious visual language (build-spec section 15): near-black
-   ground, parchment text, one restrained accent. The palette lives here as
-   variables AND is duplicated where canvas/SVG cannot read CSS custom
-   properties — keep the two in step. */
-:root {
-  --ink: #0b0e14;
-  --panel: #11151f;
-  --line: #232a3a;
-  --text: #d9d4c5;
-  --muted: #7d8598;
-  --accent: #b08d57; /* old gold — the one flourish */
-  --alert: #a44a3f;
+/* THE ARCHIVE IS SET ON PAPER (2026-08-12).
+   ---------------------------------------------------------------------------
+   A DELIBERATE DEVIATION FROM BUILD-SPEC §15, which specifies a near-black
+   ground with parchment text. The landing page was reset as a broadsheet
+   front page and the contrast against a dark app read as two products rather
+   than one; the whole surface now carries the print language instead. §15's
+   actual requirement — restrained, serious, one accent, nothing decorative —
+   is honoured in full. Its ground and text are inverted, and this comment is
+   the citation rather than a silent change.
 
-  /* Categorical series for the network view — actor types. These are
-     chromatic steps in the brand's register, validated as a set (lightness
-     band, chroma floor, CVD and normal-vision separation, contrast) against
-     the panel surface. The UI tokens above are inks and surfaces; they fail
-     as series colors by design — never encode identity with --text/--muted. */
+   ONE EXCEPTION, AND IT IS A DESIGN, NOT A LEFTOVER: the 3D canvas keeps its
+   near-black ground (--plate). A lit instrument inset into a printed page is
+   how technical broadsheets have always shown a plate, and the categorical
+   series colours below were validated against a dark surface — repainting
+   them for paper would break an encoding that is currently correct.
+
+   Every colour that lands on paper was validated with the data-viz palette
+   checker (lightness band, chroma floor, protan/deutan separation,
+   normal-vision floor, contrast vs the #f2ecdd ground) rather than chosen by
+   eye. --accent and --alert are a DIVERGING PAIR carrying sign, not decoration:
+   gains and de-escalation take the blue, losses and escalation the oxblood.
+   Their worst-case CVD separation is ΔE 21.9 and both clear AA text contrast
+   (5.40:1 and 6.02:1), so a red/green-blind reader loses nothing. */
+:root {
+  --ground: #f2ecdd;      /* the page */
+  --plate: #12100c;       /* the instrument canvas inset into it */
+  --panel: #e9e1cd;       /* boxed content — a tint, never a raised card */
+  --line: #c9bfa8;        /* hairline rules; recessive by design */
+  --rule-strong: #1a1610; /* the masthead rule and its emphasis siblings */
+  --text: #1a1610;
+  --muted: #6d6353;
+  --accent: #2a5fa8;      /* the one flourish: links, active nav, gains */
+  --alert: #9e3418;       /* loss, escalation, the thing that needs saying */
+
+  /* Categorical series for the network view — actor types. Validated as a set
+     (lightness band, chroma floor, CVD and normal-vision separation, contrast)
+     against the DARK PLATE, which is the only surface they are drawn on. The
+     UI tokens above are inks and surfaces; they fail as series colors by
+     design — never encode identity with --text/--muted. */
   --series-state: #c0872a;
   --series-person: #b04a5c;
   --series-org: #4a82d4;
@@ -31,13 +52,9 @@ body,
 }
 
 body {
-  background: var(--ink);
+  background: var(--ground);
   color: var(--text);
   font-family: Georgia, 'Times New Roman', serif;
-}
-
-.mono {
-  font-family: ui-monospace, 'Cascadia Code', Consolas, monospace;
 }
 
 /* ── The top bar: region on the left, the pages, one status dot ─────────────*/
@@ -52,11 +69,12 @@ body {
 }
 
 .region-select {
-  background: var(--panel);
+  background: var(--ground);
   color: var(--text);
-  border: 1px solid var(--line);
+  border: 1px solid var(--rule-strong);
   padding: 0.25rem 0.5rem;
   cursor: pointer;
+  font-variant-numeric: tabular-nums;
 }
 .region-select:focus-visible {
   outline: 1px solid var(--accent);
@@ -79,70 +97,95 @@ body {
   overflow-y: auto;
 }
 
-/* ── The broadsheet landing: paper outside, instrument inside ────────────────
-   The front door is set like a serious financial-history paper — warm
-   parchment, black ink, hairline and double rules, ledger figures — and the
-   app behind it keeps the dark instrument room. The contrast is the design:
-   print announces, the instrument measures. Tokens are SCOPED here; nothing
-   inside the app frame reads them. */
-.broadsheet {
-  --paper: #f2ecdd;
-  --paper-ink: #1a1610;
-  --paper-muted: #6d6353;
-  --paper-rule: #1a1610;
-  --paper-accent: #8a2d1c; /* oxblood — links and one hover, nothing else */
-  background: var(--paper);
-  color: var(--paper-ink);
-  min-height: 100%;
+/* ── The print vocabulary, shared by every page ──────────────────────────────
+   These began as the landing's scoped `.broadsheet` components. They are
+   unscoped now because the whole archive is set on paper: one masthead rule,
+   one ledger, one ink button, one article link, wherever a page needs them.
+   A component that only the front door uses would be a second design system
+   wearing the first one's clothes. */
+
+/* The double rule under a masthead. Print's way of saying "this is the top of
+   the page", and the reason the app's top bar reads as a masthead rather than
+   as a toolbar. */
+.masthead {
+  border-bottom: 4px double var(--rule-strong);
 }
 
-.broadsheet .masthead {
-  border-bottom: 4px double var(--paper-rule);
-}
-
-.broadsheet .ledger-row {
+/* A figure ledger: label, dot leader, right-aligned tabular figure. The
+   leader is what makes a column of numbers scannable without a table's
+   rules, which is why financial print has used it for two centuries. */
+.ledger-row {
   display: flex;
   align-items: baseline;
 }
-.broadsheet .ledger-leader {
+.ledger-leader {
   flex: 1;
   margin: 0 0.6rem;
-  border-bottom: 2px dotted rgba(26, 22, 16, 0.4);
+  border-bottom: 2px dotted color-mix(in srgb, var(--text) 40%, transparent);
   transform: translateY(-0.28em);
 }
-.broadsheet .ledger-figure {
+.ledger-figure {
   font-variant-numeric: tabular-nums;
 }
 
-.broadsheet .ink-button {
-  background: var(--paper-ink);
-  color: var(--paper);
+/* FIGURES ARE TABULAR EVERYWHERE, not only in a ledger. Proportional digits
+   make a column of returns jitter, and a jittering column is one a reader
+   cannot compare down. */
+.mono,
+.figure {
+  font-variant-numeric: tabular-nums;
+}
+
+.mono {
+  font-family: ui-monospace, 'Cascadia Code', Consolas, monospace;
+}
+
+/* The one solid button: ink on paper, inverted. */
+.ink-button {
+  background: var(--text);
+  color: var(--ground);
   padding: 0.8rem 2.2rem;
-  border: 1px solid var(--paper-ink);
+  border: 1px solid var(--text);
   cursor: pointer;
   transition: background 120ms ease;
 }
-.broadsheet .ink-button:hover {
-  background: var(--paper-accent);
-  border-color: var(--paper-accent);
+.ink-button:hover {
+  background: var(--accent);
+  border-color: var(--accent);
 }
-.broadsheet .ink-button:focus-visible {
-  outline: 2px solid var(--paper-accent);
+.ink-button:focus-visible {
+  outline: 2px solid var(--accent);
   outline-offset: 3px;
 }
 
-.broadsheet .article-link {
+.article-link {
   background: transparent;
   border: none;
   padding: 0;
-  color: var(--paper-accent);
+  color: var(--accent);
   cursor: pointer;
   text-decoration: underline;
   text-underline-offset: 4px;
   text-decoration-thickness: 1px;
 }
-.broadsheet .article-link:hover {
-  color: var(--paper-ink);
+.article-link:hover {
+  color: var(--text);
+}
+
+/* A kicker: the small-caps tracked label above a section. Print's subhead. */
+.kicker {
+  font-family: ui-monospace, 'Cascadia Code', Consolas, monospace;
+  font-size: 11px;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+/* Boxed content — a ruled block, never a raised card. Paper has no elevation,
+   so depth is drawn with rules and tint rather than with shadow. */
+.boxed {
+  background: var(--panel);
+  border: 1px solid var(--line);
 }
 
 /* ── The explorer workspace: everything visible, nothing scrolls the page ────
@@ -179,10 +222,15 @@ body {
    a ResizeObserver — ForceGraph3D with no size draws a WINDOW-sized canvas
    that overflows its column (the documented MarketGraph bug). Overlays sit on
    top of the canvas, out of layout. */
+/* THE PLATE. The one dark surface left in the archive, and deliberately so —
+   see the palette note at the top of this file. The WebGL scene is lit
+   against near-black and the categorical actor colours were validated there;
+   inverting it would cost a correct encoding and buy nothing. */
 .canvas3d {
   position: relative;
-  background: var(--ink);
+  background: var(--plate);
   min-width: 0;
+  border: 1px solid var(--rule-strong);
 }
 
 .canvas3d-fill {
@@ -216,7 +264,7 @@ body {
   pointer-events: none;
 }
 
-/* The 120-year scrubber. A native range input is invisible on a near-black
+/* The 120-year scrubber. A native range input is unreadable against this
    ground in most engines, so the track and thumb are drawn explicitly.
    Track and thumb pseudo-elements cannot share a rule across engines —
    a selector one engine does not recognise voids the whole block. */
@@ -231,7 +279,7 @@ input[type='range'].timeline {
 }
 input[type='range'].timeline::-webkit-slider-runnable-track {
   height: 2px;
-  background: var(--line);
+  background: var(--muted);
 }
 input[type='range'].timeline::-webkit-slider-thumb {
   -webkit-appearance: none;
@@ -241,18 +289,18 @@ input[type='range'].timeline::-webkit-slider-thumb {
   height: 14px;
   border-radius: 50%;
   background: var(--accent);
-  border: 2px solid var(--ink);
+  border: 2px solid var(--ground);
 }
 input[type='range'].timeline::-moz-range-track {
   height: 2px;
-  background: var(--line);
+  background: var(--muted);
 }
 input[type='range'].timeline::-moz-range-thumb {
   width: 10px;
   height: 10px;
   border-radius: 50%;
   background: var(--accent);
-  border: 2px solid var(--ink);
+  border: 2px solid var(--ground);
 }
 input[type='range'].timeline:focus-visible {
   outline: 1px solid var(--accent);

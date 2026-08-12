@@ -91,7 +91,7 @@ function EquityCurve({ rows }: { rows: BacktestRow[] }) {
             />
             <circle
               cx={geometry.x(hover!)} cy={geometry.y(hovered.equity_usd)} r={4}
-              fill="var(--accent)" stroke="var(--ink)" strokeWidth={2}
+              fill="var(--accent)" stroke="var(--ground)" strokeWidth={2}
             />
           </g>
         )}

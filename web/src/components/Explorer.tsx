@@ -102,11 +102,11 @@ function Trajectoryline({ trajectory }: { trajectory: Trajectory }) {
   return (
     <figure className="mt-3">
       <svg viewBox={`0 0 ${W} ${H}`} className="w-full" role="img" aria-label="escalation trajectory">
-        <line x1={0} y1={y(0)} x2={W} y2={y(0)} stroke="#232a3a" strokeWidth={1} />
-        <path d={baseline} fill="none" stroke="#7d8598" strokeWidth={1} strokeDasharray="3 3" />
-        <path d={path} fill="none" stroke="#b08d57" strokeWidth={1.5} />
+        <line x1={0} y1={y(0)} x2={W} y2={y(0)} stroke="var(--line)" strokeWidth={1} />
+        <path d={baseline} fill="none" stroke="var(--muted)" strokeWidth={1} strokeDasharray="3 3" />
+        <path d={path} fill="none" stroke="var(--accent)" strokeWidth={1.5} />
         {points.map((p, i) => (
-          <circle key={p.node_id} cx={x(i)} cy={y(p.goldstein!)} r={2.5} fill="#b08d57">
+          <circle key={p.node_id} cx={x(i)} cy={y(p.goldstein!)} r={2.5} fill="var(--accent)">
             <title>
               {p.event_time} · {p.name} · {num(p.goldstein, 1)}
             </title>
@@ -530,11 +530,11 @@ function PressureLine({ detail }: { detail: ForecastDetail }) {
             y={4}
             width={Math.max(1, x(Math.min(w.end, years[years.length - 1])) - x(Math.max(w.start, years[0])))}
             height={H - 10}
-            fill={w.level === 'high' ? 'rgba(164, 74, 63, 0.18)' : 'rgba(138, 147, 166, 0.12)'}
+            fill={w.level === 'high' ? 'rgba(158, 52, 24, 0.16)' : 'rgba(109, 99, 83, 0.12)'}
           />
         ))}
-        <line x1={0} y1={y(0.6)} x2={W} y2={y(0.6)} stroke="#232a3a" strokeWidth={1} strokeDasharray="3 3" />
-        <path d={path} fill="none" stroke="#b08d57" strokeWidth={1.5} />
+        <line x1={0} y1={y(0.6)} x2={W} y2={y(0.6)} stroke="var(--line)" strokeWidth={1} strokeDasharray="3 3" />
+        <path d={path} fill="none" stroke="var(--accent)" strokeWidth={1.5} />
       </svg>
       <figcaption className="text-xs mono mt-1" style={{ color: 'var(--muted)' }}>
         composite pressure, {years[0]}–{years[years.length - 1]} · shaded: flagged windows
