@@ -46,11 +46,12 @@ WORKDIR /app
 # to core's own location.
 COPY pyproject.toml README.md ./
 COPY core/__init__.py core/
-# `ingest` is not optional in the image: boot loads the price panel with
-# yfinance/FRED before the API starts, and without the extra the panel stays
-# empty and the transmission engine measures nothing, forever reporting
-# "panel empty" as if that were a fact about the world.
-RUN pip install --no-cache-dir ".[api,panel,mcp,ingest]" \
+# `ingest` and `analysis` are not optional in the image: boot loads the price
+# panel with yfinance/FRED and computes NetworkMetric with networkx before the
+# API starts. Without the extras those steps fail on import and the archive
+# quietly serves less than it claims — "panel empty" and zero metrics read as
+# facts about the world when they are facts about the wheel.
+RUN pip install --no-cache-dir ".[api,panel,mcp,ingest,analysis]" \
  && pip uninstall --yes geograph
 
 ENV PYTHONPATH=/app
