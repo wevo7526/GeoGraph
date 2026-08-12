@@ -58,6 +58,11 @@ SOURCES: dict[str, dict[str, str]] = {
         "url": "https://correlatesofwar.org/data-sets/formal-alliances/",
         "citation": "Gibler (2009), International Military Alliances 1648-2008.",
     },
+    "source:cow-igo": {
+        "name": "COW Intergovernmental Organizations v3",
+        "url": "https://correlatesofwar.org/data-sets/IGOs/",
+        "citation": "Pevehouse et al. (2020), IGO Version 3.0.",
+    },
 }
 
 
@@ -317,6 +322,85 @@ def load_mids(conn: Any, mida_csv: Path, midb_csv: Path) -> LoadResult:
     kuzu_store.merge_edges(conn, "INITIATED_BY", initiated)
     kuzu_store.merge_edges(conn, "DIRECTED_AT", directed)
     kuzu_store.merge_edges(conn, "DERIVED_FROM", derived)
+    return result
+
+
+def load_igo_memberships(conn: Any, csv_path: Path) -> LoadResult:
+    """IGO membership → an org Actor per IGO plus membership RELATES_TO edges.
+
+    The state_year format: one row per state-year, one COLUMN per IGO, value
+    1 for full membership (associate/observer 2/3 and missing codes are NOT
+    membership and are excluded on purpose). Consecutive years fold into
+    SPELLS; a spell reaching the dataset's last year is right-censored and
+    stays open. Bipartite by design — states connect THROUGH the IGO node,
+    which keeps the network sparse where pairwise membership edges would
+    make any two members one hop apart.
+
+    STREAMED, not DictReader'd: 15k rows x 537 columns as dicts is most of a
+    gigabyte; as lists it is nothing.
+    """
+    result = LoadResult()
+    _merge_source(conn, "source:cow-igo")
+    existing = _existing_actors(conn)
+
+    years_by_pair: dict[tuple[int, int], list[int]] = {}
+    last_year = 0
+    with open(csv_path, encoding="utf-8-sig", newline="") as fh:
+        reader = csv.reader(fh)
+        header = next(reader)
+        igo_names = header[3:]
+        for row in reader:
+            try:
+                ccode, year = int(row[0]), int(row[1])
+            except (IndexError, ValueError):
+                result.drop("unparseable ccode/year")
+                continue
+            last_year = max(last_year, year)
+            for offset, value in enumerate(row[3:]):
+                if value == "1":
+                    years_by_pair.setdefault((ccode, offset), []).append(year)
+
+    igos_used: dict[int, str] = {}
+    edges: list[dict[str, Any]] = []
+    for (ccode, offset), years in sorted(years_by_pair.items()):
+        state_id = f"actor:cow-{ccode}"
+        if state_id not in existing:
+            result.drop("member state not in the graph")
+            continue
+        years.sort()
+        spells: list[tuple[int, int]] = []
+        start = prev = years[0]
+        for year in years[1:]:
+            if year > prev + 1:
+                spells.append((start, prev))
+                start = year
+            prev = year
+        spells.append((start, prev))
+        for begin, end in spells:
+            censored = end >= last_year
+            if not censored and end < ARCHIVE_START_YEAR:
+                result.drop("membership ended before the archive opens")
+                continue
+            igos_used[offset] = igo_names[offset]
+            edges.append({
+                "src": state_id,
+                "dst": f"actor:igo-{igo_names[offset].lower()}",
+                "relation_type": "membership",
+                "valid_from": str(begin),
+                "valid_to": "" if censored else str(end),
+                "source_id": "source:cow-igo",
+            })
+
+    kuzu_store.merge_nodes(conn, "Actor", [
+        {
+            # The state_year format carries acronyms only; the acronym IS the
+            # working name until a fuller registry lands.
+            "node_id": f"actor:igo-{name.lower()}", "name": name,
+            "actor_type": "org", "iso3": "", "region_pack": "",
+        }
+        for _, name in sorted(igos_used.items())
+    ])
+    result.written = kuzu_store.merge_edges(conn, "RELATES_TO", edges)
     return result
 
 

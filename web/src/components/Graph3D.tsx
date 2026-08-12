@@ -344,20 +344,30 @@ export default function Graph3D({
     return `${name(l.source)} – ${name(l.target)} · ${tail}`
   }, [])
 
-  // Labels: every node carries one — a 21-actor roster is sparse enough, and
-  // an unlabeled sphere in a serious tool is decoration.
+  // Labels with LEVEL OF DETAIL: a pack-sized cast labels everyone (an
+  // unlabeled sphere in a serious tool is decoration), but a 1940s cast is a
+  // hundred states — there, labels go to the actors DOING something in the
+  // window, the selection, and its neighbours. The MarketGraph lesson: a
+  // text sprite per node is unreadable exactly when it is most expensive.
+  const sparse = data.nodes.length <= 40
   const nodeLabelObject = useCallback(
     (n: Sim) => {
+      const wanted =
+        sparse ||
+        n.activity > 0 ||
+        n.id === selectedActor ||
+        (focus !== null && focus.neighbours.has(n.id))
+      if (!wanted) return undefined as unknown as THREE.Object3D
       const sprite = new SpriteText(n.name)
       const dimmed = focus !== null && !focus.neighbours.has(n.id)
       sprite.color = n.id === selectedActor ? '#ffffff' : dimmed ? '#3a4356' : TEXT
       sprite.fontFace = 'Georgia'
-      sprite.textHeight = n.id === selectedActor ? 6 : 4.6
+      sprite.textHeight = n.id === selectedActor ? 6 : sparse ? 4.6 : 3.8
       ;(sprite as unknown as { position: { set: (x: number, y: number, z: number) => void } })
         .position.set(0, -(n.val + 5), 0)
       return sprite as unknown as THREE.Object3D
     },
-    [focus, selectedActor],
+    [focus, selectedActor, sparse],
   )
 
   return (

@@ -284,3 +284,50 @@ def test_shiller_a_missing_series_cell_drops_only_that_cell():
     assert dropped == 1
     assert len(rows) == 1
     assert rows[0]["market_ticker"] == "^GSPC"
+
+
+_IGO_STATE_YEAR = """
+ccode,year,state,NATO,OPEC,LON
+2,1903,"usa",0,-1,0
+2,1904,"usa",1,-1,0
+2,1948,"usa",0,-1,1
+2,1949,"usa",1,-1,1
+2,1950,"usa",1,-1,1
+2,1951,"usa",1,-1,0
+300,1918,"auh",0,-1,-9
+"""
+
+
+def test_igo_membership_spells_fold_and_censor(conn, tmp_path):
+    cow.load_state_system(conn, _write(tmp_path, "states.csv", _STATES))
+    result = cow.load_igo_memberships(
+        conn, _write(tmp_path, "igo.csv", _IGO_STATE_YEAR)
+    )
+    # USA-NATO 1949-1951 (censored open: 1951 is the file's last year),
+    # USA-LON 1948-1950; USA-NATO 1904-1904 ended before the archive;
+    # Austria-Hungary's row is not membership (value 0/-1) so nothing writes.
+    assert result.written == 2
+    assert result.reasons == {"membership ended before the archive opens": 1}
+
+    rows = {
+        (r["a"], r["b"]): r
+        for r in kuzu_store.query(
+            conn,
+            "MATCH (a:Actor)-[r:RELATES_TO {relation_type: 'membership'}]->(b:Actor) "
+            "RETURN a.node_id AS a, b.node_id AS b, r.valid_from AS valid_from, "
+            "r.valid_to AS valid_to",
+        )
+    }
+    nato = rows[("actor:cow-2", "actor:igo-nato")]
+    assert nato["valid_from"] == "1949"
+    assert nato["valid_to"] == ""  # reaches the dataset's last year: open
+    lon = rows[("actor:cow-2", "actor:igo-lon")]
+    assert (lon["valid_from"], lon["valid_to"]) == ("1948", "1950")
+    # The IGO node itself is an org actor the graph can traverse through.
+    igo = kuzu_store.query(
+        conn,
+        "MATCH (a:Actor {node_id: 'actor:igo-nato'}) RETURN a.actor_type AS t, a.name AS n",
+    )[0]
+    assert igo["t"] == "org"
+    assert igo["n"] == "NATO"
+    assert kuzu_store.check_provenance(conn) == []

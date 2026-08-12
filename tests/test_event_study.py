@@ -210,16 +210,17 @@ def test_a_truncated_window_is_skipped_rather_than_shortened():
     assert "needs 6 sessions" in skips[0].reason
 
 
-def test_coarse_resolutions_say_they_are_not_built_yet():
-    # A monthly-era market must not receive a daily number under a monthly
-    # label; Phase 3 lands the coarse windows.
+def test_a_coarse_era_with_no_panel_rows_is_a_skip_at_that_resolution():
+    # The monthly window is BUILT now (Phase 3); with nothing in the panel
+    # the answer is still a skip, carried at the era's own resolution.
     shiller = _market("^GSPC", inception="1871-01-01", freq='{"1871": "month"}')
     effects, skips = event_study.compute_effects(
         _event(date="1912-06-13"), [shiller], prices={}
     )
     assert effects == []
     assert skips[0].resolution == "month"
-    assert "Phase 3" in skips[0].reason
+    assert skips[0].window == "monthly"
+    assert skips[0].status == "skipped_no_data"
 
 
 # ── calendars and first_mover ────────────────────────────────────────────────
@@ -379,3 +380,71 @@ def test_every_spine_event_and_market_is_measured_or_a_recorded_skip():
         )
         for skip in skips:
             assert skip.reason, f"{event['id']} {skip.market_ticker}: skip with no reason"
+
+
+# ── the deep windows: monthly and annual (Phase 3) ───────────────────────────
+
+
+def _monthly_series(months: list[tuple[str, float]]) -> list[dict[str, object]]:
+    """Month-start observations at explicit levels — the Shiller shape."""
+    return [{"obs_date": f"{ym}-01", "price": level} for ym, level in months]
+
+
+def test_a_truncated_event_date_anchors_at_the_first_day_it_could_mean():
+    assert event_study.parse_event_date("1911-07") == dt.date(1911, 7, 1)
+    assert event_study.parse_event_date("1911") == dt.date(1911, 1, 1)
+    assert event_study.parse_event_date("2025-06-13") == dt.date(2025, 6, 13)
+
+
+def test_a_monthly_era_event_measures_one_month_against_its_mean():
+    """Agadir's shape: a month-resolution 1911 event against Shiller-era
+    monthly levels. Estimation months are FLAT (zero mean), the event month
+    falls 10%% — so the abnormal return IS that fall, at month resolution."""
+    # Alternating levels give the estimation window a nonzero variance and a
+    # near-zero mean, so the t-stat is computable and honest.
+    wobble = [(f"{1905 + i // 12}-{i % 12 + 1:02d}", 100.0 + (i % 2)) for i in range(78)]
+    last: float = wobble[-1][1]
+    series = _monthly_series(wobble + [("1911-08", last * 0.9)])  # July's move, on the Aug obs
+    market = _market("^GSPC", inception="1871-01-01",
+                     freq='{"1871": "month", "1927": "day"}')
+    effects, skips = event_study.compute_effects(
+        _event("event:agadir", "1911-07"), [market], prices={"^GSPC": series},
+    )
+    assert skips == []
+    assert len(effects) == 1
+    monthly = effects[0]
+    assert monthly.window == "monthly"
+    assert monthly.resolution == "month"
+    assert monthly.raw_return == pytest.approx(-0.10, abs=0.001)
+    assert monthly.abnormal_return == pytest.approx(-0.10, abs=0.005)
+    assert monthly.p_value < 0.01  # a 10% move against a ±1% history
+
+
+def test_a_daily_era_event_still_measures_daily_cars():
+    # The same market, 2025: the era table sends it down the daily path.
+    market = _market("^GSPC", inception="1871-01-01",
+                     freq='{"1871": "month", "1927": "day"}')
+    prices = _series(dt.date(2025, 6, 13), _ESTIMATION + _GAP, [0.05, 0.0])
+    effects, _ = event_study.compute_effects(
+        _event(), [market], prices={"^GSPC": prices},
+    )
+    assert {e.window for e in effects} <= {"car_0_1", "car_0_3", "car_0_5"}
+    assert all(e.resolution == "day" for e in effects)
+
+
+def test_an_annual_era_market_measures_one_year():
+    market = _market("JST:GBR:EQ", inception="1870-01-01", freq='{"1870": "year"}')
+    years = [{"obs_date": f"{1895 + i}-12-31", "price": 100.0 * (1.02 ** i)}
+             for i in range(17)]  # 1895..1911, steady +2%
+    last_level = 100.0 * (1.02 ** 16)
+    years.append({"obs_date": "1912-12-31", "price": last_level * 0.85})
+    effects, skips = event_study.compute_effects(
+        _event("event:deep", "1912"), [market], prices={"JST:GBR:EQ": years},
+    )
+    assert len(effects) == 1
+    annual = effects[0]
+    assert annual.window == "annual"
+    assert annual.resolution == "year"
+    assert annual.raw_return == pytest.approx(-0.15)
+    # Against a steady +2% baseline the ABNORMAL move is deeper than the raw.
+    assert annual.abnormal_return == pytest.approx(-0.17, abs=0.005)

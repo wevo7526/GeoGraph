@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import {
+  getActors,
   getCoverage,
   getDyads,
   getEvent,
@@ -24,6 +25,7 @@ import type {
   Dyad,
   Effect,
   EventDetail,
+  GraphActor,
   GraphEvent,
   Pack,
   PackActor,
@@ -39,6 +41,14 @@ const DIRECTION_COLOR: Record<string, string> = {
   escalating: 'var(--alert)',
   deescalating: 'var(--accent)',
   stable: 'var(--muted)',
+}
+
+/** Same content, same reference: the window fetches replace state only when
+ *  the id-set actually changes, so an unchanged cast keeps its layout. */
+function sameByKey<T>(prev: T[] | null, next: T[], key: (item: T) => string): boolean {
+  if (prev === null || prev.length !== next.length) return false
+  const seen = new Set(prev.map(key))
+  return next.every((item) => seen.has(key(item)))
 }
 
 /** What the drawer is showing. One thing at a time — an event's coding, a
@@ -489,6 +499,7 @@ export default function Explorer({ onNavigate }: { onNavigate: (route: string) =
   const [regimes, setRegimes] = useState<Segmentation | null>(null)
   const [pack, setPack] = useState<Pack | null>(null)
   const [dyads, setDyads] = useState<Dyad[]>([])
+  const [actors, setActors] = useState<GraphActor[]>([])
   const [relations, setRelations] = useState<Relation[]>([])
   const [coverage, setCoverage] = useState<Record<string, number> | null>(null)
   const [total, setTotal] = useState<number | null>(null)
@@ -498,13 +509,14 @@ export default function Explorer({ onNavigate }: { onNavigate: (route: string) =
   const [focusActor, setFocusActor] = useState<string | null>(null)
   const [hover, setHover] = useState<string | null>(null)
   const graphHandle = useRef<Graph3DHandle>(null)
-  const windowCache = useRef<Map<string, GraphEvent[]>>(new Map())
+  const windowCache = useRef<
+    Map<string, { events: GraphEvent[]; actors: GraphActor[]; relations: Relation[] }>
+  >(new Map())
 
   useEffect(() => {
     getRegimes().then(setRegimes)
     getPack('mena').then(setPack)
     getDyads().then((r) => setDyads(r?.rows ?? []))
-    getRelations().then((r) => setRelations(r?.rows ?? []))
     getCoverage().then((r) => {
       setCoverage(r?.years ?? {})
       setTotal(r?.total ?? 0)
@@ -517,22 +529,46 @@ export default function Explorer({ onNavigate }: { onNavigate: (route: string) =
   const windowFrom = `${year - 4}`
   const windowTo = `${year + 1}`
 
-  // The archive is thousands of events now (the deep tier landed), so the
-  // explorer fetches THE WINDOW, not the world — cached per window so
-  // scrubbing back and forth is instant after the first visit.
+  // The archive is a century deep now, so the explorer fetches THE WINDOW,
+  // not the world: its events, the actors ALIVE in it (the state system is
+  // time-varying — 1914 has Austria-Hungary and no PIF), and the durable
+  // relations valid inside it. Cached per window; and arrays only REPLACE
+  // state when their content signature changes, so scrubbing across a quiet
+  // stretch never reheats the force layout for an identical cast.
   useEffect(() => {
     const key = `${windowFrom}..${windowTo}`
+    const apply = (bundle: {
+      events: GraphEvent[]
+      actors: GraphActor[]
+      relations: Relation[]
+    }) => {
+      setEvents((prev) => sameByKey(prev, bundle.events, (e) => e.node_id) ? prev! : bundle.events)
+      setActors((prev) => (sameByKey(prev, bundle.actors, (a) => a.node_id) ? prev : bundle.actors))
+      setRelations((prev) =>
+        sameByKey(prev, bundle.relations, (r) => `${r.a_id}|${r.b_id}|${r.relation_type}`)
+          ? prev
+          : bundle.relations,
+      )
+    }
     const cached = windowCache.current.get(key)
     if (cached) {
-      setEvents(cached)
+      apply(cached)
       return
     }
     let active = true
-    getEvents({ start: windowFrom, end: `${year}-12-31`, limit: 500 }).then((result) => {
+    Promise.all([
+      getEvents({ start: windowFrom, end: `${year}-12-31`, limit: 500 }),
+      getActors({ start: windowFrom, end: `${year}-12-31` }),
+      getRelations({ start: windowFrom, end: `${year}-12-31` }),
+    ]).then(([eventsRes, actorsRes, relationsRes]) => {
       if (!active) return
-      const rows = result?.rows ?? []
-      windowCache.current.set(key, rows)
-      setEvents(rows)
+      const bundle = {
+        events: eventsRes?.rows ?? [],
+        actors: actorsRes?.rows ?? [],
+        relations: relationsRes?.rows ?? [],
+      }
+      windowCache.current.set(key, bundle)
+      apply(bundle)
     })
     return () => {
       active = false
@@ -552,9 +588,44 @@ export default function Explorer({ onNavigate }: { onNavigate: (route: string) =
     [inWindow, focusActor],
   )
 
+  // THE WINDOW'S CAST, seen through the pack's lens: the roster and the
+  // window's event participants are the core; their durable non-membership
+  // ties pull in direct neighbours (1914: the alliance system around the
+  // powers that acted); IGO membership draws only toward an IGO already in
+  // the cast, so one shared UN membership cannot flood the screen with every
+  // state alive. Honest AND legible — the cap is the lens, not the archive.
+  const cast = useMemo(() => {
+    const lookup = new Map<string, { id: string; name: string; actor_type: PackActor['actor_type'] }>()
+    for (const a of actors) {
+      lookup.set(a.node_id, { id: a.node_id, name: a.name, actor_type: a.actor_type })
+    }
+    for (const a of pack?.actors.actors ?? []) {
+      if (!lookup.has(a.id)) lookup.set(a.id, { id: a.id, name: a.name, actor_type: a.actor_type })
+    }
+    const ids = new Set<string>()
+    for (const a of pack?.actors.actors ?? []) ids.add(a.id)
+    for (const e of inWindow) {
+      if (e.initiator_id) ids.add(e.initiator_id)
+      if (e.target_id) ids.add(e.target_id)
+    }
+    for (const r of relations) {
+      if (r.relation_type === 'membership') continue
+      if (ids.has(r.a_id) || ids.has(r.b_id)) {
+        ids.add(r.a_id)
+        ids.add(r.b_id)
+      }
+    }
+    const castRelations = relations.filter((r) => ids.has(r.a_id) && ids.has(r.b_id))
+    const castActors = [...ids]
+      .map((id) => lookup.get(id))
+      .filter((a): a is NonNullable<typeof a> => Boolean(a))
+      .sort((a, b) => a.id.localeCompare(b.id))
+    return { actors: castActors, relations: castRelations }
+  }, [actors, relations, pack, inWindow])
+
   const focusedActor = useMemo(
-    () => pack?.actors.actors.find((a) => a.id === focusActor) ?? null,
-    [pack, focusActor],
+    () => cast.actors.find((a) => a.id === focusActor) ?? null,
+    [cast, focusActor],
   )
 
   const selectEvent = (id: string) => setSelection({ kind: 'event', id })
@@ -669,8 +740,8 @@ export default function Explorer({ onNavigate }: { onNavigate: (route: string) =
         <section className="canvas3d">
           {pack && (
             <Graph3D
-              actors={pack.actors.actors}
-              relations={relations}
+              actors={cast.actors}
+              relations={cast.relations}
               dyads={dyads}
               events={events ?? []}
               windowFrom={windowFrom}

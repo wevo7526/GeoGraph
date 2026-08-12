@@ -127,6 +127,16 @@ export interface EventDetail extends GraphEvent {
   sources: { node_id: string; name: string; url: string; citation: string }[]
 }
 
+export interface GraphActor {
+  node_id: string
+  name: string
+  actor_type: 'state' | 'org' | 'person' | 'swf'
+  cow_ccode?: number | null
+  state_from?: string | null
+  state_to?: string | null
+  region_pack?: string | null
+}
+
 export interface Relation {
   a_id: string
   a_name: string

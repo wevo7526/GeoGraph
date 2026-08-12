@@ -7,7 +7,14 @@ carry a single `value` rather than OHLC, which the panel schema allows on
 purpose. NO GULF DATA EXISTS in this era and none is fabricated: deep-past
 transmission runs on US equities, US rates, oil and gold only.
 
-Free download, one Excel/CSV file. PHASE 3.
+Free download (the site's "xlsx" link actually serves Stata .dta, which
+pandas reads natively). PHASE 3 NOTE: not yet wired into transmission ON
+PURPOSE — deep-past transmission runs on US equities, US rates, oil and gold
+only (build-spec section 5.3), and the US is covered FINER by Shiller's
+monthly series from 1871. JST's annual rows become load-bearing when a
+non-US pack (Phase 6's China, Europe later) needs its 18-economy panel;
+`eq_tr` is a RETURN, so loading means deriving a cumulative index level and
+saying so in source_ref.
 """
 
 from __future__ import annotations

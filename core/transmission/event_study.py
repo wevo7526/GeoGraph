@@ -97,8 +97,29 @@ ESTIMATION_PERIODS: dict[str, int] = {
 ESTIMATION_GAP_SESSIONS = 5
 
 #: EffectWindow → how many sessions it spans, counting the first tradable
-#: session after the event as session 0. car_0_1 is two sessions.
-WINDOW_SESSIONS: dict[str, int] = {"car_0_1": 2, "car_0_3": 4, "car_0_5": 6}
+#: session after the event as session 0. car_0_1 is two sessions. The deep
+#: windows are ONE period each: the event's month (Shiller era) or year (JST
+#: era) against the estimation mean — as coarse as the era, and labeled so.
+WINDOW_SESSIONS: dict[str, int] = {
+    "car_0_1": 2, "car_0_3": 4, "car_0_5": 6,
+    "monthly": 1, "annual": 1,
+}
+
+
+def parse_event_date(value: Any) -> dt.date:
+    """An event_time at ANY resolution → the first day it could mean.
+
+    Deep-tier dates are truncated ISO strings by design ("1911-07", "1911");
+    the study anchors them at the first day of the known period, and the
+    event's own temporal_resolution — carried on the node and on every
+    effect — says how much precision that anchor actually has.
+    """
+    text = str(value).strip()
+    parts = text.split("-")
+    year = int(parts[0])
+    month = int(parts[1]) if len(parts) > 1 and parts[1] else 1
+    day = int(parts[2][:2]) if len(parts) > 2 and parts[2] else 1
+    return dt.date(year, month, day)
 
 #: TemporalResolution → the windows measurable at it, finest first.
 WINDOWS_BY_RESOLUTION: dict[str, tuple[str, ...]] = {
@@ -184,7 +205,7 @@ def compute_effects(
     and found no measurable market, which is the honest answer for Tadawul in
     1973 and for a delisted ticker in 2025 alike.
     """
-    event_date = dt.date.fromisoformat(str(event["event_time"])[:10])
+    event_date = parse_event_date(event["event_time"])
     others = other_event_dates or {}
 
     # first_mover is a property of the SET of markets being measured, so it is
@@ -222,9 +243,10 @@ def compute_effects(
         resolution = native_resolution(market, event_date)
         window_names = WINDOWS_BY_RESOLUTION.get(resolution, ("car_0_1",))
         series = prices.get(ticker) or []
-        # Only the daily windows are implemented; monthly and annual land with
-        # the deep tier (Phase 3), and saying so beats emitting a daily number
-        # under a monthly label.
+        # Daily, monthly and annual all measure through the same constant-mean
+        # machinery below; intraday_open_close alone waits for Phase 4's
+        # intraday panel, and saying so beats emitting a daily number under an
+        # intraday label.
         measurable = [w for w in window_names if w in WINDOW_SESSIONS]
         if not measurable:
             skips.append(Skip(
@@ -232,8 +254,8 @@ def compute_effects(
                 window=window_names[0], resolution=resolution,
                 status="skipped_no_data",
                 reason=(
-                    f"{resolution} resolution is not measurable yet (Phase 3 — "
-                    "monthly and annual windows land with the deep tier)."
+                    f"{resolution} resolution is not measurable yet (Phase 4 — "
+                    "the intraday window needs the intraday panel)."
                 ),
             ))
             continue

@@ -70,6 +70,9 @@ COPY --from=web /web/dist ./web/dist
 # The graph lives here. Mount a Railway volume at /data and it survives a
 # redeploy; leave it unmounted and the app reseeds on every boot.
 ENV KUZU_DB_PATH=/data/geograph.kuzu
+# Deep-tier raw downloads (COW, Shiller) cache on the same volume, so a
+# redeploy re-loads from disk instead of re-fetching the archives.
+ENV GEOGRAPH_RAW_DIR=/data/raw
 RUN mkdir -p /data
 
 # Non-root at runtime — but deliberately NOT via `USER` (the MarketGraph

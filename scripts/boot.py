@@ -50,6 +50,7 @@ _SEED_SCRIPT = _ROOT / "scripts" / "seed_pack.py"
 _LOAD_PANEL_SCRIPT = _ROOT / "scripts" / "load_panel.py"
 _STUDY_SCRIPT = _ROOT / "scripts" / "run_event_study.py"
 _METRICS_SCRIPT = _ROOT / "scripts" / "run_network_metrics.py"
+_DEEP_TIER_SCRIPT = _ROOT / "scripts" / "load_deep_tier.py"
 
 #: What to exec when no command is given. Railway can override by setting a
 #: start command; the default is the app.
@@ -245,6 +246,26 @@ def _run_study(pack_names: list[str]) -> dict[str, Any] | None:
     return {"ok": all(r["ok"] for r in results), "packs": results}
 
 
+def _load_deep_tier() -> dict[str, Any]:
+    """The 1905+ deep tier (Phase 3): COW into the graph, Shiller into the
+    panel, Head B rescored over the whole archive.
+
+    Loaders are idempotent and the raw downloads cache on the volume
+    (GEOGRAPH_RAW_DIR), so a boot with everything in place costs a few
+    seconds of MERGE and one rescore. Runs BEFORE the study so deep events
+    are there to measure, and before metrics so the deep network is scored.
+    """
+    if os.getenv("GEOGRAPH_DEEP_TIER", "1").strip().lower() in {"0", "false", "no"}:
+        return {"ok": True, "skipped": "disabled by GEOGRAPH_DEEP_TIER"}
+    result = _run_step(
+        "deep tier",
+        [sys.executable, str(_DEEP_TIER_SCRIPT)],
+        timeout=_LOAD_TIMEOUT_SECONDS,
+        echo=False,
+    )
+    return {k: v for k, v in result.items() if k != "step"}
+
+
 def _run_network_metrics() -> dict[str, Any]:
     """NetworkMetric over the standard windows (Phase 2, build-spec §12).
 
@@ -307,6 +328,7 @@ def _boot_status() -> dict[str, Any]:
     # the study from reporting why it could not run, and neither may stop the
     # API from coming up.
     steps: tuple[tuple[str, Callable[[], dict[str, Any] | None]], ...] = (
+        ("deep", _load_deep_tier),
         ("panel", _apply_panel_schema),
         ("prices", lambda: _load_panel_if_shallow(names)),
         ("study", lambda: _run_study(names)),

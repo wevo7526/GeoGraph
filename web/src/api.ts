@@ -5,6 +5,7 @@ import type {
   Effect,
   EventDetail,
   EventList,
+  GraphActor,
   Health,
   Pack,
   Relation,
@@ -56,7 +57,21 @@ export const getTrajectory = (dyadId: string) =>
 
 export const getDyads = () => get<{ rows: Dyad[] }>('/api/dyads')
 
-export const getRelations = () => get<{ rows: Relation[] }>('/api/relations')
+export const getRelations = (params: { start?: string; end?: string } = {}) => {
+  const query = new URLSearchParams()
+  if (params.start) query.set('start', params.start)
+  if (params.end) query.set('end', params.end)
+  const suffix = query.toString() ? `?${query}` : ''
+  return get<{ rows: Relation[]; truncated: boolean }>(`/api/relations${suffix}`)
+}
+
+export const getActors = (params: { start?: string; end?: string } = {}) => {
+  const query = new URLSearchParams()
+  if (params.start) query.set('start', params.start)
+  if (params.end) query.set('end', params.end)
+  const suffix = query.toString() ? `?${query}` : ''
+  return get<{ rows: GraphActor[] }>(`/api/actors${suffix}`)
+}
 
 export const getCaseStudies = () =>
   get<{ rows: CaseStudyIndexEntry[] }>('/api/case-studies')
