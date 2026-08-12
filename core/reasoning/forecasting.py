@@ -1,24 +1,176 @@
 """Near-term forecasting: 0–3 years — build-spec section 13.
 
-Temporal-graph forecasting over the modern-tier graph plus the game-theoretic
-agent (agent.py), producing CALIBRATED PROBABILISTIC SCENARIOS: each with a
-likelihood, a market-direction implication, historical analogues, and a
-rationale traced to graph evidence — never a single number, never a raw
-signal (decision 1, locked).
+The deterministic layer of the near-term mode: CALIBRATED PROBABILISTIC
+SCENARIOS whose likelihoods are REGIME-GATED BASE RATES — the historical
+frequency, within the current monetary order only, with which a dyad in the
+focal dyad's state went on to escalate again inside the horizon. Counted, not
+modeled; the counting is in the rationale so a reader can recompute the
+likelihood from the archive.
 
-Forecasts freeze their inputs at generation (Forecast.frozen_inputs_json) so
-calibration.py can Brier-score them honestly later. Backtesting is rolling-
-window over the modern tier.
+Never a single number, never a raw signal (decision 1): each focal dyad gets
+a scenario pair (further escalation / reversion) whose likelihoods sum to
+one, each with a market implication and analogues. The game-theoretic agent
+(agent.py, LLM half) later drafts richer rationales AROUND these numbers —
+it does not change them (section 17).
 
-PHASE 5.
+Pure of clocks: the payload's `as_of` is the archive's own latest event
+date, and the caller stamps generated_at when it freezes the Forecast node —
+which is what lets calibration.py Brier-score a past call honestly.
 """
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any
 
+from core.graph import kuzu_store
+from core.reasoning import regimes
 
-def forecast(question: str, *, region_pack: str, horizon_years: int = 3) -> dict[str, Any]:
-    """A near-term Forecast node's payload: mode='near_term', scenario list
-    with likelihoods, frozen inputs, generated_at."""
-    raise NotImplementedError("Phase 5 — see docs/build-spec.md section 13")
+#: How many of the region's most conflictual dyads get scenario pairs.
+_FOCAL_DYADS = 3
+#: A dyad-episode's continuation window when counting base rates, years.
+_DEFAULT_HORIZON_YEARS = 3
+
+
+def _dyad_events(conn: Any) -> list[dict[str, Any]]:
+    return kuzu_store.query(
+        conn,
+        "MATCH (e:Event)-[:OF_DYAD]->(d:Dyad) "
+        "RETURN d.node_id AS dyad_id, d.name AS dyad_name, "
+        "d.ewma_baseline AS baseline, e.node_id AS event_id, "
+        "e.event_time AS event_time, e.escalation_direction AS direction, "
+        "e.region_pack AS region_pack "
+        "ORDER BY e.event_time, e.node_id",
+    )
+
+
+def _base_rate(
+    rows: list[dict[str, Any]], *, regime_anchor: str, horizon_years: int
+) -> tuple[int, int]:
+    """(continuations, episodes): of the in-regime escalating events across
+    ALL dyads, how many were followed by another escalating event ON THE SAME
+    DYAD within the horizon. Cross-dyad counting because single-dyad samples
+    are thin — stated in the rationale, not hidden."""
+    episodes = 0
+    continuations = 0
+    by_dyad: dict[str, list[dict[str, Any]]] = {}
+    for row in rows:
+        by_dyad.setdefault(row["dyad_id"], []).append(row)
+    for events in by_dyad.values():
+        for index, event in enumerate(events):
+            if event["direction"] != "escalating":
+                continue
+            date = str(event["event_time"])
+            if not regimes.comparable(regime_anchor, date):
+                continue
+            episodes += 1
+            year = int(date[:4])
+            if any(
+                later["direction"] == "escalating"
+                and year < int(str(later["event_time"])[:4]) <= year + horizon_years
+                for later in events[index + 1 :]
+            ):
+                continuations += 1
+    return continuations, episodes
+
+
+def forecast(
+    db_path: Path,
+    question: str,
+    *,
+    region_pack: str,
+    horizon_years: int = _DEFAULT_HORIZON_YEARS,
+) -> dict[str, Any]:
+    """A near-term Forecast payload: mode='near_term', scenario pairs with
+    base-rate likelihoods, frozen inputs. The caller stamps generated_at and
+    persists — nothing here reads a clock."""
+    conn = kuzu_store.connect(db_path, read_only=True)
+    try:
+        rows = _dyad_events(conn)
+    finally:
+        kuzu_store.close(conn)
+    if not rows:
+        raise ValueError("the graph holds no dyad-coded events — seed first")
+
+    as_of = max(str(row["event_time"]) for row in rows)
+
+    # Focal dyads: most conflictual standing baselines IN THE REGION with
+    # history to reason from. Deterministic order.
+    by_dyad: dict[str, list[dict[str, Any]]] = {}
+    for row in rows:
+        by_dyad.setdefault(row["dyad_id"], []).append(row)
+    regional = [
+        (dyad_id, events)
+        for dyad_id, events in by_dyad.items()
+        if len(events) >= 2
+        and any(e["region_pack"] == region_pack for e in events)
+    ]
+    regional.sort(key=lambda pair: (pair[1][-1]["baseline"] or 0.0, pair[0]))
+    focal = regional[:_FOCAL_DYADS]
+
+    continuations, episodes = _base_rate(
+        rows, regime_anchor=as_of, horizon_years=horizon_years
+    )
+    rate = continuations / episodes if episodes else 0.5
+
+    scenarios: list[dict[str, Any]] = []
+    for dyad_id, events in focal:
+        name = events[-1]["dyad_name"]
+        latest = events[-1]
+        counting = (
+            f"{continuations} of {episodes} in-regime escalating episodes (all "
+            f"dyads, monetary order at {as_of}) saw further escalation on the "
+            f"same dyad within {horizon_years}y"
+        )
+        scenarios.append({
+            "scenario_name": f"further_escalation:{dyad_id}",
+            "likelihood": round(rate, 4),
+            "market_implication": (
+                f"Renewed escalation on {name} prices as event risk in the "
+                "region's equity indices and as a premium on the energy "
+                "benchmarks — direction measured per event by the transmission "
+                "engine, never asserted here."
+            ),
+            "rationale": (
+                f"{name} carries baseline {latest['baseline']} with its latest "
+                f"event {latest['event_id']} ({latest['event_time']}). Base rate: "
+                f"{counting}. Likelihood IS that frequency — recount it from the "
+                "archive."
+            ),
+            "analogue_ids": [],
+        })
+        scenarios.append({
+            "scenario_name": f"reversion_to_baseline:{dyad_id}",
+            "likelihood": round(1.0 - rate, 4),
+            "market_implication": (
+                f"A quiet horizon on {name} decays the standing risk premium; "
+                "relative normalization of the most exposed markets."
+            ),
+            "rationale": (
+                f"The complement of the escalation base rate for {name}: "
+                f"{episodes - continuations} of {episodes} in-regime episodes "
+                f"were NOT followed within {horizon_years}y."
+            ),
+            "analogue_ids": [],
+        })
+
+    return {
+        "mode": "near_term",
+        "region_pack": region_pack,
+        "question": question,
+        "as_of": as_of,
+        "horizon_years": horizon_years,
+        "scenarios": scenarios,
+        "frozen_inputs": {
+            "episodes": episodes,
+            "continuations": continuations,
+            "focal_dyads": [dyad_id for dyad_id, _ in focal],
+            "event_count": len(rows),
+            "as_of": as_of,
+        },
+        "method": (
+            "regime-gated base rates: escalating episodes within the current "
+            "monetary order, continuation counted on the same dyad within "
+            f"{horizon_years}y; likelihood = frequency, complement pairs sum to 1"
+        ),
+    }

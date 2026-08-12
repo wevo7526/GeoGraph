@@ -250,3 +250,39 @@ def test_an_unmeasured_event_is_refused(db_path):
             sensor_loop.update_from_effect(conn, "event:mena-1973-embargo")
     finally:
         kuzu_store.close(conn)
+
+
+# ── near-term base rates ─────────────────────────────────────────────────────
+
+
+def test_near_term_scenarios_are_base_rates_that_sum_to_one(db_path):
+    from core.reasoning import forecasting
+
+    payload = forecasting.forecast(
+        db_path, "Where does Iran's confrontation arc go?", region_pack="mena",
+    )
+    assert payload["mode"] == "near_term"
+    assert payload["scenarios"], "focal dyads exist in the seeded spine"
+    # Scenario PAIRS: likelihoods complement within each focal dyad.
+    by_dyad: dict[str, float] = {}
+    for scenario in payload["scenarios"]:
+        assert scenario["likelihood"] is not None
+        assert 0.0 <= scenario["likelihood"] <= 1.0
+        dyad = scenario["scenario_name"].split(":", 1)[1]
+        by_dyad[dyad] = by_dyad.get(dyad, 0.0) + scenario["likelihood"]
+        assert "recount" in scenario["rationale"] or "complement" in scenario["rationale"]
+    for total in by_dyad.values():
+        assert total == pytest.approx(1.0)
+    # Frozen inputs carry the counting, so a later scorer can audit it.
+    frozen = payload["frozen_inputs"]
+    assert frozen["episodes"] >= frozen["continuations"] >= 0
+    assert payload["as_of"] == frozen["as_of"]
+
+
+def test_near_term_is_deterministic_and_clock_free(db_path):
+    from core.reasoning import forecasting
+
+    first = forecasting.forecast(db_path, "q", region_pack="mena")
+    second = forecasting.forecast(db_path, "q", region_pack="mena")
+    assert first == second
+    assert "generated_at" not in first  # the caller stamps at freeze time
