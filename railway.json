@@ -8,8 +8,8 @@
     "$comment": "boot.py seeds the stores and then execs the API — it is not a wrapper that can be skipped. A startCommand of `python -m core.api.app` boots an API over an empty volume, because Kuzu is single-writer and the API holds the lock.",
     "startCommand": "python /app/scripts/boot.py",
     "healthcheckPath": "/api/health",
-    "$timeout_comment": "The FIRST boot on a fresh volume does real work before the API binds: deep-tier fetch+load, the GDELT artifact, the full-archive study and the forecast freeze. Later boots skip the loaded parts and come up in under a minute.",
-    "healthcheckTimeout": 1800,
+    "$timeout_comment": "The FIRST boot after a data epoch does real work before the API binds: deep-tier fetch+load, a new lens's GDELT artifact, that lens's full study backlog and the forecast freeze. The 2026-08-12 deploy measured that worst case at ~1830s — the china GDELT load (520s) plus the mena study backlog (995s) landed in ONE boot and missed the old 1800s window by seconds, so the ceiling is set at double the observed worst. Later boots skip the loaded parts and come up in minutes.",
+    "healthcheckTimeout": 3600,
     "restartPolicyType": "ON_FAILURE",
     "restartPolicyMaxRetries": 3
   }

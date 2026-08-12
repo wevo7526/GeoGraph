@@ -332,6 +332,36 @@ def test_an_event_before_every_era_raises_rather_than_guessing():
         event_study.native_resolution(market, dt.date(1905, 1, 1))
 
 
+def test_an_alive_but_dataless_market_is_a_recorded_skip():
+    # ^N225's exchange reopens in 1949 but the series starts 1965, so a 1953
+    # event finds the market alive and its data absent. That is a skip the
+    # study records — one such market must not kill the whole pack's run.
+    n225 = _market("^N225", inception="1949-05-16", freq='{"1965": "day"}')
+    effects, skips = event_study.compute_effects(
+        _event(node_id="event:armistice", date="1953-07-27"),
+        [n225],
+        prices={"^N225": []},
+    )
+    assert effects == []
+    assert [s.status for s in skips] == ["skipped_no_data"]
+    assert "1965" in skips[0].reason
+
+
+def test_a_dataless_market_does_not_claim_first_mover():
+    # At a date where ^N225 is alive-but-dataless, the market that actually
+    # printed prices is the set's first mover.
+    n225 = _market("^N225", inception="1949-05-16", freq='{"1965": "day"}')
+    gspc = _market("^GSPC", inception="1871-01-01", freq='{"1871": "day"}')
+    prices = _series(dt.date(1953, 7, 27), _ESTIMATION + _GAP, [0.01, 0.0])
+    effects, skips = event_study.compute_effects(
+        _event(node_id="event:armistice", date="1953-07-27"),
+        [n225, gspc],
+        prices={"^N225": [], "^GSPC": prices},
+    )
+    assert any(e.market_ticker == "^GSPC" and e.first_mover for e in effects)
+    assert {s.market_ticker for s in skips} >= {"^N225"}
+
+
 # ── degenerate inputs ────────────────────────────────────────────────────────
 
 

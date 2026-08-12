@@ -213,7 +213,17 @@ def compute_effects(
     def _inception(market: dict[str, Any]) -> dt.date:
         return dt.date.fromisoformat(str(market["inception_date"])[:10])
 
-    alive = [m for m in markets if _inception(m) <= event_date]
+    def _has_era(market: dict[str, Any]) -> bool:
+        try:
+            native_resolution(market, event_date)
+        except StudyError:
+            return False
+        return True
+
+    # A market whose data eras have not begun cannot move first any more than
+    # a market that does not exist yet — first_mover is resolved over the
+    # markets that could actually print a price.
+    alive = [m for m in markets if _inception(m) <= event_date and _has_era(m)]
     calendars = {
         m["ticker"]: trading_calendar.calendar_for(m, event_date) for m in alive
     }
@@ -240,7 +250,19 @@ def compute_effects(
             ))
             continue
 
-        resolution = native_resolution(market, event_date)
+        try:
+            resolution = native_resolution(market, event_date)
+        except StudyError as exc:
+            # Alive but dataless: the exchange existed at the event, its DATA
+            # does not reach back that far (^N225 opens 1949, the series
+            # starts 1965). Same convention as skipped_no_market above.
+            skips.append(Skip(
+                event_node_id=event["node_id"], market_ticker=ticker,
+                window="car_0_1", resolution="day",
+                status="skipped_no_data",
+                reason=str(exc),
+            ))
+            continue
         window_names = WINDOWS_BY_RESOLUTION.get(resolution, ("car_0_1",))
         series = prices.get(ticker) or []
         # Daily, monthly and annual all measure through the same constant-mean
