@@ -1,4 +1,5 @@
 import type {
+  BacktestLedger,
   CaseStudy,
   CaseStudyIndexEntry,
   Dyad,
@@ -8,6 +9,7 @@ import type {
   Flow,
   ForecastDetail,
   ForecastSummary,
+  ForwardView,
   GraphActor,
   Health,
   PaperBook,
@@ -95,6 +97,12 @@ export const getForecast = (nodeId: string) =>
 
 export const getPaperBook = (nodeId: string) =>
   get<PaperBook>(`/api/forecasts/${encodeURIComponent(nodeId)}/paper`)
+
+export const getBacktest = (region: string) =>
+  get<BacktestLedger>(`/api/trading/backtest?region=${encodeURIComponent(region)}`)
+
+export const getForward = (region: string) =>
+  get<ForwardView>(`/api/trading/forward?region=${encodeURIComponent(region)}`)
 
 export const getCaseStudies = () =>
   get<{ rows: CaseStudyIndexEntry[] }>('/api/case-studies')

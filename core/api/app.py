@@ -57,6 +57,7 @@ from core.api.routers import (
     network,
     packs,
     regimes,
+    trading,
 )
 from core.graph import kuzu_store
 
@@ -125,7 +126,7 @@ def create_app() -> FastAPI:
         }
 
     for router in (graph.router, events.router, case_studies.router, network.router,
-                   forecasts.router, regimes.router, packs.router):
+                   forecasts.router, regimes.router, packs.router, trading.router):
         app.include_router(router, prefix="/api")
 
     if _WEB_DIST.exists():

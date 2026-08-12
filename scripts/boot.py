@@ -25,6 +25,7 @@ endpoint surfaces, and the API starts regardless.
                               itself the day it becomes complete
   GEOGRAPH_LOAD_PANEL=0       never fetch prices at boot
   GEOGRAPH_STUDY_ON_BOOT=0    never run the transmission engine at boot
+  GEOGRAPH_BACKTEST_ON_BOOT=0 never run the walk-forward paper backtest
 
 The price fetch is CONDITIONAL on the panel being empty, because it is the one
 step that reaches the network and it does not need repeating: Postgres survives
@@ -52,6 +53,7 @@ _STUDY_SCRIPT = _ROOT / "scripts" / "run_event_study.py"
 _METRICS_SCRIPT = _ROOT / "scripts" / "run_network_metrics.py"
 _FORECASTS_SCRIPT = _ROOT / "scripts" / "run_forecasts.py"
 _GDELT_SCRIPT = _ROOT / "scripts" / "backfill_gdelt.py"
+_BACKTEST_SCRIPT = _ROOT / "scripts" / "run_backtest.py"
 _DERIVED_DIR = _ROOT / "data" / "derived"
 _DEEP_TIER_SCRIPT = _ROOT / "scripts" / "load_deep_tier.py"
 _LOAD_13F_SCRIPT = _ROOT / "scripts" / "load_13f.py"
@@ -396,6 +398,22 @@ def _freeze_forecasts() -> dict[str, Any]:
     return {k: v for k, v in result.items() if k != "step"}
 
 
+def _run_backtest() -> dict[str, Any]:
+    """The walk-forward paper backtest (Phase 5's ledger). Reads the graph
+    read-only and writes only to Postgres, so it can run beside the API; it
+    re-runs every boot because the ledger is a function of (archive, panel,
+    books) and any of the three may have moved."""
+    if os.getenv("GEOGRAPH_BACKTEST_ON_BOOT", "1").strip().lower() in {"0", "false", "no"}:
+        return {"ok": True, "skipped": "disabled by GEOGRAPH_BACKTEST_ON_BOOT"}
+    result = _run_step(
+        "paper backtest",
+        [sys.executable, str(_BACKTEST_SCRIPT)],
+        timeout=_LOAD_TIMEOUT_SECONDS,
+        echo=False,
+    )
+    return {k: v for k, v in result.items() if k != "step"}
+
+
 def _boot_status() -> dict[str, Any]:
     if _disabled():
         _log("seeding disabled by GEOGRAPH_SEED_ON_BOOT")
@@ -429,6 +447,7 @@ def _boot_status() -> dict[str, Any]:
         ("study", lambda: _run_study(names)),
         ("metrics", _run_network_metrics),
         ("forecasts", _freeze_forecasts),
+        ("backtest", _run_backtest),
     )
     for key, step in steps:
         try:

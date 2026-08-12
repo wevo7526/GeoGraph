@@ -59,6 +59,15 @@ class Pack:
         return cast(list[dict[str, Any]], self.data["marquee_events"].get("events", []))
 
     @property
+    def paper_books(self) -> dict[str, dict[str, float]] | None:
+        """The pack's fixed paper-trade translation — signed ticker weights for
+        the escalation and reversion books, declared beside the assets they
+        trade. Optional: a pack without books simply has no paper model, and
+        the endpoints say so rather than borrowing another region's tickers."""
+        books = self.data["assets"].get("paper_books")
+        return cast(dict[str, dict[str, float]], books) if books else None
+
+    @property
     def case_study(self) -> dict[str, Any] | None:
         """The narrated episode, if the pack declares one.
 
@@ -180,6 +189,24 @@ def _validate(pack: Pack) -> None:
                 f"({event_typing.label_for(code)}) implies {implied!r}. The quad class "
                 "follows the code — fix whichever is wrong, but they cannot disagree."
             )
+
+    # Paper books are the region's OWN market translation; a malformed book
+    # would silently trade the wrong thing, so shape errors are refused here.
+    books = pack.paper_books
+    if books is not None:
+        for side in ("escalation", "reversion"):
+            book = books.get(side)
+            if not isinstance(book, dict) or not book:
+                raise PackError(
+                    f"packs/{pack.name}/assets.yaml: paper_books needs a non-empty "
+                    f"{side!r} mapping of ticker → signed weight."
+                )
+            for ticker, weight in book.items():
+                if isinstance(weight, bool) or not isinstance(weight, int | float):
+                    raise PackError(
+                        f"packs/{pack.name}/assets.yaml: paper_books.{side}.{ticker} "
+                        f"weight {weight!r} is not a number."
+                    )
 
     _validate_case_study(pack)
 

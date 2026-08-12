@@ -73,6 +73,27 @@ DDL: tuple[str, ...] = (
         UNIQUE (event_node_id, market_ticker, effect_window)
     )
     """,
+    # The walk-forward paper backtest's ledger: one row per traded quarter per
+    # region. Recomputed whole on each run (the estimator or the pack's books
+    # changing SHOULD change history — the upsert makes that visible, not
+    # sneaky); positions ride as JSONB because their shape is the paper
+    # module's, not the panel's.
+    """
+    CREATE TABLE IF NOT EXISTS paper_backtests (
+        region_pack   TEXT        NOT NULL,
+        quarter_end   DATE        NOT NULL,
+        marked_through DATE       NOT NULL,
+        escalation_likelihood DOUBLE PRECISION NOT NULL,
+        episodes      INTEGER     NOT NULL,
+        pnl_usd       DOUBLE PRECISION NOT NULL,
+        quarter_return DOUBLE PRECISION NOT NULL,
+        equity_usd    DOUBLE PRECISION NOT NULL,
+        positions     JSONB       NOT NULL,
+        method        TEXT        NOT NULL,
+        computed_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
+        PRIMARY KEY (region_pack, quarter_end)
+    )
+    """,
 )
 
 
@@ -208,6 +229,83 @@ def measured_events(conn: Any) -> set[str]:
     with conn.cursor() as cur:
         cur.execute("SELECT DISTINCT event_node_id FROM event_study_runs")
         return {row[0] for row in cur.fetchall()}
+
+
+def record_backtest(conn: Any, region_pack: str, result: dict[str, Any]) -> int:
+    """Persist a walk-forward run's ledger, replacing the region's previous
+    one whole. A backtest is a FUNCTION of (archive, panel, books) — when any
+    of those change, the honest move is to show the new history, and keeping
+    stale quarters alongside fresh ones would blend two estimators into one
+    curve."""
+    import json
+
+    ledger = result["ledger"]
+    with conn.cursor() as cur:
+        cur.execute(
+            "DELETE FROM paper_backtests WHERE region_pack = %s", (region_pack,)
+        )
+        if ledger:
+            cur.executemany(
+                """
+                INSERT INTO paper_backtests
+                    (region_pack, quarter_end, marked_through,
+                     escalation_likelihood, episodes, pnl_usd, quarter_return,
+                     equity_usd, positions, method)
+                VALUES (%(region_pack)s, %(quarter_end)s, %(marked_through)s,
+                        %(escalation_likelihood)s, %(episodes)s, %(pnl_usd)s,
+                        %(quarter_return)s, %(equity_usd)s, %(positions)s,
+                        %(method)s)
+                """,
+                [
+                    {
+                        "region_pack": region_pack,
+                        "quarter_end": entry["quarter_end"],
+                        "marked_through": entry["marked_through"],
+                        "escalation_likelihood": entry["escalation_likelihood"],
+                        "episodes": entry["episodes"],
+                        "pnl_usd": entry["pnl_usd"],
+                        "quarter_return": entry["quarter_return"],
+                        "equity_usd": entry["equity_usd"],
+                        "positions": json.dumps(entry["positions"]),
+                        "method": result["method"],
+                    }
+                    for entry in ledger
+                ],
+            )
+    conn.commit()
+    return len(ledger)
+
+
+def backtest_rows(conn: Any, region_pack: str) -> list[dict[str, Any]]:
+    """The persisted ledger for one region, oldest quarter first."""
+    import json
+
+    sql = """
+        SELECT quarter_end, marked_through, escalation_likelihood, episodes,
+               pnl_usd, quarter_return, equity_usd, positions, method,
+               computed_at
+        FROM paper_backtests WHERE region_pack = %s ORDER BY quarter_end
+    """
+    with conn.cursor() as cur:
+        cur.execute(sql, (region_pack,))
+        rows = cur.fetchall()
+    return [
+        {
+            "quarter_end": quarter_end.isoformat(),
+            "marked_through": marked_through.isoformat(),
+            "escalation_likelihood": float(likelihood),
+            "episodes": int(episodes),
+            "pnl_usd": float(pnl),
+            "quarter_return": float(quarter_return),
+            "equity_usd": float(equity),
+            "positions": positions if isinstance(positions, list)
+                         else json.loads(positions),
+            "method": method,
+            "computed_at": computed_at.isoformat(),
+        }
+        for (quarter_end, marked_through, likelihood, episodes, pnl,
+             quarter_return, equity, positions, method, computed_at) in rows
+    ]
 
 
 def _finite(value: float | None) -> float | None:

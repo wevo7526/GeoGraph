@@ -1,14 +1,19 @@
 """The paper book — a frozen forecast's market implications, marked to market.
 
 A MECHANICAL TRANSLATION, and it says so: the near-term scenarios imply a
-direction (escalation prices an energy premium and a regional discount;
-reversion prices the normalization), and this module turns that sentence
-into fixed paper positions weighted by the scenario's own base-rate
-likelihood, enters at the first panel close after the forecast's data
-cutoff, and marks at the latest close the panel holds. Gain or loss on the
-notional IS the calibration instrument: did acting on the frozen call make
-or lose paper money — reported beside the rule that generated it, never
-fitted to make it look better, never advice.
+direction, and this module turns that sentence into fixed paper positions
+weighted by the scenario's own base-rate likelihood, enters at the first
+panel close after the forecast's data cutoff, and marks at the latest close
+the panel holds (or at `mark_through`, for the walk-forward backtest). Gain
+or loss on the notional IS the calibration instrument: did acting on the
+frozen call make or lose paper money — reported beside the rule that
+generated it, never fitted to make it look better, never advice.
+
+THE BOOKS COME FROM THE PACK (`paper_books` in assets.yaml): which tickers
+express "escalation" is a regional reading — an oil premium in the Gulf,
+strait risk in East Asia — and core code that hardcoded one region's tickers
+would trade Brent on a Taiwan forecast. Region packs are a contract; this
+module blends whatever books the pack declares and never names a ticker.
 
 Section 17 note: every number here is panel arithmetic. The likelihood came
 from counted base rates; the prices come from the panel; the rule is fixed
@@ -19,33 +24,33 @@ from __future__ import annotations
 
 from typing import Any
 
-#: The fixed translation, stated once. Escalation: long the energy premium
-#: and the haven, short the exposed regional index. Reversion: long the
-#: normalization. Signed weights per book; the two books are blended by the
-#: scenario likelihood p, so the net position IS the forecast's balance.
-ESCALATION_BOOK: dict[str, float] = {
-    "BZ=F": 0.40,
-    "GC=F": 0.20,
-    "^TASI.SR": -0.20,
-    "DFMGI.AE": -0.20,
-}
-REVERSION_BOOK: dict[str, float] = {
-    "^TASI.SR": 0.50,
-    "DFMGI.AE": 0.50,
-}
-
 NOTIONAL_USD = 1_000_000
 
-METHOD = (
-    "paper book: net weight per ticker = p*escalation + (1-p)*reversion with "
-    "fixed books (escalation: +0.4 BZ=F, +0.2 GC=F, -0.2 ^TASI.SR, -0.2 "
-    "DFMGI.AE; reversion: +0.5 ^TASI.SR, +0.5 DFMGI.AE); enter first close "
-    "after the forecast's data cutoff, mark at latest close; P&L = "
-    "weight * notional * (mark/entry - 1). Mechanical, unfitted, not advice."
-)
+
+def method_for(
+    escalation_book: dict[str, float], reversion_book: dict[str, float]
+) -> str:
+    """The rule, printed in full beside every result it produced."""
+    def _side(book: dict[str, float]) -> str:
+        return ", ".join(
+            f"{weight:+g} {ticker}" for ticker, weight in sorted(book.items())
+        )
+
+    return (
+        "paper book: net weight per ticker = p*escalation + (1-p)*reversion "
+        f"with fixed books (escalation: {_side(escalation_book)}; "
+        f"reversion: {_side(reversion_book)}); enter first close after the "
+        "forecast's data cutoff, mark at latest close; P&L = "
+        "weight * notional * (mark/entry - 1). Mechanical, unfitted, not advice."
+    )
 
 
-def build_book(scenarios: list[dict[str, Any]]) -> tuple[float, dict[str, float]]:
+def build_book(
+    scenarios: list[dict[str, Any]],
+    *,
+    escalation_book: dict[str, float],
+    reversion_book: dict[str, float],
+) -> tuple[float, dict[str, float]]:
     """(escalation likelihood used, net signed weight per ticker).
 
     The near-term scenario pairs share one base rate by construction; the
@@ -65,11 +70,11 @@ def build_book(scenarios: list[dict[str, Any]]) -> tuple[float, dict[str, float]
             "likelihoods, by design)."
         )
     p = sum(rates) / len(rates)
-    tickers = set(ESCALATION_BOOK) | set(REVERSION_BOOK)
+    tickers = set(escalation_book) | set(reversion_book)
     net = {
         ticker: round(
-            p * ESCALATION_BOOK.get(ticker, 0.0)
-            + (1.0 - p) * REVERSION_BOOK.get(ticker, 0.0),
+            p * escalation_book.get(ticker, 0.0)
+            + (1.0 - p) * reversion_book.get(ticker, 0.0),
             6,
         )
         for ticker in sorted(tickers)
@@ -82,12 +87,15 @@ def mark_book(
     series_by_ticker: dict[str, list[dict[str, Any]]],
     *,
     entry_after: str,
+    mark_through: str | None = None,
 ) -> dict[str, Any]:
     """Mark the book against panel series. Pure — testable exactly.
 
     A ticker with no close after the entry date is a recorded skip: the
     position could not have been entered, so it contributes nothing rather
-    than a fabricated fill.
+    than a fabricated fill. `mark_through` bounds the mark date (inclusive) —
+    the walk-forward backtest marks each quarter's book at the NEXT quarter
+    end, never at prices the quarter could not have seen.
     """
     positions: list[dict[str, Any]] = []
     total = 0.0
@@ -96,6 +104,7 @@ def mark_book(
         series = [
             row for row in series_by_ticker.get(ticker, [])
             if str(row["obs_date"]) > entry_after
+            and (mark_through is None or str(row["obs_date"]) <= mark_through)
         ]
         if len(series) < 2:
             positions.append({
@@ -124,5 +133,4 @@ def mark_book(
         "pnl_usd": round(total, 2),
         "return_on_notional": round(total / NOTIONAL_USD, 6),
         "positions": positions,
-        "method": METHOD,
     }

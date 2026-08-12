@@ -77,6 +77,7 @@ def paper_book(request: Request, node_id: str) -> dict[str, Any]:
     """
     import json as json_module
 
+    from core import packs
     from core import settings as settings_module
     from core.panel import pg_store
     from core.reasoning import paper
@@ -85,7 +86,8 @@ def paper_book(request: Request, node_id: str) -> dict[str, Any]:
     rows = kuzu_store.query(
         conn,
         "MATCH (f:Forecast {node_id: $id}) RETURN f.mode AS mode, "
-        "f.scenarios_json AS scenarios_json, f.frozen_inputs_json AS frozen_inputs_json",
+        "f.region_pack AS region_pack, f.scenarios_json AS scenarios_json, "
+        "f.frozen_inputs_json AS frozen_inputs_json",
         {"id": node_id},
     )
     if not rows:
@@ -98,10 +100,26 @@ def paper_book(request: Request, node_id: str) -> dict[str, Any]:
                 "long-horizon output carries no likelihoods, by design."
             ),
         )
+    # The books are the REGION'S OWN translation, read from the forecast's
+    # pack: a hardcoded book here would trade Brent on a Taiwan forecast.
+    region = str(rows[0]["region_pack"] or "")
+    try:
+        books = packs.load(region).paper_books
+    except packs.PackError:
+        books = None
+    if books is None:
+        raise HTTPException(
+            status_code=404,
+            detail=f"packs/{region} declares no paper_books — no paper model.",
+        )
     scenarios = json_module.loads(rows[0]["scenarios_json"] or "[]")
     frozen = json_module.loads(rows[0]["frozen_inputs_json"] or "{}")
     entry_after = str(frozen.get("as_of") or "")
-    likelihood, net = paper.build_book(scenarios)
+    likelihood, net = paper.build_book(
+        scenarios,
+        escalation_book=books["escalation"],
+        reversion_book=books["reversion"],
+    )
 
     settings = settings_module.load()
     try:
@@ -123,6 +141,7 @@ def paper_book(request: Request, node_id: str) -> dict[str, Any]:
         "escalation_likelihood": likelihood,
         "entry_after": entry_after,
         **report,
+        "method": paper.method_for(books["escalation"], books["reversion"]),
     }
 
 

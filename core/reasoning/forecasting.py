@@ -32,7 +32,9 @@ _FOCAL_DYADS = 3
 _DEFAULT_HORIZON_YEARS = 3
 
 
-def _dyad_events(conn: Any) -> list[dict[str, Any]]:
+def dyad_event_rows(conn: Any) -> list[dict[str, Any]]:
+    """Every dyad-coded event with its dyad's standing baseline — the input
+    both the live freeze and the walk-forward backtest reason from."""
     return kuzu_store.query(
         conn,
         "MATCH (e:Event)-[:OF_DYAD]->(d:Dyad) "
@@ -102,11 +104,37 @@ def forecast(
     persists — nothing here reads a clock."""
     conn = kuzu_store.connect(db_path, read_only=True)
     try:
-        rows = _dyad_events(conn)
+        rows = dyad_event_rows(conn)
     finally:
         kuzu_store.close(conn)
     if not rows:
         raise ValueError("the graph holds no dyad-coded events — seed first")
+    return forecast_from_rows(
+        rows, question, region_pack=region_pack, horizon_years=horizon_years
+    )
+
+
+def forecast_from_rows(
+    rows: list[dict[str, Any]],
+    question: str,
+    *,
+    region_pack: str,
+    horizon_years: int = _DEFAULT_HORIZON_YEARS,
+    cutoff: str | None = None,
+) -> dict[str, Any]:
+    """The pure body of `forecast`, over prefetched dyad-event rows.
+
+    `cutoff` truncates the archive to events at or before that date, which is
+    what makes an AS-OF forecast honest: the walk-forward backtest recomputes
+    the call each past quarter from exactly the events that existed then,
+    through this one code path — never a special backtest-only estimator.
+    """
+    if cutoff is not None:
+        rows = [row for row in rows if str(row["event_time"]) <= cutoff]
+    if not rows:
+        raise ValueError(
+            f"no dyad-coded events at or before {cutoff} — nothing to reason from"
+        )
 
     as_of = max(str(row["event_time"]) for row in rows)
 

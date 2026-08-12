@@ -324,13 +324,36 @@ def test_freezing_persists_both_modes_with_recountable_inputs(db_path):
 # ── the paper book: frozen implications, marked ──────────────────────────────
 
 
+#: The MENA books, restated here BY HAND so the blend assertions stay
+#: hand-derivable — and checked against the pack so the two cannot drift.
+_ESCALATION = {"BZ=F": 0.40, "GC=F": 0.20, "^TASI.SR": -0.20, "DFMGI.AE": -0.20}
+_REVERSION = {"^TASI.SR": 0.50, "DFMGI.AE": 0.50}
+
+
+def test_the_books_come_from_the_pack_not_from_core():
+    from core import packs
+
+    books = packs.load("mena").paper_books
+    assert books == {"escalation": _ESCALATION, "reversion": _REVERSION}
+    # And the second region declares its OWN translation — strait risk, not
+    # an oil shock. Different tickers is the point.
+    china = packs.load("china").paper_books
+    assert china is not None
+    assert "BZ=F" not in china["escalation"]
+    assert set(china["escalation"]) & {"^TWII", "^HSI"}
+
+
 def test_the_paper_book_blends_the_books_by_the_frozen_likelihood():
     from core.reasoning import paper
 
-    p, net = paper.build_book([
-        {"scenario_name": "further_escalation:dyad:a", "likelihood": 0.3},
-        {"scenario_name": "reversion_to_baseline:dyad:a", "likelihood": 0.7},
-    ])
+    p, net = paper.build_book(
+        [
+            {"scenario_name": "further_escalation:dyad:a", "likelihood": 0.3},
+            {"scenario_name": "reversion_to_baseline:dyad:a", "likelihood": 0.7},
+        ],
+        escalation_book=_ESCALATION,
+        reversion_book=_REVERSION,
+    )
     assert p == 0.3
     # Net = p*escalation + (1-p)*reversion, by hand:
     assert net["BZ=F"] == pytest.approx(0.12)          # 0.3*0.4
@@ -343,7 +366,11 @@ def test_the_paper_book_refuses_the_long_horizon_shape():
     from core.reasoning import paper
 
     with pytest.raises(ValueError, match="NEAR-TERM"):
-        paper.build_book([{"scenario_name": "pressure_release", "likelihood": None}])
+        paper.build_book(
+            [{"scenario_name": "pressure_release", "likelihood": None}],
+            escalation_book=_ESCALATION,
+            reversion_book=_REVERSION,
+        )
 
 
 def test_marking_enters_after_the_cutoff_and_skips_the_unfillable():
@@ -369,7 +396,25 @@ def test_marking_enters_after_the_cutoff_and_skips_the_unfillable():
     assert marked["GC=F"]["status"] == "skipped"
     assert marked["^TASI.SR"]["status"] == "skipped"
     assert report["pnl_usd"] == brent["pnl_usd"]
-    assert "not advice" in report["method"]
+    assert "not advice" in paper.method_for(_ESCALATION, _REVERSION)
+
+
+def test_mark_through_bounds_the_mark_for_the_backtest():
+    from core.reasoning import paper
+
+    series = {
+        "BZ=F": [
+            {"obs_date": "2025-06-23", "price": 80.0},
+            {"obs_date": "2025-08-01", "price": 88.0},
+            {"obs_date": "2025-11-15", "price": 120.0},  # NEXT quarter — unseen
+        ],
+    }
+    report = paper.mark_book(
+        {"BZ=F": 1.0}, series, entry_after="2025-06-22", mark_through="2025-09-30"
+    )
+    position = report["positions"][0]
+    assert position["mark_date"] == "2025-08-01"
+    assert position["mark"] == 88.0
 
 
 def test_the_paper_endpoint_is_honest_without_a_panel(db_path, monkeypatch, tmp_path):

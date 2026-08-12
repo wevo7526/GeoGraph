@@ -33,6 +33,21 @@ def test_an_incomplete_pack_is_absent_not_broken(tmp_path, monkeypatch):
         packs.load("partial")
 
 
+def test_malformed_paper_books_are_refused():
+    pack = packs.load("mena")
+    data = dict(pack.data)
+    data["assets"] = dict(data["assets"])
+    data["assets"]["paper_books"] = {"escalation": {"BZ=F": 0.4}}  # no reversion
+    with pytest.raises(packs.PackError, match="reversion"):
+        packs._validate(packs.Pack(name="mena", path=pack.path, data=data))
+    data["assets"]["paper_books"] = {
+        "escalation": {"BZ=F": "heavy"},                # a word, not a weight
+        "reversion": {"BZ=F": 0.4},
+    }
+    with pytest.raises(packs.PackError, match="not a number"):
+        packs._validate(packs.Pack(name="mena", path=pack.path, data=data))
+
+
 def test_every_market_carries_calendar_and_inception():
     for market in packs.load("mena").markets:
         assert market["inception_date"]

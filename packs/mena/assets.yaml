@@ -15,6 +15,22 @@ assets:
   - ticker: UAE
     name: iShares MSCI UAE
 
+# ── paper books ──────────────────────────────────────────────────────────────
+# The fixed paper-trade translation of a near-term forecast (signed weight per
+# ticker, blended by the frozen escalation likelihood p). THE REGION'S OWN
+# reading, stated once and never fitted: escalation prices the energy premium
+# and the haven and discounts the exposed Gulf indices; reversion prices their
+# normalization. Mechanical, not advice.
+paper_books:
+  escalation:
+    BZ=F: 0.40
+    GC=F: 0.20
+    ^TASI.SR: -0.20
+    DFMGI.AE: -0.20
+  reversion:
+    ^TASI.SR: 0.50
+    DFMGI.AE: 0.50
+
 # ── 13F filers ───────────────────────────────────────────────────────────────
 # The SWFs whose EDGAR 13F-HR filings become FLOW edges (build-spec §5.2).
 # CIKs resolved against EDGAR's company search on 2026-08-11 and pinned here —

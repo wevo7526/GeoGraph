@@ -258,6 +258,66 @@ export interface PaperBook {
   method: string
 }
 
+export interface MarkedBook {
+  notional_usd: number
+  deployed_usd: number
+  pnl_usd: number
+  return_on_notional: number
+  positions: PaperPosition[]
+  method: string
+}
+
+export interface BacktestRow {
+  quarter_end: string
+  marked_through: string
+  escalation_likelihood: number
+  episodes: number
+  pnl_usd: number
+  quarter_return: number
+  equity_usd: number
+  positions: PaperPosition[]
+  method: string
+  computed_at: string
+}
+
+export interface BacktestLedger {
+  region: string
+  rows: BacktestRow[]
+  summary: {
+    notional_usd: number
+    quarters_traded: number
+    final_equity_usd: number
+    total_return: number
+    hit_rate: number
+    max_drawdown: number
+  } | null
+  note?: string
+  method?: string
+}
+
+export interface ForwardView {
+  region: string
+  forecast: {
+    node_id: string
+    generated_at: string
+    horizon_end: string | null
+    as_of: string
+    escalation_likelihood: number
+    scenarios: ForecastScenario[]
+  }
+  net_weights: Record<string, number>
+  book: MarkedBook | null
+  book_unavailable: string | null
+  pressure: {
+    node_id: string
+    generated_at: string
+    horizon_end: string | null
+    boundary_statement: string
+    trajectory: Record<string, number>
+    windows: Array<{ start: number; end: number; level: string }>
+  } | null
+}
+
 export interface CaseStudyIndexEntry {
   slug: string
   pack: string

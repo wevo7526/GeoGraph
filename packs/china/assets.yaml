@@ -17,6 +17,22 @@ assets:
     name: iShares US Aerospace & Defense
     note: The conflict-persistence read, shared with the MENA lens.
 
+# ── paper books ──────────────────────────────────────────────────────────────
+# The fixed paper-trade translation of a near-term forecast (signed weight per
+# ticker, blended by the frozen escalation likelihood p). This region's
+# escalation read is NOT an oil-supply shock — it is strait risk: long the
+# haven, short the two indices most exposed to a Taiwan contingency (TAIEX
+# and the Hang Seng). Reversion prices their normalization. Mechanical,
+# stated once, never fitted, not advice.
+paper_books:
+  escalation:
+    GC=F: 0.40
+    ^TWII: -0.30
+    ^HSI: -0.30
+  reversion:
+    ^TWII: 0.50
+    ^HSI: 0.50
+
 # ── 13F filers ───────────────────────────────────────────────────────────────
 # DELIBERATELY EMPTY, and the emptiness is the finding (2026-08): neither CIC
 # nor SAFE Investment Company is locatable as a 13F filer under those names
