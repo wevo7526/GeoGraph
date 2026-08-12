@@ -7,6 +7,8 @@ __pycache__
 .ruff_cache
 .mypy_cache
 data/
+# ...except the derived GDELT artifact the boot loads (Dockerfile COPYs it).
+!data/derived/
 node_modules
 web/dist
 web/.vite
