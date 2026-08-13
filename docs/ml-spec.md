@@ -528,7 +528,27 @@ choice of target stays a measurement.
 - `test_the_shipped_artifact_passed_its_gate` fails the suite if a failing
   model is ever committed.
 
-### 9.4 Still true, still unbuilt
+### 9.4 Where the game theory attaches
+
+`docs/game-spec.md` scopes it. The short version, because it turns on a
+property of the model above: the fitted decay on `level_now` — 1.250 → 1.228
+→ 1.199 → 1.176 across the four horizons — is a **moment of observed play**,
+and in a bargaining game how fast intensity reverts to baseline is a function
+of the discount factor and the cost asymmetry.
+
+So the ridge becomes the **auxiliary model in an indirect-inference
+estimation** of a finite-horizon stochastic bargaining game with private
+resolve: choose structural parameters such that solving the equilibrium,
+simulating it, and re-fitting *this same ridge by this same code path*
+reproduces these coefficients. The learned model is the statistic; the game is
+the structure; the equilibrium rolled forward is what emits sequences.
+
+That is also why §9.1's second correction matters beyond this model. Ordering
+came from persistence and nothing beat it — which says the residual signal is
+not in more autocorrelation features. Timing is a decision, and a decision
+model is the right instrument where a curve fitted to frequencies has stopped.
+
+### 9.5 Still true, still unbuilt
 
 §2's warnings are not retired by any of this. The label still tracks GDELT
 coverage; the archive still ends in 2005 for wire purposes; the graph's
