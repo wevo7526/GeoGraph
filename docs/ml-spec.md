@@ -19,12 +19,14 @@ document is what each one can honestly be given the data that exists.
 > answered backwards. That finding, not the architecture, is what this
 > document is now about.
 >
-> **§9 is what shipped.** A within-transformation on both features AND target
-> turned that around: `core/models/` now fits a three-feature ridge whose
-> within-dyad ordering matches persistence (+0.4236 vs +0.4253) and whose
-> error is 21% lower (RMSE 2.548 vs 3.210). It is frozen at boot as a third
-> Forecast mode. The deep architectures below remain deferred, and §2's
-> warnings still hold — read them before adding a feature.
+> **§9 is what shipped; §10 is where it stands after the backfill.** A
+> within-transformation on both features AND target turned that around, and
+> the 2006–2026 load then took the panel to 46,162 rows. `core/models/` now
+> fits a TWO-feature ridge whose within-dyad ordering matches persistence
+> exactly (+0.4595) with 16% lower error (2.659 vs 3.156). It is frozen at
+> boot as a third Forecast mode. The deep architectures below remain deferred,
+> and §2's warnings still hold — read them before adding a feature, because
+> two rounds of adding features have now removed seven of nine.
 
 ---
 
@@ -43,7 +45,7 @@ event counts by roughly 1.6 for the deployed archive).
 | Durable `RELATES_TO` edges | 21,590 |
 | `AttributeEstimate` (CINC/clout, actor-year) | 13,984 |
 | Markets | 8 |
-| Measured `AFFECTED` edges | **0 in this volume** — verify on Railway |
+| Measured `AFFECTED` edges | 0 in this volume — **382,736 in production**, see §9.4 note |
 
 Event mass by decade — **this is the finding that governs everything below**:
 
@@ -556,3 +558,66 @@ relational tier is still 86% IGO membership. **M0 — the 2006→2026 backfill �
 remains the highest-value item in this document**, and the Hawkes/survival
 work in §4 is the first thing worth trying once the ordering signal has more
 than one feature behind it.
+
+---
+
+## 10. After the 2006–2026 backfill (2026-08-13)
+
+The archive went from 107,040 events to **456,711** for MENA; the panel from
+27,538 usable rows to **46,162** over 187 dyads. What that changed, measured:
+
+### 10.1 The 2010s hole is filled, and the skew inverted
+
+Positive rate by decade, before and after:
+
+| | 1970s | 1980s | 1990s | 2000s | 2010s | 2020s |
+|---|---|---|---|---|---|---|
+| before | 0.020 | 0.131 | 0.252 | 0.252 | **0.029** | — |
+| after | 0.020 | 0.123 | 0.246 | 0.219 | **0.528** | 0.473 |
+
+The 2010s were a coverage hole and are now the densest era. **The profile did
+not flatten — it inverted**, and that is the honest reading: GDELT's corpus is
+larger now than in the 1990s, so a fixed mention threshold keeps more. The
+coverage floor in `panel.build` and the within-dyad deviation target remain the
+defences; neither the backfill nor a cap makes the eras equally observed.
+
+### 10.2 Two bugs the gate caught, both mine
+
+**Row-indexed features across a gapped series.** The coverage floor drops
+poorly-covered quarters, which puts holes in a dyad's series — 51 of 135
+dyads, 1,314 discontinuities. `features.build_for_dyad` indexed targets as
+`intensity[i + h]`, so "horizon h" meant h OBSERVATIONS later, which across a
+hole can be years. Ordering held at the 1990 and 1994 cuts and flipped to
+−0.33 at 1998 while persistence stayed at +0.36. A model does not fail that
+way on hard data; it fails that way on a wrong index. Every lag and target is
+now a lookup on q ± k, and an absent quarter is absent rather than zero.
+
+**`base_level` became a clock.** It shipped on the pre-backfill panel, where
+it cost almost nothing and improved error. Spanning two coverage regimes it
+stopped describing the dyad and started describing the calendar: it now
+correlates **+0.52 with the quarter**, mean 0.215 pre-1990 → 1.051 through
+2005 → **1.815 after 2006**. In walk-forward the test window always follows
+the train window, so "later is higher" earns a positive coefficient and then
+mis-ranks every held-out quarter — it took the model from +0.42 to −0.04.
+Dropped, on the evidence the trainer's own ablation prints.
+
+### 10.3 Where the model landed
+
+Two features — intercept and `level_now`. Gate **passes**: within-dyad
+ordering **+0.4595**, matching persistence exactly, with RMSE **2.659 against
+3.156** — 16% better magnitude on a 68% larger panel. Every fold clean.
+
+The claim is unchanged and worth restating because the feature set shrank
+again: **ordering is persistence's, and the model's contribution is the
+magnitude of the reversion toward baseline.** Nothing has ever beaten
+persistence at ordering on this archive, and two rounds of feature engineering
+have now made that finding sharper rather than weaker.
+
+### 10.4 What the backfill bought the game layer
+
+The transition kernel is where it paid: **54 of 54 cells measured, 100%
+coverage, 13,904 transitions** — no pooled fallback anywhere. A game solved
+over a kernel that is mostly fallback is a game about the fallback; this one
+is not. The measured dynamics are also coherent with the model: escalation
+from band 1 leads to an expected 1.38, from band 3 to 2.22, from band 5 to
+2.85 — it raises intensity and still reverts.

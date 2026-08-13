@@ -28,6 +28,7 @@ from typing import Any
 import numpy as np
 
 from core.games import state as state_module
+from core.graph import kuzu_store
 
 #: Observations a (x, a₁, a₂) cell needs before its own counts are trusted.
 #: Below it the cell falls back to the pooled kernel and is FLAGGED — a
@@ -55,6 +56,60 @@ def action_from_quads(quad_counts: dict[str, int]) -> str:
     if quad_counts.get("material_cooperation") or quad_counts.get("verbal_cooperation"):
         return "de-escalate"
     return "hold"
+
+
+def event_rows(conn: Any) -> list[dict[str, Any]]:
+    """Dyad-coded events WITH their initiator and the dyad's two sides.
+
+    Separate from `panel.dyad_event_rows` because it asks a different
+    question. The panel aggregates a dyad-quarter into one intensity; a game
+    needs to know which SIDE did what, so the initiator and the dyad's actor
+    pair have to come back too.
+    """
+    return kuzu_store.query(
+        conn,
+        "MATCH (e:Event)-[:OF_DYAD]->(d:Dyad) "
+        "MATCH (e)-[:INITIATED_BY]->(a:Actor) "
+        "RETURN d.node_id AS dyad_id, d.actor_a_id AS actor_a, "
+        "d.actor_b_id AS actor_b, a.node_id AS initiator, "
+        "e.event_time AS event_time, e.quad_class AS quad_class, "
+        "e.region_pack AS region_pack "
+        "ORDER BY e.event_time, e.node_id",
+    )
+
+
+def joint_actions(
+    rows: list[dict[str, Any]], *, quarter_of: Any
+) -> dict[tuple[str, int], tuple[str, str]]:
+    """(dyad, quarter) → the joint action each side's coded events imply.
+
+    THE PROXY IS NAMED HERE AND NOWHERE ELSE. The archive records events, not
+    decisions: what a side "did" in a quarter is read off the quad classes of
+    the events it INITIATED. That is an observable stand-in for an action, not
+    the action, and the gap is exactly what the private-type layer is for —
+    two sides can play the same observable move for different reasons, and the
+    belief state is where that ambiguity lives.
+
+    A side that initiated nothing that quarter is recorded as holding. Absence
+    of initiative is not the same as restraint, but it is the only reading the
+    record supports, and inventing a de-escalation from silence would put a
+    decision in the archive that nobody observed.
+    """
+    per_side: dict[tuple[str, int], dict[str, dict[str, int]]] = defaultdict(
+        lambda: {"a": defaultdict(int), "b": defaultdict(int)}
+    )
+    for row in rows:
+        quad = row.get("quad_class")
+        if not quad:
+            continue
+        key = (str(row["dyad_id"]), quarter_of(str(row["event_time"])))
+        side = "a" if row["initiator"] == row["actor_a"] else "b"
+        per_side[key][side][str(quad)] += 1
+
+    return {
+        key: (action_from_quads(sides["a"]), action_from_quads(sides["b"]))
+        for key, sides in per_side.items()
+    }
 
 
 def count(

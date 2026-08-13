@@ -95,6 +95,32 @@ def test_material_conflict_outranks_a_pile_of_talk():
     assert transition.action_from_quads({}) == "hold"
 
 
+def test_the_joint_action_is_read_per_side_not_per_dyad():
+    # A dyad-quarter is not one action, it is two. Reading the dyad's events
+    # in aggregate would make an exchange where one side shoots and the other
+    # sues for peace indistinguishable from both doing each.
+    rows = [
+        {"dyad_id": "d", "actor_a": "A", "actor_b": "B", "initiator": "A",
+         "event_time": "2020-02-15", "quad_class": "material_conflict"},
+        {"dyad_id": "d", "actor_a": "A", "actor_b": "B", "initiator": "B",
+         "event_time": "2020-03-15", "quad_class": "verbal_cooperation"},
+    ]
+    actions = transition.joint_actions(rows, quarter_of=lambda d: int(d[:4]) * 4)
+    assert actions[("d", 2020 * 4)] == ("escalate", "de-escalate")
+
+
+def test_a_side_that_initiated_nothing_is_holding_not_conceding():
+    # Absence of initiative is not restraint, but it is the only reading the
+    # record supports — inventing a de-escalation from silence would put a
+    # decision in the archive nobody observed.
+    rows = [
+        {"dyad_id": "d", "actor_a": "A", "actor_b": "B", "initiator": "A",
+         "event_time": "2020-02-15", "quad_class": "material_conflict"},
+    ]
+    actions = transition.joint_actions(rows, quarter_of=lambda d: int(d[:4]) * 4)
+    assert actions[("d", 2020 * 4)] == ("escalate", "hold")
+
+
 def test_a_thin_cell_falls_back_to_the_pool_and_says_so():
     bands = len(state.INTENSITY_EDGES)
     counts = {
