@@ -314,13 +314,40 @@ def _load_deep_tier() -> dict[str, Any]:
     """
     if os.getenv("GEOGRAPH_DEEP_TIER", "1").strip().lower() in {"0", "false", "no"}:
         return {"ok": True, "skipped": "disabled by GEOGRAPH_DEEP_TIER"}
+    # --skip-rescore, and this is what keeps a ROUTINE DEPLOY from costing
+    # fifteen minutes. The deep-tier loaders are idempotent merges that cost
+    # seconds once the volume has the data; the archive-wide rescore they used
+    # to end with is what made this step take 643s on a 267k archive, and on
+    # 1.5M it would exceed this timeout on EVERY deploy — burning the window,
+    # failing the step, and leaving the scores no fresher than before. The
+    # boot runs one rescore itself, after all loading is complete.
     result = _run_step(
         "deep tier",
-        [sys.executable, str(_DEEP_TIER_SCRIPT)],
+        [sys.executable, str(_DEEP_TIER_SCRIPT), "--skip-rescore"],
         timeout=_LOAD_TIMEOUT_SECONDS,
         echo=False,
     )
     return {k: v for k, v in result.items() if k != "step"}
+
+
+def _expected_events(artifacts: list[Path]) -> int:
+    """DISTINCT event ids across a lens's artifacts, not the sum of their lines.
+
+    Summing lines overcounts, and the overcount is fatal rather than cosmetic:
+    GDELT's own ids recur across the year-boundary files, so mena's twenty-one
+    artifacts hold 454,539 lines for 454,531 distinct events. Compared against
+    a line-count total the graph is permanently EIGHT events short — the
+    completeness check never passes, every boot re-attempts a finished load,
+    and the rescore that waits on completeness never runs at all.
+
+    Costs one pass over a few megabytes of gzip and a set of short strings.
+    """
+    seen: set[str] = set()
+    for artifact in artifacts:
+        with gzip.open(artifact, "rt", encoding="latin-1") as fh:
+            for line in fh:
+                seen.add(line.split("\t", 1)[0])
+    return len(seen)
 
 
 def _artifact_events(artifact: Path) -> int:
@@ -394,7 +421,7 @@ def _load_gdelt(pack_names: list[str]) -> dict[str, Any]:
         # against that one year's, so the completeness check would pass
         # immediately and the other twenty years would never load. That is the
         # same silent-shortfall bug the docstring above describes, one level up.
-        expected = sum(_artifact_events(artifact) for artifact in artifacts)
+        expected = _expected_events(artifacts)
         held = _graph_gdelt_count(name)
         if held is not None and held >= expected:
             results.append({"pack": name, "ok": True,
@@ -437,53 +464,89 @@ def _load_gdelt(pack_names: list[str]) -> dict[str, Any]:
         if after is not None and after < expected:
             _log(f"gdelt {name}: STILL SHORT — {after}/{expected}")
 
-    # ONE rescore, and ONLY once every lens is fully loaded.
-    #
-    # Escalation is relational and archive-wide — a dyad's baseline depends on
-    # events from other lenses and other eras — so this cannot be split per
-    # pack, and it is NOT RESUMABLE: an interrupted run leaves nothing behind
-    # and the next boot starts over.
-    #
-    # That combination is why it waits for completeness. The 2006-2026 backfill
-    # takes two or three boots to load, and rescoring after each of them would
-    # spend an hour rewriting an archive that is about to grow again, be killed
-    # by its own timeout, and never finish. Waiting means it runs on the boot
-    # where loading is already skipped — so the whole window is available for
-    # the one job that needs an uninterrupted stretch.
-    #
-    # Measured locally: 456,711 events in ~29 minutes, ~262/sec. Production
-    # will hold roughly 1.5M across three lenses, so budget hours rather than
-    # minutes and see _RESCORE_TIMEOUT_SECONDS.
-    complete = [
-        r for r in results
-        if r.get("expected") is not None and r.get("held") is not None
-    ]
-    short = [
-        r for r in complete
-        if int(str(r["held"])) < int(str(r["expected"]))
-    ]
-    if short:
-        _log(
-            "rescore deferred — "
-            + ", ".join(f"{r['pack']} {r['held']}/{r['expected']}" for r in short)
-            + " (it is archive-wide and not resumable; it runs when loading ends)"
-        )
-        results.append({"pack": "*", "step": "rescore", "ok": True,
-                        "skipped": "archive still loading"})
-        return {"ok": all(r["ok"] for r in results), "packs": results}
-
-    loaded_any = any(r.get("loaded") for r in results)
-    if loaded_any:
-        rescore = _run_step(
-            "gdelt rescore (archive-wide, once, not resumable)",
-            [sys.executable, str(_GDELT_SCRIPT), pack_names[0], "--rescore-only"],
-            timeout=int(_RESCORE_TIMEOUT_SECONDS),
-            echo=False,
-        )
-        results.append({"pack": "*", "step": "rescore", **{
-            k: v for k, v in rescore.items() if k != "step"
-        }})
+    # (the rescore moved out to _rescore_if_new_events, so it can also cover
+    #  the deep tier and can see whether the archive actually grew)
     return {"ok": all(r["ok"] for r in results), "packs": results}
+
+
+def _capture_events_before() -> dict[str, Any]:
+    """Record the archive's size before any loader runs, so the rescore below
+    can tell a deploy that added events from one that added code."""
+    global _EVENTS_BEFORE
+    _EVENTS_BEFORE = _archive_events()
+    return {"ok": True, "events": _EVENTS_BEFORE}
+
+
+def _archive_events() -> int | None:
+    """How many events the graph holds. None if unaskable."""
+    from core import settings as settings_module
+    from core.graph import kuzu_store
+
+    settings = settings_module.load()
+    if not settings.kuzu_db_path.exists():
+        return None
+    conn = None
+    try:
+        conn = kuzu_store.connect(settings.kuzu_db_path, read_only=True)
+        rows = kuzu_store.query(conn, "MATCH (e:Event) RETURN count(e) AS n")
+        return int(rows[0]["n"]) if rows else None
+    except Exception:  # noqa: BLE001 - an unreadable graph is the caller's problem
+        return None
+    finally:
+        kuzu_store.close(conn)
+
+
+#: Events in the archive before any loader ran this boot. The rescore's whole
+#: gate: escalation is a function of the event stream, so if the stream did
+#: not change there is nothing to recompute.
+_EVENTS_BEFORE: int | None = None
+
+
+def _rescore_if_new_events(pack_names: list[str]) -> dict[str, Any]:
+    """The archive-wide Head B rescore — ONCE, and only when it is needed.
+
+    THIS IS THE STEP THAT DECIDES WHETHER A ROUTINE DEPLOY IS FAST. Escalation
+    folds per dyad over every event in time order, so it costs hours on a
+    1.5M-event archive and cannot be resumed. Both loaders used to run one
+    inline — the deep tier unconditionally, on every boot — which is why that
+    step took 643s against a 267k archive and would have exceeded its timeout
+    on every future deploy for no benefit at all.
+
+    So: skip unless the event stream actually changed. A frontend or model
+    deploy adds no events, the count is identical, and this returns in
+    milliseconds. Only a boot that loaded something pays, and it pays once.
+    """
+    before, after = _EVENTS_BEFORE, _archive_events()
+    if before is None or after is None:
+        return {"ok": True, "skipped": "event count unavailable"}
+    if after <= before:
+        return {"ok": True, "skipped": f"no new events ({after:,} unchanged)"}
+
+    # Still loading: rescoring a partial archive is work that the next boot's
+    # load invalidates, and this step cannot be resumed to make up for it.
+    incomplete = []
+    for name in pack_names:
+        artifacts = sorted(_DERIVED_DIR.glob(f"gdelt-{name}-*.tsv.gz"))
+        if not artifacts:
+            continue
+        expected = _expected_events(artifacts)
+        held = _graph_gdelt_count(name)
+        if held is not None and held < expected:
+            incomplete.append(f"{name} {held}/{expected}")
+    if incomplete:
+        _log("rescore deferred — still loading: " + ", ".join(incomplete))
+        return {"ok": True, "skipped": "archive still loading",
+                "incomplete": incomplete}
+
+    _log(f"rescore: archive grew {before:,} -> {after:,}, folding Head B once")
+    result = _run_step(
+        "rescore (archive-wide, once, not resumable)",
+        [sys.executable, str(_GDELT_SCRIPT), pack_names[0], "--rescore-only"],
+        timeout=int(_RESCORE_TIMEOUT_SECONDS),
+        echo=False,
+    )
+    return {"grew_from": before, "grew_to": after,
+            **{k: v for k, v in result.items() if k != "step"}}
 
 
 def _load_13f() -> dict[str, Any]:
@@ -609,8 +672,10 @@ def _boot_status() -> dict[str, Any]:
     # the study from reporting why it could not run, and neither may stop the
     # API from coming up.
     steps: tuple[tuple[str, Callable[[], dict[str, Any] | None]], ...] = (
+        ("events_before", _capture_events_before),
         ("deep", _load_deep_tier),
         ("gdelt", lambda: _load_gdelt(names)),
+        ("rescore", lambda: _rescore_if_new_events(names)),
         ("flows", _load_13f),
         ("panel", _apply_panel_schema),
         ("prices", lambda: _load_panel_if_shallow(names)),

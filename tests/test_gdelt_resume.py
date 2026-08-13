@@ -179,3 +179,42 @@ def test_gdelt_gets_a_ceiling_of_its_own_well_above_the_price_fetch():
     # yfinance) and died partway through ~100k merges.
     assert boot._GDELT_TIMEOUT_SECONDS > boot._LOAD_TIMEOUT_SECONDS
     assert boot._GDELT_TIMEOUT_SECONDS >= 2_400
+
+
+def test_expected_counts_distinct_ids_not_lines(tmp_path):
+    # GDELT's own ids recur across year-boundary files, so summing artifact
+    # line counts OVERCOUNTS — and the overcount is fatal rather than
+    # cosmetic. Measured on the real mena artifacts: 454,539 lines for 454,531
+    # distinct events. Against a line total the graph is permanently eight
+    # short, the completeness check never passes, every boot re-attempts a
+    # finished load, and the rescore that waits on completeness never runs.
+    derived = tmp_path / "derived"
+    derived.mkdir()
+    with gzip.open(derived / "gdelt-x-2014.tsv.gz", "wt", encoding="latin-1") as fh:
+        for i in range(10):
+            fh.write(_line(str(i)))
+    with gzip.open(derived / "gdelt-x-2015.tsv.gz", "wt", encoding="latin-1") as fh:
+        for i in range(8, 15):          # 8 and 9 recur, as at a year boundary
+            fh.write(_line(str(i)))
+    artifacts = sorted(derived.glob("gdelt-x-*.tsv.gz"))
+    assert sum(boot._artifact_events(a) for a in artifacts) == 17
+    assert boot._expected_events(artifacts) == 15
+
+
+def test_the_rescore_skips_when_no_events_were_added(monkeypatch):
+    # THE STEP THAT KEEPS A ROUTINE DEPLOY FAST. A frontend or model push adds
+    # no events, so there is nothing for Head B to recompute — and the rescore
+    # is hours on a large archive and cannot be resumed.
+    monkeypatch.setattr(boot, "_EVENTS_BEFORE", 1_000)
+    monkeypatch.setattr(boot, "_archive_events", lambda: 1_000)
+    result = boot._rescore_if_new_events(["mena"])
+    assert result["ok"] and "no new events" in result["skipped"]
+
+
+def test_the_deep_tier_defers_its_rescore_to_the_boot():
+    # It used to rescore unconditionally on EVERY boot — 643s against a 267k
+    # archive, and past its own timeout on a 1.5M one, for no benefit.
+    source = (_ROOT / "scripts" / "boot.py").read_text(encoding="utf-8")
+    assert '_DEEP_TIER_SCRIPT), "--skip-rescore"' in source
+    loader = (_ROOT / "scripts" / "load_deep_tier.py").read_text(encoding="utf-8")
+    assert '"--skip-rescore"' in loader

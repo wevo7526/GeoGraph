@@ -101,6 +101,16 @@ from core.classifier.rescore import rescore_escalation  # noqa: E402
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--no-fetch", action="store_true", help="local files only")
+    parser.add_argument(
+        "--skip-rescore", action="store_true",
+        help="load but defer the archive-wide Head B rescore. THE BOOT PASSES "
+             "THIS. The rescore folds escalation over every event in time "
+             "order, so on a 1.5M-event archive it needs hours — run "
+             "unconditionally here it would burn this step's whole timeout on "
+             "EVERY deploy, fail, and leave the scores no fresher than before. "
+             "The boot runs one rescore of its own, once, after all loading is "
+             "complete (scripts/boot.py).",
+    )
     args = parser.parse_args()
 
     if not args.no_fetch:
@@ -124,13 +134,19 @@ def main() -> None:
             ("igo memberships", lambda: cow.load_igo_memberships(
                 conn, _RAW / "state_year_formatv3.csv")),
         ]
+        results: list[cow.LoadResult] = []
         for label, step in steps:
             result = step()
+            results.append(result)
             print(f"{label}: {result.written} written, {result.dropped} dropped")
             for reason, count in sorted(result.reasons.items()):
                 print(f"  - {reason}: {count}")
-        for key, value in rescore_escalation(conn).items():
-            print(f"{key}: {value}")
+        written = sum(r.written for r in results)
+        if args.skip_rescore:
+            print(f"rescore: skipped (--skip-rescore), {written} rows written")
+        else:
+            for key, value in rescore_escalation(conn).items():
+                print(f"{key}: {value}")
         violations = kuzu_store.check_provenance(conn)
         if violations:
             sys.exit("PROVENANCE VIOLATIONS:\n" + "\n".join(violations))
