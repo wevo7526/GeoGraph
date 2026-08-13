@@ -90,6 +90,20 @@ _GDELT_TIMEOUT_SECONDS = 2400
 #: up — a served archive that names its gap beats a dead container.
 _GDELT_BUDGET_SECONDS = 3600
 
+#: WHAT THIS BUDGET MEANS AFTER THE 2006–2026 BACKFILL, stated so nobody reads
+#: a deferred load as a broken one. The modern-era harvest adds roughly a
+#: million events across the three lenses; at the ~110 events/sec measured on
+#: Railway that is about 2.7 hours of merging, against an hour of budget and a
+#: 5400s healthcheck window the API has to bind inside.
+#:
+#: So the FIRST boots after that backfill will run out of budget and stop
+#: partway, on purpose. That is the resumable design working: the loader skips
+#: ids already present, the completeness check compares against the SUM of
+#: every artifact, and each boot picks up where the last stopped — expect two
+#: or three deploys before a lens reports its full count. Raising this to
+#: swallow it in one go would push the boot past the healthcheck and kill a
+#: container that was working, which is the exact failure of 2026-08-12.
+
 #: The full-archive study's ceiling. With the measured-events watermark only
 #: NEW events pay compute, so a normal boot uses seconds of this — the
 #: ceiling exists for the first boot after a large backfill.
@@ -386,10 +400,17 @@ def _load_gdelt(pack_names: list[str]) -> dict[str, Any]:
                 _log(f"gdelt {name}: budget spent at {artifact.name} — deferred")
                 break
             started = time.monotonic()
+            # --skip-rescore on EVERY artifact. Head B folds escalation across
+            # the whole archive in time order, so a rescore between artifacts
+            # computes baselines from a partial archive and is overwritten by
+            # the next one — wasted, and wrong while it lasts. It rewrites
+            # every event in the graph, so twenty-one of them over a
+            # million-event archive is the difference between a boot that
+            # finishes and one that dies on its healthcheck. Run once, below.
             steps.append(_run_step(
                 f"gdelt backfill {name} {artifact.stem}",
                 [sys.executable, str(_GDELT_SCRIPT), name,
-                 "--from-filtered", str(artifact)],
+                 "--from-filtered", str(artifact), "--skip-rescore"],
                 timeout=int(min(_GDELT_TIMEOUT_SECONDS, budget)),
                 echo=False,
             ))
@@ -402,6 +423,24 @@ def _load_gdelt(pack_names: list[str]) -> dict[str, Any]:
         })
         if after is not None and after < expected:
             _log(f"gdelt {name}: STILL SHORT — {after}/{expected}")
+
+    # ONE rescore, after every pack's artifacts are in. Escalation is
+    # relational and archive-wide: a dyad's baseline depends on events from
+    # other lenses and other eras, so this cannot be done per pack either.
+    # Skipped entirely when nothing loaded — the graph's scores are already
+    # current and rewriting every event to reach the same answer is the
+    # slowest no-op available.
+    loaded_any = any(r.get("loaded") for r in results)
+    if loaded_any:
+        rescore = _run_step(
+            "gdelt rescore (archive-wide, once)",
+            [sys.executable, str(_GDELT_SCRIPT), pack_names[0], "--rescore-only"],
+            timeout=int(_GDELT_TIMEOUT_SECONDS),
+            echo=False,
+        )
+        results.append({"pack": "*", "step": "rescore", **{
+            k: v for k, v in rescore.items() if k != "step"
+        }})
     return {"ok": all(r["ok"] for r in results), "packs": results}
 
 

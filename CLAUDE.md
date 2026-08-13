@@ -176,6 +176,15 @@ hops apart.
     or a dyad with zero episodes leads the forecast wearing the pooled prior.
   - Frozen payloads now carry `evidence_span`: when a likelihood's evidence is
     from, which is not when the archive ends.
+- **THE LOCAL GRAPH IS A SAMPLE, NOT THE ARCHIVE — check `/api/stats` before
+  calling anything missing.** `data/geograph.kuzu` on a dev machine holds
+  whatever was last loaded there; the deployed volume holds the real thing.
+  This cost real work on 2026-08-13: an empty `AFFECTED` table locally was
+  written into `docs/game-spec.md` as the game layer's blocking dependency,
+  when production had **382,736 measured effects** and the boot had been
+  running the event study over the whole spine since Phase 1. The panel, the
+  transmission engine and the volume only exist where they are deployed —
+  `curl https://geograph.up.railway.app/api/stats` settles it in one call.
 - **The learned layer is `core/models/`, and its gate is WITHIN-DYAD**
   (docs/ml-spec.md). A pooled score on this archive is not evidence: the
   label's variance is 70% within dyad and 30% between, so a model that only

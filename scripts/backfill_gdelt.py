@@ -370,6 +370,18 @@ def main() -> None:
         help="load from a previously exported gz instead of the archives "
              "(no downloads, no full parse — the boot path)",
     )
+    parser.add_argument(
+        "--skip-rescore", action="store_true",
+        help="load events but defer the archive-wide Head B rescore. Use for "
+             "every artifact but the last: the rescore folds escalation across "
+             "the WHOLE archive in time order, so running it between artifacts "
+             "is both wasted work and wrong.",
+    )
+    parser.add_argument(
+        "--rescore-only", action="store_true",
+        help="run the archive-wide rescore and provenance check, load nothing. "
+             "The closing step after a multi-artifact load.",
+    )
     args = parser.parse_args()
 
     pack = packs.load(packs.available()[0] if args.pack == "all" else args.pack)
@@ -412,6 +424,14 @@ def main() -> None:
         kuzu_store.apply_schema(conn)
         total_written = 0
         total_dropped = 0
+        if args.rescore_only:
+            for key, value in rescore_escalation(conn).items():
+                print(f"{key}: {value}")
+            violations = kuzu_store.check_provenance(conn)
+            if violations:
+                sys.exit("PROVENANCE VIOLATIONS:\n" + "\n".join(violations))
+            print("provenance: ok")
+            return
         if args.from_filtered:
             # RESUMABLE AND BATCHED, because this step is the one that gets
             # killed. A single parse-everything-then-write-once pass loses all
@@ -477,12 +497,23 @@ def main() -> None:
                 total_dropped += result.dropped
                 print(f"{name}: {result.written} events")
         print(f"total: {total_written} written, {total_dropped} filtered")
-        for key, value in rescore_escalation(conn).items():
-            print(f"{key}: {value}")
-        violations = kuzu_store.check_provenance(conn)
-        if violations:
-            sys.exit("PROVENANCE VIOLATIONS:\n" + "\n".join(violations))
-        print("provenance: ok")
+        # THE RESCORE IS ARCHIVE-WIDE AND MUST RUN ONCE, LAST. Head B folds
+        # escalation per dyad in time order across all 120 years, so a rescore
+        # run after artifact 3 of 21 computes every baseline from a partial
+        # archive and is then overwritten by the next one. Skipping it between
+        # artifacts is therefore a CORRECTNESS fix as much as a speed one —
+        # and the speed matters too: it rewrites every event in the graph, so
+        # twenty-one of them over a million-event archive is the difference
+        # between a boot that finishes and one that dies on its healthcheck.
+        if args.skip_rescore:
+            print("rescore: skipped (--skip-rescore); run --rescore-only when loading ends")
+        else:
+            for key, value in rescore_escalation(conn).items():
+                print(f"{key}: {value}")
+            violations = kuzu_store.check_provenance(conn)
+            if violations:
+                sys.exit("PROVENANCE VIOLATIONS:\n" + "\n".join(violations))
+            print("provenance: ok")
     finally:
         if exporter is not None:
             exporter.close()

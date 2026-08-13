@@ -159,6 +159,21 @@ def test_the_expected_count_sums_every_artifact_not_just_the_last(tmp_path):
     assert sum(boot._artifact_events(a) for a in artifacts) == sum(sizes.values())
 
 
+def test_the_boot_defers_the_rescore_and_runs_it_once():
+    # Head B folds escalation per dyad in time order across the WHOLE archive,
+    # so a rescore run between artifacts computes every baseline from a partial
+    # archive and is then overwritten by the next one. With twenty-one
+    # artifacts a lens it is also the difference between a boot that finishes
+    # and one that dies on its healthcheck: the rescore rewrites every event.
+    source = (_ROOT / "scripts" / "boot.py").read_text(encoding="utf-8")
+    assert "--skip-rescore" in source, "per-artifact loads must defer the rescore"
+    assert "--rescore-only" in source, "the boot must run the rescore itself, once"
+    # And the loader has to support both halves of that contract.
+    loader = (_ROOT / "scripts" / "backfill_gdelt.py").read_text(encoding="utf-8")
+    assert '"--skip-rescore"' in loader
+    assert '"--rescore-only"' in loader
+
+
 def test_gdelt_gets_a_ceiling_of_its_own_well_above_the_price_fetch():
     # The incident: the load borrowed _LOAD_TIMEOUT_SECONDS (900s, sized for
     # yfinance) and died partway through ~100k merges.

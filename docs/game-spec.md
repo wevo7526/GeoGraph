@@ -291,16 +291,30 @@ Three properties the shape enforces:
 
 | Phase | Work | Gate |
 |---|---|---|
-| **G0** | Add front-end and sovereign-spread instruments to the packs; run the transmission engine so `AFFECTED` is populated | Non-empty measured effects for the focal dyads; `AFFECTED` currently 0 locally |
+| **G0** | Add front-end and sovereign-spread instruments to the packs | **DONE.** Every pack now carries 3M/2Y/10Y, so there is a curve rather than one long bond |
 | **G1** | Transition kernel from the panel, counted and floored | Kernel reproduces the panel's observed transition frequencies out of sample |
 | **G2** | Solver: backward induction, MPBE, fixed θ | Solves in < 1s per dyad; equilibria stable under discretization refinement |
 | **G3** | Indirect inference for θ | Simulated ridge coefficients land within the real ones' standard errors |
 | **G4** | Market-implied duration from the term structure | Adds identification (§2.2) or is dropped and said so |
 | **G5** | Path artifact + surface | Paths render as a distribution; every price carries `n` |
 
-**G0 is the real blocker and it is a data task**, exactly as the M0 backfill
-was: with `AFFECTED` empty there is no cost term, and with one long-bond
-instrument there is no duration signal.
+**`AFFECTED` was never the blocker it was written up as.** This document
+originally listed an empty `AFFECTED` table as G0's hard dependency. That was
+true of a local development copy of the graph and false of the deployed one,
+which holds **382,736 measured effects** — the boot has been running the
+event study over the whole spine since Phase 1. The cost term has had its
+input all along.
+
+Worth recording as a working rule rather than an embarrassment: *a local
+graph is a sample, not the archive.* Anything measured against it that reads
+as "the system lacks X" should be checked against `/api/stats` before it is
+written down as a constraint, because the expensive half of this repo — the
+panel, the transmission engine, the volume — only exists where it is
+deployed.
+
+The live G0 dependency is narrower: the front-end and 2-year instruments
+added above have to be INGESTED into the panel before a duration statistic
+can be computed from them, which happens on the next price load.
 
 The standing gate applies throughout: **an equilibrium feature ships only if
 it improves within-dyad ordering or error.** Six of nine hand-built features
