@@ -12,6 +12,13 @@ associated with that type of event.*
 That is three models, not one, and they should stay three. The rest of this
 document is what each one can honestly be given the data that exists.
 
+> **Read §2 before §4.** The exploration changed the answer. A fitted model
+> scores AUC 0.92 pooled and **0.35 within dyad** — below random. Almost all
+> of the apparent skill is telling hot dyads from quiet ones, which needs no
+> model, and the timing question a forecast is actually asked is currently
+> answered backwards. That finding, not the architecture, is what this
+> document is now about.
+
 ---
 
 ## 1. What the archive actually holds
@@ -80,7 +87,108 @@ Class mix is heavily imbalanced: verbal_cooperation 67,465 · material_conflict
 
 ---
 
-## 2. Prerequisite: close the data gap
+## 2. What the exploration found
+
+> Every number in this section is reproduced by
+> `python scripts/explore_panel.py`. Read-only, deterministic, no artifact —
+> recheck it rather than trust it, which is the standard every counted
+> likelihood in this repo is already held to.
+
+The panel §3 proposes was built and run: 186 dyads with ≥ 8 occupied quarters,
+zeros filled between each dyad's first and last observation, label = *a
+significant escalation occurs in the next four quarters*, significance = a
+departure in the top decile of in-regime departures from that dyad's own
+baseline (threshold 8.90). **27,538 usable rows, positive rate 0.1337.**
+
+### 2.1 The trivial baselines are strong
+
+| Predictor | Brier | Pooled AUC |
+|---|---|---|
+| Base rate | 0.1159 | 0.500 |
+| Persistence (escalated this quarter) | 0.0918 | 0.664 |
+| Escalated in the last 4 quarters | 0.0901 | **0.776** |
+| L2 logistic hazard, 8 features | **0.102** | **0.92** |
+
+Walk-forward (train on everything before the cut, test the following five
+years), the logistic hazard beats persistence at every cut:
+
+| Cut | n train | n test | Brier base | Brier persist | Brier logit | AUC persist | AUC logit |
+|---|---|---|---|---|---|---|---|
+| 1990 | 15,850 | 3,444 | 0.2032 | 0.1522 | 0.1021 | 0.647 | 0.884 |
+| 1994 | 18,594 | 3,519 | 0.2227 | 0.1641 | 0.1034 | 0.661 | 0.899 |
+| 1998 | 21,403 | 3,464 | 0.2475 | 0.1707 | 0.1016 | 0.687 | 0.924 |
+| 2002 | 24,207 | 2,152 | 0.2391 | 0.1706 | 0.1173 | 0.691 | 0.910 |
+
+An AUC of 0.92 on conflict data should be disbelieved before it is believed.
+
+### 2.2 …and the skill is almost entirely between dyads
+
+Decompose the label's variance: **29.7% between dyads, 70.3% within**. A model
+that only knows *which dyad it is looking at* can capture at most the first
+share. Everything a forecast is for lives in the second.
+
+Scoring within dyad — does the model rank a *given* dyad's quarters correctly?
+— over the 72 dyads whose test window contains both outcomes:
+
+| Feature set | Brier | Pooled AUC | **Within-dyad AUC** |
+|---|---|---|---|
+| All features | 0.1016 | 0.924 | **0.349** |
+| Dynamics only (no dyad averages) | 0.1039 | 0.922 | **0.370** |
+| Dyad averages only | 0.1070 | 0.917 | **0.159** |
+| Persistence | — | 0.687 | **0.454** |
+
+Every one of them is **below 0.5**. This is Simpson's paradox in a forecasting
+harness: pooled, the model looks excellent; conditioned on the dyad, it ranks
+quarters *backwards*.
+
+The inversion is not noise, and it has a mechanism. The label asks whether
+escalation follows in the next four quarters. At the **end** of a burst the
+dyad is active (`sig_now = 1`) and the following year is quiet → label 0. In
+the quarter **before** a burst the dyad is quiet and the following year is
+violent → label 1. So the feature that dominates every pooled model points the
+wrong way exactly at the two moments that matter. Consistently below 0.5 also
+means there is real signal here — inverted signal is still signal — but it is
+not the signal the current estimator assumes.
+
+**Consequence: the modeling problem is burst TIMING, not dyad ranking.** The
+production near-term forecaster currently reasons "this dyad escalates often,
+therefore it will escalate again" (0.98 for Israel–Lebanon). Between dyads
+that ordering is right. Within a dyad, on a one-year horizon, the evidence
+says escalation is mean-reverting, not persistent.
+
+### 2.3 Memory, sequence, and how much is left to learn
+
+- **Autocorrelation** of the significant-escalation indicator: r = 0.46 at lag
+  1 quarter, decaying only to 0.35 at 20 quarters. Long memory — but §2.2
+  shows most of it is the dyad's fixed character, not dynamics.
+- **Sequence information**: H(quad_class) = 1.513 bits, H(quad | previous) =
+  1.306 bits → mutual information **0.206 bits, 13.6% of the marginal**. There
+  is genuine sequence structure for a sequence model to find. It is modest.
+- **Zero inflation**: 73% of dyad-quarters hold no event at all; only 6.1%
+  hold a significant one. A hurdle/zero-inflated head is required, not
+  optional.
+- **The graph is thinner than it looks**: of 21,590 durable relations, 18,648
+  are IGO **membership**, 2,937 alliance, 3 proxy, 2 rivalry. Membership is
+  near-constant across dyads and will contribute almost nothing
+  discriminative. The relational signal a GNN would need is the alliance and
+  rivalry structure, and rivalry is currently 2 edges.
+
+### 2.4 Non-stationarity is severe, and partly artefactual
+
+Positive rate by decade: 1970s 0.020 · 1980s 0.131 · 1990s 0.252 · 2000s
+0.252 · 2010s 0.029. A twelvefold swing — which tracks GDELT **coverage**, not
+the world. The 1970s and 2010s troughs are the wire thinning at both ends.
+
+Walk-forward, this is fatal to calibration: training before 1996 (positive
+rate 0.090) and testing after (0.250) makes the train base rate score Brier
+0.2136 on the test period — worse than simply knowing the test-period rate.
+**A model trained on this panel learns coverage intensity as much as conflict
+intensity.** That is the strongest argument in this document for §3 being a
+data task before it is a modeling task.
+
+---
+
+## 3. Prerequisite: close the data gap
 
 **Nothing in §3 should be built before this.** It is also the cheapest item
 here, because the machinery already exists and works.
@@ -107,24 +215,41 @@ here, because the machinery already exists and works.
 
 ---
 
-## 3. The three models
+## 4. The three models
 
-### Stage A — event sequence model (the learned part)
+### Stage A — event timing model (the learned part)
 
-**Unit of prediction:** dyad × month. **Target:** next-window distribution over
-(quad_class × Goldstein bucket), plus an occurrence head for "any event at
-all" — a hurdle model, because occurrence and intensity are different
-processes and the zero mass is large.
+**The exploration reframes this stage.** It was scoped as "predict the next
+event type"; §2.2 shows the pooled version of that question is nearly free
+(hot dyads are hot) and the hard, useful version is **when does a quiet dyad
+burst, and when does an active one stop?** Every design choice below follows
+from that.
 
-**Build in this order. Each stage must beat the previous one walk-forward or
-it does not ship.**
+**Unit of prediction:** dyad × month. **Target:** a hurdle pair — occurrence
+("any event") and, conditional on it, intensity (quad_class × Goldstein
+bucket). 73% of dyad-quarters are empty, so the two heads are genuinely
+different processes.
 
-| # | Model | Why it exists |
-|---|---|---|
-| 0 | Base rate + persistence | The floor. "Next month looks like this month" is a genuinely strong baseline in conflict data and beats most published models. |
-| 1 | Regularized logistic / gradient-boosted hazard on hand-built features | The yardstick. Interpretable, ~1k parameters, fits this data comfortably. This is also the model that should serve production first. |
-| 2 | Sequence model — 2-layer GRU or a 2-block, 4-head transformer, ≤ 100k params, over the dyad's own history | Captures escalation *dynamics* (spirals, tit-for-tat lags) that a feature vector flattens away. |
-| 3 | Graph-conditioned — R-GCN or GraphSAGE over the actor graph, actor/dyad embeddings feeding stage 2 | **This is where the graph earns its place.** The dyad's prediction conditions on its neighbourhood: allies, shared IGOs, rivals-of-rivals, brokerage position. `RELATES_TO` (21,590 edges) and the COW alliance/IGO tier are the substrate. |
+**Headline metric is WITHIN-DYAD, always.** A pooled score on this panel is
+not evidence. Report pooled if you like; decide on within-dyad.
+
+| # | Model | Why it exists | Status |
+|---|---|---|---|
+| 0 | Base rate + persistence | The floor. | Measured: within-dyad AUC 0.454 |
+| 1 | L2 logistic hazard, hand-built features | The yardstick. ~10 parameters, walk-forward, interpretable. | Measured: pooled 0.92, **within-dyad 0.349** — fails |
+| 1b | **Same model, dyad-demeaned features** | The missing control. Express every feature as a deviation from that dyad's own history, so the fit cannot spend its capacity on dyad identity. This is the cheapest experiment in this document and it is the one to run next. | Not run |
+| 2 | **Self-exciting point process (Hawkes)** on the dyad's event stream | The natural model for clustered arrivals — which is exactly what §2.2 says the data is. A background rate (the dyad's character, the part already solved) plus a decaying excitation kernel (the burst dynamics, the part unsolved). ~3–5 parameters per dyad with a shared kernel, which is the right size for 15k events. Interpretable: the decay constant *is* an escalation half-life. | Recommended first real model |
+| 3 | Survival / change-point framing — time-to-next-burst with time-varying covariates, or Bayesian online change-point detection on the dyad series | Answers the timing question directly rather than through a binary label, and produces a hazard curve instead of one probability. | Alternative to 2, or complement |
+| 4 | Sequence model — 2-layer GRU or ≤ 100k-param transformer over dyad history | Only justified by the 0.206 bits of sequence mutual information in §2.3, which is real but modest. Must beat 1b and 2 within-dyad. | Deferred |
+| 5 | Graph-conditioned (R-GCN / GraphSAGE) | §2.3: 86% of durable relations are IGO membership, near-constant across dyads. Until the alliance/rivalry tier is denser this has little to add. Ablate ruthlessly. | Deferred, weakest case |
+
+The honest reading of this table: **"deep learning" is stages 4–5, and they
+are the two the data supports least.** The techniques that fit this
+archive — self-exciting point processes, survival models, hierarchical partial
+pooling — are classical, small, and interpretable. That is not a consolation
+prize; on 15k events with a coverage-contaminated label it is the correct
+answer, and it is also the answer that can be defended to someone who asks why
+the model said what it said.
 
 Features for stage 1 (and inputs to 2–3), all already in the graph:
 
@@ -146,6 +271,12 @@ walk-forward calibration degrades, and publish that cap.
 
 Game theory here is not garnish on a neural net. Two concrete roles, in
 increasing ambition:
+
+§2.2 *raises* the value of this stage. If the unsolved problem is timing —
+why a dyad that has escalated for six quarters stops, why a quiet one
+starts — then the missing ingredient is a mechanism for the decision to
+escalate, and that is precisely what a game supplies and a curve fitted to
+frequencies does not.
 
 **B1 — Equilibrium features (build first).** Model each dyad-timestep as a
 one-shot escalation game: each side chooses escalate / hold / de-escalate.
@@ -194,15 +325,21 @@ market number.
 
 ---
 
-## 4. Validation — the part that decides whether any of this is real
+## 5. Validation — the part that decides whether any of this is real
 
+- **Report within-dyad first.** §2.2 is the whole argument: pooled AUC 0.92,
+  within-dyad 0.35. Any headline number on this panel that is not conditioned
+  on the dyad is measuring a fact nobody needed a model for. Pooled scores may
+  be reported; they may not be the basis of a decision.
 - **Walk-forward only, by time.** Train ≤ T, validate T+1…T+k, roll. A random
   train/test split leaks the future through a dyad's own history and will
   produce a beautiful, worthless AUC. `core/reasoning/backtest.py` already
   implements exactly this discipline for the paper model (truncate the archive,
   recompute through the *same* code path, record skips) — reuse it.
 - **Beat three baselines or don't ship:** base rate, persistence, and the
-  stage-1 hazard model.
+  stage-1 hazard model — all scored within dyad, where persistence currently
+  sits at 0.454 and the fitted model at 0.349. Clearing 0.5 is the first real
+  milestone, and nothing has cleared it yet.
 - **Metrics:** log loss and Brier for occurrence (`calibration.brier_score`
   exists); ranked probability score for ordinal intensity; reliability diagrams
   per regime, because a model well-calibrated on 1990s data and miscalibrated
@@ -215,7 +352,7 @@ market number.
 
 ---
 
-## 5. Where it lands, and the §17 question
+## 6. Where it lands, and the §17 question
 
 Proposed layout, following the existing shape:
 
@@ -255,43 +392,69 @@ Stage A ships, not inferred from this document.
 
 ---
 
-## 6. Phasing
+## 7. Phasing
 
 | Phase | Work | Gate to pass |
 |---|---|---|
-| **M0** | GDELT 2006→2026 backfill; run the event study; build the dyad-timestep panel with explicit negatives | Panel exists; ≥ 10× current recent-era event mass |
-| **M1** | Stage-1 hazard model + walk-forward harness + baselines | Beats base rate *and* persistence on held-out years |
-| **M2** | Stage B1 equilibrium features; §17 amendment written | Features improve M1, or are dropped |
-| **M3** | Stage C conditional market distributions off measured `AFFECTED` | Distributions reported with n and IQR; thin samples flagged |
-| **M4** | Stage-2 sequence model | Beats M1 walk-forward, or M1 stays in production |
-| **M5** | Stage-3 graph conditioning; B2 inverse RL | Beats M4 on ablation, or the graph is dropped from the model |
+| **M0** | GDELT 2006→2026 backfill; run the event study; build the dyad-timestep panel with explicit negatives | Panel exists; ≥ 10× current recent-era event mass; decade-to-decade positive rate stops tracking coverage |
+| **M1** | Dyad-demeaned features (stage 1b) + the within-dyad harness | **Within-dyad AUC > 0.5.** Nothing has cleared this yet; until something does, no learned number ships |
+| **M2** | Hawkes / survival timing model (stage 2–3) | Beats M1 within dyad, walk-forward |
+| **M3** | Stage B1 equilibrium features; §17 amendment written | Features improve M2 within dyad, or are dropped |
+| **M4** | Stage C conditional market distributions off measured `AFFECTED` | Distributions reported with n and IQR; thin samples flagged |
+| **M5** | Sequence model (stage 4) | Beats M2 within dyad, or M2 stays in production |
+| **M6** | Graph conditioning (stage 5); B2 inverse RL | Beats M5 on ablation, or the graph is dropped from the model |
 
-M0–M1 is the honest first release: it produces genuinely better numbers than
-the current pooled base rate (which returns an identical 93% for every focal
-dyad — see §7) and it is defensible. M4–M5 is where "deep learning" begins,
-and it should only begin once M0 has given it data worth learning from.
+M0 is a data task and it dominates everything after it: while the label tracks
+wire coverage, every model learns coverage. M1 is one afternoon's work and is
+the experiment that decides whether the rest of this document is worth
+building — a demeaned model that still cannot clear 0.5 within dyad is telling
+us the timing of escalation is not predictable from this archive, which is a
+publishable finding and a much better outcome than a dashboard quoting 0.92.
+
+Note what is *not* gated on any of this: the fixes in §8 already shipped, and
+the deterministic core keeps working with no model in it at all.
 
 ---
 
-## 7. The bug this replaces
+## 8. The bugs this replaced — already shipped
 
-The current near-term forecaster (`core/reasoning/forecasting.py`) computes a
-single pooled continuation rate and assigns it to **every** focal dyad, so the
-frozen MENA call reads:
+Scoping this model started by finding that both frozen forecasts were wrong,
+for the same reason the model will have to survive: uneven density. Both are
+fixed and deployed; they are recorded here because they are the stage-0
+baseline everything above must beat, and because they are the same mistake a
+learned model makes silently.
+
+**Near-term.** A single pooled continuation rate was assigned to every focal
+dyad:
 
 ```
-further_escalation:dyad:ansar-allah--cow-670     0.9347
+further_escalation:dyad:ansar-allah--cow-670     0.9347   ← 0 episodes of its own
 further_escalation:dyad:cow-660--cow-666         0.9347
 further_escalation:dyad:cow-630--cow-645         0.9347
 ```
 
-Three different dyads, one number, and that number is 93% because pooling
-across 5,572 episodes measures "does any active dyad stay active" rather than
-"does *this* dyad re-escalate". The pool also ignores the region entirely.
+Three different dyads, one number, and one of them had never been observed
+escalating at all. 93% because an episode was *any* dyad-quarter holding *any*
+escalating event, so pooled over 5,572 episodes the estimator answered "does an
+active dyad stay active" — which at wire density is always yes.
 
-The minimum fix, independent of everything above and worth doing immediately,
-is a **partially-pooled (empirical-Bayes) per-dyad rate**: shrink each dyad's
-own continuation frequency toward the pooled rate in proportion to how thin its
-own sample is. That is one function, it is deterministic and countable, it
-produces a *different and defensible* number per dyad, and it is the correct
-stage-0 baseline for everything in §3.
+Now: an episode requires a departure in the top decile of in-regime departures
+from the dyad's own baseline; each dyad's rate is its own record shrunk toward
+the pool by beta-binomial method of moments; focal dyads must clear an evidence
+bar before ranking. MENA reads 0.98 / 0.98 / 0.87 over three dyads with
+records.
+
+**Long-horizon.** The composite pressure was a mean over whatever components
+existed in a given year. Past the capability data's end in 2022 that became a
+mean of the two noisiest components, computed from windows holding six events,
+and 2025 printed 0.93 — an all-time high across 120 years, assembled from two
+events and a definition change. Now a trailing window under 30 coded events
+yields no value, and a year enters the composite only with every component
+present. The MENA trajectory runs 1911–2017; the gaps are reported.
+
+**What §2 adds to this.** The near-term fix makes the numbers *defensible*
+between dyads. It does not make them a timing forecast — §2.2 shows nothing in
+this archive currently does that. The frozen payloads now carry
+`evidence_span`, which is the honest caveat until M0 closes the data gap: a
+likelihood stamped as-of 2025 can rest almost entirely on evidence from
+1979–2005.
