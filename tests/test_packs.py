@@ -116,6 +116,26 @@ def test_unknown_pack_names_the_available_ones():
         packs.load("atlantis")
 
 
+# ── the key is not the caption ───────────────────────────────────────────────
+
+
+def test_a_pack_is_called_what_it_declares_and_keyed_by_its_directory():
+    # The label is presentation and may change freely; the NAME is written into
+    # every record's region_pack and into the deployed volume, so it must not
+    # drift with the caption. `packs/china` reads as Asia — the lens covers
+    # Taiwan, Japan and Korea — while staying keyed `china`.
+    pack = packs.load("china")
+    assert pack.label == "Asia"
+    assert pack.name == "china"
+
+
+@pytest.mark.parametrize("name", packs.available())
+def test_every_pack_has_a_label_even_when_it_declares_none(name):
+    # A pack whose name already reads as a region declares nothing and gets its
+    # name back — no pack can end up captionless.
+    assert packs.load(name).label
+
+
 # ── externality is a property of the lens, not of the world ──────────────────
 
 

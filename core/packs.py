@@ -68,6 +68,21 @@ class Pack:
         return cast(dict[str, dict[str, float]], books) if books else None
 
     @property
+    def label(self) -> str:
+        """What to CALL this region on the surface, as distinct from what to
+        key it by. The pack name is an identifier — it is written into every
+        record's `region_pack`, into the GDELT artifact filenames and into the
+        Railway volume, so renaming it is a data migration. The label is
+        presentation, free to change.
+
+        Pack-declared for the same reason `external_powers` is: only the pack
+        knows how wide its own lens is. `packs/china` reaches Taiwan, Japan and
+        Korea and reads as ASIA beside MENA and EURASIA; a pack whose name
+        already reads as a region simply declares nothing and gets its name."""
+        declared = self.data["actors"].get("region_label")
+        return str(declared) if declared else self.name
+
+    @property
     def external_powers(self) -> frozenset[str]:
         """Roster members (iso3) that do not make a GDELT event REGIONAL by
         themselves — their MUTUAL wire traffic is dropped as non-regional.

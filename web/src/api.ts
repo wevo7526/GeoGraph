@@ -37,7 +37,10 @@ async function get<T>(path: string): Promise<T | null> {
 }
 
 export const getHealth = () => get<Health>('/api/health')
-export const getPacks = () => get<{ packs: string[] }>('/api/packs')
+// `packs` are the KEYS every region= parameter takes; `labels` is what a
+// reader is shown. Never send a label back to the API.
+export const getPacks = () =>
+  get<{ packs: string[]; labels?: Record<string, string> }>('/api/packs')
 export const getStats = () => get<Stats>('/api/stats')
 export const getRegimes = () => get<Segmentation>('/api/regimes')
 export const getPack = (name: string) => get<Pack>(`/api/packs/${name}`)

@@ -19,11 +19,15 @@ export default function TopBar({
   onNavigate: (next: string) => void
 }) {
   const [packs, setPacks] = useState<string[]>([region])
+  // Pack name → display label. The option VALUE stays the name (it is what
+  // every region= parameter takes); only the caption is the label.
+  const [labels, setLabels] = useState<Record<string, string>>({})
   const [healthy, setHealthy] = useState<boolean | null>(null)
 
   useEffect(() => {
     getPacks().then((r) => {
       if (r?.packs?.length) setPacks(r.packs)
+      if (r?.labels) setLabels(r.labels)
     })
     getHealth().then((h) => setHealthy(h?.graph === 'open'))
   }, [])
@@ -63,7 +67,7 @@ export default function TopBar({
           >
             {packs.map((name) => (
               <option key={name} value={name}>
-                {name.toUpperCase()}
+                {(labels[name] ?? name).toUpperCase()}
               </option>
             ))}
           </select>

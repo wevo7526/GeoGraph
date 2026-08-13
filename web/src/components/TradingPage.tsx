@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { getBacktest, getForward } from '../api'
+import { useRegionLabel } from '../regions'
 import type { BacktestLedger, BacktestRow, ForwardView } from '../types'
 
 /** The paper model, whole: the walk-forward ledger (the rule run through
@@ -133,6 +134,7 @@ export default function TradingPage({
 }) {
   const [ledger, setLedger] = useState<BacktestLedger | null | undefined>(undefined)
   const [forward, setForward] = useState<ForwardView | null | undefined>(undefined)
+  const regionLabel = useRegionLabel(region)
 
   useEffect(() => {
     setLedger(undefined)
@@ -147,7 +149,7 @@ export default function TradingPage({
   return (
     <div className="max-w-5xl mx-auto px-6 py-10">
       <p className="mono text-xs uppercase tracking-widest" style={{ color: 'var(--muted)' }}>
-        Trading · {region.toUpperCase()} · paper model
+        Trading · {regionLabel.toUpperCase()} · paper model
       </p>
 
       {/* ── The backtest: the rule run through history ──────────────────── */}

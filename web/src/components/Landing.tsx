@@ -19,7 +19,11 @@ export default function Landing({ onEnter }: { onEnter: (route: string) => void 
     getHealth().then(setHealth)
     getStats().then(setStats)
     getCaseStudies().then((r) => setStudies(r?.rows ?? []))
-    getPacks().then((r) => setPacks(r?.packs ?? []))
+    // The front page only counts and names the lenses, so it holds their
+    // LABELS; the pack keys matter to the working pages, not here.
+    getPacks().then((r) =>
+      setPacks((r?.packs ?? []).map((name) => r?.labels?.[name] ?? name)),
+    )
   }, [])
 
   const live = health?.graph === 'open'
@@ -98,21 +102,12 @@ export default function Landing({ onEnter }: { onEnter: (route: string) => void 
             </p>
           </section>
 
-          {/* The way in */}
-          <div className="mt-10 flex flex-wrap items-center gap-x-8 gap-y-4">
+          {/* The way in — one door. The case studies are reached from inside
+              the archive, not listed on the front page. */}
+          <div className="mt-10">
             <button type="button" className="ink-button text-lg" onClick={() => onEnter('/explore')}>
-              Enter the archive →
+              Enter
             </button>
-            {studies.map((study) => (
-              <button
-                key={study.slug}
-                type="button"
-                className="article-link text-base"
-                onClick={() => onEnter(`/case/${study.slug}`)}
-              >
-                {study.title}
-              </button>
-            ))}
           </div>
         </div>
       </main>

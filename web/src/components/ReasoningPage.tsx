@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { getForecasts, getWhatIf, getWhatIfOptions, postAssess } from '../api'
+import { useRegionLabel } from '../regions'
 import type { Assessment, ForecastSummary, WhatIfOptions, WhatIfResult } from '../types'
 
 /** The reasoning layer, presented as ONE FLOW RATHER THAN THREE WIDGETS.
@@ -78,6 +79,7 @@ export default function ReasoningPage({
     { dark: boolean; text: string; context?: Assessment['context'] } | null
   >(null)
   const [trail, setTrail] = useState<ForecastSummary[] | null>(null)
+  const regionLabel = useRegionLabel(region)
 
   useEffect(() => {
     let live = true
@@ -150,7 +152,7 @@ export default function ReasoningPage({
 
   return (
     <div className="max-w-5xl mx-auto px-6 py-10">
-      <p className="kicker">Reasoning · {region.toUpperCase()}</p>
+      <p className="kicker">Reasoning · {regionLabel.toUpperCase()}</p>
 
       <p className="mt-4 text-base leading-relaxed max-w-3xl" style={{ color: 'var(--text)' }}>
         Three things happen on this page, and they are the same machinery

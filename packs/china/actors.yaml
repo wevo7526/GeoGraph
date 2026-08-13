@@ -7,6 +7,14 @@
 # membership — this file seeds the modern network, it does not bound the
 # archive.
 
+# What to CALL this lens. The pack is KEYED `china` — that string is written
+# into every record's region_pack, into gdelt-china-1979-2005.tsv.gz and into
+# the deployed volume, so it stays put. But the roster below is not China's
+# alone: Taiwan, Japan, Korea, the US Seventh Fleet and the Strait's shipping
+# are all in it, and beside MENA and EURASIA the honest caption is the region,
+# not its largest state.
+region_label: Asia
+
 actors:
   # ── states ─────────────────────────────────────────────────────────────────
   - id: actor:cow-2

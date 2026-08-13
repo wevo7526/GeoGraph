@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { getCaseStudies } from '../api'
+import { useRegionLabel } from '../regions'
 import type { CaseStudyIndexEntry } from '../types'
 
 /** Every narrated episode the archive carries, one card each — the pack's
@@ -13,6 +14,7 @@ export default function CasesPage({
   onNavigate: (route: string) => void
 }) {
   const [studies, setStudies] = useState<CaseStudyIndexEntry[] | null>(null)
+  const regionLabel = useRegionLabel(region)
 
   useEffect(() => {
     getCaseStudies().then((r) => setStudies(r?.rows ?? []))
@@ -23,7 +25,7 @@ export default function CasesPage({
   return (
     <div className="max-w-3xl mx-auto px-6 py-10">
       <p className="mono text-xs uppercase tracking-widest" style={{ color: 'var(--muted)' }}>
-        Case studies · {region.toUpperCase()}
+        Case studies · {regionLabel.toUpperCase()}
       </p>
       {studies === null ? (
         <p className="mt-6 text-sm" style={{ color: 'var(--muted)' }}>
