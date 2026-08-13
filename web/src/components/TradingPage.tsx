@@ -156,12 +156,10 @@ export default function TradingPage({
       <h2 className="text-xl mt-6" style={{ color: 'var(--text)' }}>
         Walk-forward backtest
       </h2>
-      <p className="mt-2 text-sm leading-relaxed max-w-3xl" style={{ color: 'var(--muted)' }}>
-        Each past quarter end, the near-term forecast is recomputed from only
-        the events that existed then; its likelihood blends the region's fixed
-        books into that quarter's positions, entered at the first close after
-        the cutoff and marked at the next quarter end. Quarters too thin to
-        trade, or that the panel could not fill, are recorded skips.
+      <p className="mono text-[10px] mt-1" style={{ color: 'var(--muted)' }}>
+        forecast recomputed each quarter end from the events that existed then ·
+        entered at the first close after cutoff, marked at the next quarter end ·
+        thin and unfillable quarters are recorded skips
       </p>
 
       {ledger === undefined ? (
@@ -237,15 +235,13 @@ export default function TradingPage({
         </p>
       ) : (
         <>
-          <p className="mt-2 text-sm leading-relaxed max-w-3xl" style={{ color: 'var(--muted)' }}>
-            The latest frozen call (data through{' '}
-            <span className="mono">{forward.forecast.as_of}</span>) puts the
-            escalation likelihood at{' '}
-            <span className="mono" style={{ color: 'var(--text)' }}>
+          <p className="mono text-[11px] mt-1" style={{ color: 'var(--muted)' }}>
+            data through <span style={{ color: 'var(--text)' }}>{forward.forecast.as_of}</span>
+            {' · escalation likelihood '}
+            <span style={{ color: 'var(--text)' }}>
               {(forward.forecast.escalation_likelihood * 100).toFixed(1)}%
             </span>
-            , and the pack's books blend to the positions below, marked at the
-            latest close the panel holds.
+            {' · marked at the latest close the panel holds'}
           </p>
           {forward.book === null ? (
             <p className="mt-4 text-sm mono" style={{ color: 'var(--muted)' }}>

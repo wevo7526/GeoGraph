@@ -4,6 +4,7 @@ import type {
   CaseStudy,
   CaseStudyIndexEntry,
   Dyad,
+  DyadSeries,
   Effect,
   EventDetail,
   EventList,
@@ -15,6 +16,8 @@ import type {
   Health,
   PaperBook,
   Pack,
+  PanelDyad,
+  Precedent,
   Relation,
   Segmentation,
   Stats,
@@ -91,6 +94,25 @@ export const getActors = (params: { start?: string; end?: string } = {}) => {
   if (params.end) query.set('end', params.end)
   const suffix = query.toString() ? `?${query}` : ''
   return get<{ rows: GraphActor[] }>(`/api/actors${suffix}`)
+}
+
+// The quarterly panel the forecaster is fitted on — a different view of the
+// same dyads than /api/dyads, which serves standing baselines.
+export const getPanelDyads = (region?: string) =>
+  get<{ rows: PanelDyad[]; total: number }>(
+    `/api/panel/dyads${region ? `?region=${encodeURIComponent(region)}` : ''}`,
+  )
+
+export const getDyadSeries = (dyadId: string, region?: string) =>
+  get<DyadSeries>(
+    `/api/panel/dyads/${encodeURIComponent(dyadId)}/series` +
+      (region ? `?region=${encodeURIComponent(region)}` : ''),
+  )
+
+export const getPrecedent = (dyadId: string, region?: string) => {
+  const query = new URLSearchParams({ dyad: dyadId })
+  if (region) query.set('region', region)
+  return get<Precedent>(`/api/precedent?${query}`)
 }
 
 export const getForecasts = (region?: string) =>

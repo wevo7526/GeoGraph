@@ -27,6 +27,7 @@ import Graph3D, {
   type LinkSelection,
 } from './Graph3D'
 import TimeSlider, { YEAR_NOW } from './TimeSlider'
+import { LineBand } from './charts/Charts'
 import type {
   Dyad,
   Effect,
@@ -549,6 +550,7 @@ function PressureLine({ detail }: { detail: ForecastDetail }) {
 function ForecastPanel({ region }: { region: string }) {
   const [nearTerm, setNearTerm] = useState<ForecastDetail | null>(null)
   const [longHorizon, setLongHorizon] = useState<ForecastDetail | null>(null)
+  const [model, setModel] = useState<ForecastDetail | null>(null)
   const [paper, setPaper] = useState<PaperBook | null>(null)
   const [empty, setEmpty] = useState(false)
 
@@ -565,6 +567,7 @@ function ForecastPanel({ region }: { region: string }) {
       for (const [mode, set] of [
         ['near_term', setNearTerm],
         ['long_horizon', setLongHorizon],
+        ['model', setModel],
       ] as const) {
         const summary = newest(mode)
         if (summary) getForecast(summary.node_id).then((d) => active && d && set(d))
@@ -591,6 +594,50 @@ function ForecastPanel({ region }: { region: string }) {
   return (
     <div>
       <Microcaps>The forecast</Microcaps>
+
+      {model?.frozen_inputs?.trajectories?.length && (
+        <div className="mt-3">
+          <div className="flex items-baseline justify-between gap-2">
+            <h3 className="text-sm">Predicted intensity, next four quarters</h3>
+            <span className="mono text-[10px]" style={{ color: 'var(--muted)' }}>
+              {model.frozen_inputs.model?.hash}
+            </span>
+          </div>
+          <ul className="mt-2 space-y-2">
+            {model.frozen_inputs.trajectories.slice(0, 4).map((t) => {
+              const end = t.path[t.path.length - 1]
+              return (
+                <li key={t.dyad_id}>
+                  <div className="flex items-baseline justify-between gap-3 text-xs">
+                    <span className="truncate">{t.dyad_name}</span>
+                    <span
+                      className="mono"
+                      style={{ color: end.deviation >= 0 ? 'var(--alert)' : 'var(--accent)' }}
+                    >
+                      {end.intensity.toFixed(2)}{' '}
+                      <span style={{ color: 'var(--muted)' }}>
+                        ({end.deviation >= 0 ? '+' : ''}
+                        {end.deviation.toFixed(2)})
+                      </span>
+                    </span>
+                  </div>
+                  <LineBand
+                    points={t.path.map((p) => ({
+                      x: p.horizon, y: p.intensity, lo: p.lo, hi: p.hi,
+                    }))}
+                    height={44}
+                    width={280}
+                    label={`${t.dyad_name} predicted intensity`}
+                  />
+                </li>
+              )
+            })}
+          </ul>
+          <p className="mono text-[10px] mt-1" style={{ color: 'var(--muted)' }}>
+            {model.frozen_inputs.model?.gate_reason}
+          </p>
+        </div>
+      )}
 
       {nearTerm && (
         <div className="mt-3">
@@ -669,10 +716,9 @@ function ForecastPanel({ region }: { region: string }) {
                   </li>
                 ))}
               </ul>
-              <p className="text-xs mt-2 leading-relaxed" style={{ color: 'var(--muted)' }}>
-                A mechanical, unfitted translation of the frozen scenarios,
-                entered after the data cutoff and marked at the latest close —
-                a calibration instrument, not advice.
+              <p className="mono text-[10px] mt-2" style={{ color: 'var(--muted)' }}>
+                unfitted translation of the frozen scenarios · entered after cutoff,
+                marked at latest close · not advice
               </p>
             </div>
           )}

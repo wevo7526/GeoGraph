@@ -51,11 +51,13 @@ except ModuleNotFoundError as exc:
 from core import settings as settings_module
 from core.api.routers import (
     case_studies,
+    dyads,
     events,
     forecasts,
     graph,
     network,
     packs,
+    precedent,
     reasoning,
     regimes,
     trading,
@@ -128,7 +130,7 @@ def create_app() -> FastAPI:
 
     for router in (graph.router, events.router, case_studies.router, network.router,
                    forecasts.router, regimes.router, packs.router, trading.router,
-                   reasoning.router):
+                   reasoning.router, dyads.router, precedent.router):
         app.include_router(router, prefix="/api")
 
     if _WEB_DIST.exists():

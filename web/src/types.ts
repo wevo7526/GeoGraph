@@ -218,7 +218,9 @@ export interface Retrodiction {
 
 export interface ForecastSummary {
   node_id: string
-  mode: 'near_term' | 'long_horizon'
+  // 'model' is the LEARNED mode — kept distinct from the two counted modes
+  // because they are believed for different reasons (docs/ml-spec.md).
+  mode: 'near_term' | 'long_horizon' | 'model'
   region_pack: string | null
   question: string
   generated_at: string
@@ -241,11 +243,104 @@ export interface ForecastDetail extends ForecastSummary {
   frozen_inputs: {
     pressure?: Record<string, number>
     windows?: Array<{ start: number; end: number; level: string }>
+    coverage?: Record<string, string[]>
+    pressure_span?: [number, number] | null
     episodes?: number
     continuations?: number
+    evidence_span?: [string, string] | null
     as_of?: string
     method?: string
+    // mode='model' only — the learned trajectories and the artifact that
+    // produced them.
+    trajectories?: ModelTrajectory[]
+    model?: {
+      name: string
+      hash: string
+      target: string
+      features: string[]
+      train_span: [string, string]
+      gate_reason: string
+    }
+    walk_forward?: Array<{
+      horizon: number
+      cut_year: number
+      within_dyad: number | null
+      within_dyad_persistence: number | null
+      rmse: number
+      rmse_persistence: number
+    }>
   }
+}
+
+export interface ModelTrajectory {
+  dyad_id: string
+  dyad_name: string
+  active_quarters: number
+  last_observed: string
+  path: Array<{
+    horizon: number
+    quarter: number
+    date: string
+    intensity: number
+    deviation: number
+    lo: number
+    hi: number
+  }>
+}
+
+/** A dyad as the forecaster's panel sees it — quarters, not events. */
+export interface PanelDyad {
+  dyad_id: string
+  dyad_name: string
+  quarters: number
+  active_quarters: number
+  peak_intensity: number
+  mean_intensity: number
+  first: string
+  last: string
+}
+
+export interface DyadSeries {
+  dyad_id: string
+  dyad_name: string
+  rows: Array<{ q: number; date: string; intensity: number; events: number; tone: number }>
+  active_quarters: number
+  peak: number
+  span: [string, string]
+}
+
+export interface Precedent {
+  dyad_id: string
+  dyad_name: string
+  as_of: string
+  episode_threshold: number
+  episodes: Array<{
+    date: string
+    intensity: number
+    aftermath: Array<{ offset: number; date: string; intensity: number }>
+  }>
+  fan: Array<{
+    offset: number
+    n: number
+    min: number
+    p25: number
+    median: number
+    p75: number
+    max: number
+  }>
+  markets: Array<{
+    market_id: string
+    market_name: string
+    n: number
+    windows: string[]
+    min: number
+    p25: number
+    median: number
+    p75: number
+    max: number
+  }>
+  markets_note: string | null
+  method: string
 }
 
 export interface PaperPosition {

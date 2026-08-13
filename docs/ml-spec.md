@@ -18,6 +18,13 @@ document is what each one can honestly be given the data that exists.
 > model, and the timing question a forecast is actually asked is currently
 > answered backwards. That finding, not the architecture, is what this
 > document is now about.
+>
+> **§9 is what shipped.** A within-transformation on both features AND target
+> turned that around: `core/models/` now fits a three-feature ridge whose
+> within-dyad ordering matches persistence (+0.4236 vs +0.4253) and whose
+> error is 21% lower (RMSE 2.548 vs 3.210). It is frozen at boot as a third
+> Forecast mode. The deep architectures below remain deferred, and §2's
+> warnings still hold — read them before adding a feature.
 
 ---
 
@@ -458,3 +465,74 @@ this archive currently does that. The frozen payloads now carry
 `evidence_span`, which is the honest caveat until M0 closes the data gap: a
 likelihood stamped as-of 2025 can rest almost entirely on evidence from
 1979–2005.
+
+---
+
+## 9. What shipped (2026-08-13)
+
+`core/models/` — panel, features, estimator, artifact registry — plus
+`scripts/train_forecaster.py` (offline) and a third `Forecast` mode frozen at
+boot. What follows is the record of what worked, and it is mostly a record of
+what did not.
+
+### 9.1 The three corrections that mattered
+
+1. **Demean the TARGET, not just the features.** Features were expressed as
+   deviations from each dyad's running mean while the target stayed absolute.
+   Least squares then spent those deviations explaining between-dyad level —
+   30% of the variance and far larger than any feature — and landed on a
+   coefficient with the wrong sign *within* a dyad. Subtracting the same
+   running mean from the target makes the fit a true within-dyad regression.
+2. **Persistence is not a baseline here, it is the signal.** The dyad's own
+   current deviation scores **+0.4253** within-dyad rank correlation. Nothing
+   beat it. Every engineered feature added on top made out-of-sample ordering
+   *worse*: `level_4q` took it to +0.10, `gap_length` to +0.03, all nine
+   together to −0.11. They lower pooled squared error by tracking differences
+   between dyads and pay for it in the ordering within one.
+3. **So the model's contribution is magnitude, not ranking.** The gate was
+   rewritten to say exactly that — keep persistence's ordering, beat its
+   error — and `passes_gate` carries the reason it moved, on evidence, in its
+   own docstring.
+
+### 9.2 The shipped model
+
+| | |
+|---|---|
+| Form | ridge, closed form, no seed or learning rate |
+| Features | `intercept`, `level_now`, `base_level` — 3 of the 9 built |
+| Target | `deviation`: the coming window's mean intensity less the dyad's running baseline |
+| Horizons | 1–4 quarters, fitted directly (no autoregressive rollout) |
+| Within-dyad ordering | **+0.4236** vs persistence +0.4253 |
+| RMSE | **2.548** vs persistence 3.210 (21% better) |
+| Panel | 28,282 dyad-quarters, 186 dyads, 1905-01 → 2025-04 |
+| Artifact | `models/intensity.json`, hashed, committed, loaded at boot |
+
+The fitted weights are interpretable and say something real: `level_now`
+decays 1.250 → 1.176 across horizons, which is the reversion toward baseline
+being measured rather than assumed.
+
+The other two targets are scored on every training run and **both still fail**
+(`level` −0.1753, `point` −0.1041). They are kept precisely so that the
+choice of target stays a measurement.
+
+### 9.3 What guards it
+
+- `test_features_never_read_the_future` truncates the series and asserts the
+  surviving feature rows are bit-identical. A statistic computed over the full
+  series instead of an expanding window fails here and nowhere else.
+- The artifact refuses to load if its feature order no longer matches the code
+  (weights are positional) or if its hash does not match its body.
+- `scripts/run_forecasts.py` will not freeze a model whose `gate_passed` is
+  false, and says so on stdout. The two counted forecasts do not depend on the
+  model existing at all.
+- `test_the_shipped_artifact_passed_its_gate` fails the suite if a failing
+  model is ever committed.
+
+### 9.4 Still true, still unbuilt
+
+§2's warnings are not retired by any of this. The label still tracks GDELT
+coverage; the archive still ends in 2005 for wire purposes; the graph's
+relational tier is still 86% IGO membership. **M0 — the 2006→2026 backfill —
+remains the highest-value item in this document**, and the Hawkes/survival
+work in §4 is the first thing worth trying once the ordering signal has more
+than one feature behind it.

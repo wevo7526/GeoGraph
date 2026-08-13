@@ -176,6 +176,28 @@ hops apart.
     or a dyad with zero episodes leads the forecast wearing the pooled prior.
   - Frozen payloads now carry `evidence_span`: when a likelihood's evidence is
     from, which is not when the archive ends.
+- **The learned layer is `core/models/`, and its gate is WITHIN-DYAD**
+  (docs/ml-spec.md). A pooled score on this archive is not evidence: the
+  label's variance is 70% within dyad and 30% between, so a model that only
+  knows which dyad it is looking at scores AUC 0.92 pooled while ranking that
+  dyad's own quarters BACKWARDS (0.35). Three consequences that will look
+  strange without the reason:
+  - **The target is a DEVIATION from the dyad's running baseline, and so are
+    the features.** Demeaning features but not the target was the bug —
+    least squares then spends the deviations explaining between-dyad level and
+    lands on the wrong sign within a dyad.
+  - **The shipped model uses three of the nine features it computes.**
+    Measured, not chosen: every other feature made out-of-sample within-dyad
+    ordering worse. The other six stay because the ablation reads them.
+  - **Persistence is not the baseline, it is the signal** (+0.4253 within
+    dyad; nothing beat it). So the gate asks the model to KEEP persistence's
+    ordering and beat its error — `passes_gate` carries the record of the gate
+    moving, on evidence, in its own docstring. The model's claim is magnitude,
+    and the frozen payload says so.
+  Training is OFFLINE (`scripts/train_forecaster.py` → a hashed JSON artifact
+  in `models/`, committed); the boot does a forward pass and freezes a THIRD
+  Forecast mode (`model`). A model whose gate failed is never frozen, and the
+  two counted forecasts do not depend on it existing.
 - **Region packs are a contract** (`core/packs.py`): seven YAMLs, core runs
   unchanged, nothing in `core/` may special-case a region NAME. Three packs
   now — `mena`, `china`, `eurasia` — and an incomplete pack directory is

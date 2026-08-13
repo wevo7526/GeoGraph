@@ -195,6 +195,16 @@ enums:
           5–20 years, structural. Scenario space with crisis-probability
           windows — never dated point predictions, and every output states
           that boundary.
+      model:
+        description: >-
+          A LEARNED forecast (docs/ml-spec.md): a per-dyad intensity
+          trajectory from a fitted model, frozen with the artifact hash that
+          produced it. A separate mode rather than a variant of near_term,
+          because the two are believed for different reasons — near_term is
+          COUNTED from the archive and can be recomputed by hand, this is
+          FITTED and can only be trusted as far as its walk-forward score.
+          Both travel in frozen_inputs_json, and a model whose gate failed is
+          never frozen at all.
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Slots — defined once, reused. `required` here is what the validator enforces.
