@@ -176,6 +176,11 @@ def forward_view(request: Request, region: str = "mena") -> dict[str, Any]:
             "boundary_statement": long_horizon["boundary_statement"],
             "trajectory": long_frozen.get("pressure", {}),
             "windows": long_frozen.get("windows", []),
+            # The composite only exists for years holding EVERY component, so
+            # an empty or short trajectory is a coverage fact, not a failure.
+            # It travels with the series that lacks it.
+            "span": long_frozen.get("pressure_span"),
+            "coverage_gaps": long_frozen.get("coverage", {}),
         }
 
     return {

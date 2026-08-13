@@ -180,4 +180,11 @@ def test_the_forward_view_serves_the_book_and_the_boundary(
         assert set(body["net_weights"]) == {"BZ=F", "GC=F", "^TASI.SR", "DFMGI.AE"}
         # Long-horizon ALWAYS carries the boundary statement.
         assert body["pressure"]["boundary_statement"]
-        assert body["pressure"]["trajectory"]
+        # A curated spine alone produces no comparable composite at all: its
+        # five-year windows sit under the sample floor and the pack seeds no
+        # capability estimates, so every component is empty. The payload says
+        # so in its own fields rather than drawing a line out of nothing.
+        assert body["pressure"]["trajectory"] == {}
+        assert body["pressure"]["span"] is None
+        # No component has any year, so no year can be SHORT of one.
+        assert body["pressure"]["coverage_gaps"] == {}

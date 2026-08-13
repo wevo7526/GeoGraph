@@ -82,6 +82,66 @@ def db_path(tmp_path):
     return path
 
 
+@pytest.fixture()
+def dense_db_path(tmp_path):
+    """An archive DENSE enough for the event-derived components to be
+    measurements rather than anecdotes.
+
+    The real archive's density is uneven by construction — the GDELT wire runs
+    1979–2005 and the years after it hold only a curated spine — so the sample
+    floor in structural.py drops most of the small fixture above. This one
+    carries a wire-like twelve events a year with capability estimates over the
+    same span, which is what the pressure composite is designed to read.
+    """
+    path = tmp_path / "dense.kuzu"
+    years = range(1950, 2026)
+    hot = set(range(1965, 1976)) | set(range(2000, 2011))
+    conn = kuzu_store.connect(path)
+    try:
+        seed_pack.seed(conn, packs.load("mena"))
+        kuzu_store.merge_nodes(conn, "AttributeEstimate", [
+            {"node_id": f"estimate:clout:{actor}:{year}", "attribute": "clout",
+             "value_mean": mean, "value_std": 0.0,
+             "as_of": f"{year}-12-31", "method": "cinc_seed"}
+            for year in years
+            for actor, mean in (
+                ("cow-2", 0.30 + 0.001 * (year - 1950)),
+                ("cow-630", 0.10 + 0.002 * (year - 1950)),
+                ("cow-645", 0.05),
+            )
+        ])
+        kuzu_store.merge_edges(conn, "HAS_ESTIMATE", [
+            {"src": f"actor:{actor}", "dst": f"estimate:clout:{actor}:{year}"}
+            for year in years for actor in ("cow-2", "cow-630", "cow-645")
+        ])
+        # Twelve events a year; the escalating share and the conflict intensity
+        # both rise inside the hot stretches, which is the shape retrodiction
+        # is meant to catch.
+        kuzu_store.merge_nodes(conn, "Event", [
+            {
+                "node_id": f"event:dense-{year}-{i:02d}",
+                "name": f"Synthetic {year} #{i}",
+                "event_time": f"{year}-{1 + i % 12:02d}-15",
+                "action_cameo_code": "190",
+                "goldstein": -9.0 if year in hot else -4.0,
+                "quad_class": "material_conflict",
+                "region_pack": "mena",
+                "fidelity_tier": "deep_structured",
+                "temporal_resolution": "day",
+                "source_scale": "cow_hostility",
+                "escalation_direction": (
+                    "escalating" if i % 12 < (8 if year in hot else 3) else "stable"
+                ),
+                "escalation_magnitude": 2.0,
+                "escalation_baseline": -5.0,
+            }
+            for year in years for i in range(12)
+        ])
+    finally:
+        kuzu_store.close(conn)
+    return path
+
+
 # ── structural pressure ──────────────────────────────────────────────────────
 
 
@@ -96,16 +156,41 @@ def test_pressure_components_have_the_shapes_the_data_implies(db_path):
     assert all(0 <= v <= 1 for v in proximity.values())
 
 
-def test_as_of_truncates_every_series(db_path):
-    full = structural.pressure_components(db_path)
-    truncated = structural.pressure_components(db_path, as_of="1955-12-31")
-    assert max(truncated["concentration"]) == 1955
-    assert max(full["concentration"]) == 1959
-    # The modern spine exists in full but not in the 1955 view — where this
-    # fixture holds no material conflict at all, and an empty series is the
-    # correct answer, not a fabricated zero.
-    assert max(full["conflict_intensity"]) >= 2025
-    assert not truncated["conflict_intensity"] or max(truncated["conflict_intensity"]) <= 1955
+def test_as_of_truncates_every_series(dense_db_path):
+    full = structural.pressure_components(dense_db_path)
+    truncated = structural.pressure_components(dense_db_path, as_of="1980-12-31")
+    for name in ("concentration", "transition_proximity", "conflict_intensity"):
+        assert max(truncated[name]) <= 1980 < max(full[name]), name
+
+
+def test_a_thin_window_yields_no_measurement_at_all(db_path):
+    # The curated spine is a dozen events across 120 years. Its five-year
+    # windows hold single figures, so they produce NO share and NO intensity —
+    # dropped, never averaged into a number that would then be percentile-
+    # ranked against the wire era's thousands. This is the fix for a composite
+    # that read 0.93 (its all-time high) off two events in 2025.
+    components = structural.pressure_components(db_path)
+    assert components["conflict_intensity"] == {}
+    assert components["escalation_share"] == {}
+    # …and the capability components, which have real per-year data, survive.
+    assert components["concentration"]
+
+
+def test_the_composite_is_the_same_composite_in_every_year(dense_db_path):
+    # A mean over "whatever component exists this year" silently changes
+    # definition where a source ends. Every pressure year must therefore hold
+    # all four components; the years that cannot are reported as coverage gaps
+    # naming what was missing, not quietly averaged over fewer terms.
+    forecast = structural.structural_forecast(dense_db_path, region_pack="mena")
+    components = forecast["components"]
+    for year in forecast["pressure"]:
+        for name, series in components.items():
+            assert str(year) in series or int(year) in series, (year, name)
+    for missing in forecast["coverage"].values():
+        assert missing, "a coverage row exists only to name what was absent"
+        assert int(list(forecast["coverage"])[0]) not in forecast["pressure"]
+    span = forecast["pressure_span"]
+    assert span and span[0] <= span[1]
 
 
 def test_the_forecast_carries_the_boundary_and_no_likelihoods(db_path):
@@ -131,8 +216,8 @@ def test_the_forecast_is_deterministic(db_path):
 # ── retrodiction ─────────────────────────────────────────────────────────────
 
 
-def test_retrodiction_reports_hits_beside_the_base_rate(db_path):
-    report = retrodict(db_path, as_of="2015-01-01", region_pack="mena")
+def test_retrodiction_reports_hits_beside_the_base_rate(dense_db_path):
+    report = retrodict(dense_db_path, as_of="2015-01-01", region_pack="mena")
     assert report["boundary_statement"] == structural.BOUNDARY_STATEMENT
     assert report["base_rate"] is not None
     if report["flagged_years"]:
@@ -277,6 +362,100 @@ def test_near_term_scenarios_are_base_rates_that_sum_to_one(db_path):
     frozen = payload["frozen_inputs"]
     assert frozen["episodes"] >= frozen["continuations"] >= 0
     assert payload["as_of"] == frozen["as_of"]
+
+
+def test_dyads_with_different_records_get_different_likelihoods():
+    from core.reasoning import forecasting
+
+    # Two dyads, opposite histories, inside one monetary order: one escalates
+    # in consecutive quarters for years, the other twice a decade apart. A
+    # pooled rate hands both the same number — which is what the frozen MENA
+    # call did, reading an identical 0.9347 for three unrelated dyads.
+    rows = []
+    for i, (dyad, years, months) in enumerate((
+        ("dyad:chronic", range(1990, 2004), (1, 4, 7, 10)),
+        # Five episodes, each more than the 3-year horizon from the next, so
+        # none of them continues.
+        ("dyad:rare", (1980, 1986, 1992, 1998, 2004), (6,)),
+    )):
+        for year in years:
+            for month in months:
+                rows.append({
+                    "dyad_id": dyad, "dyad_name": dyad, "baseline": -8.0 - i,
+                    "event_id": f"event:{dyad}-{year}-{month}",
+                    "event_time": f"{year}-{month:02d}-15",
+                    "direction": "escalating", "magnitude": 9.0,
+                    "region_pack": "mena",
+                })
+    payload = forecasting.forecast_from_rows(rows, "q", region_pack="mena")
+    rates = {
+        s["scenario_name"].split(":", 1)[1]: s["likelihood"]
+        for s in payload["scenarios"]
+        if s["scenario_name"].startswith("further_escalation")
+    }
+    assert rates["dyad:chronic"] > rates["dyad:rare"], rates
+    # Both are still recomputable by hand from the frozen counts.
+    counts = payload["frozen_inputs"]["dyad_counts"]
+    assert counts["dyad:chronic"][1] > counts["dyad:rare"][1]
+
+
+def test_a_routine_escalation_is_not_an_episode():
+    from core.reasoning import forecasting
+
+    # Departures below the in-regime top decile do not open an episode. Without
+    # this, a dyad continuously in the wire scored ~99% on every horizon
+    # because "another escalating quarter within 3y" is what being in the wire
+    # MEANS — the estimate measured coverage, not conflict.
+    chatter = [
+        {
+            "dyad_id": "dyad:noisy", "dyad_name": "noisy", "baseline": -6.0,
+            "event_id": f"event:noisy-{year}-{month}",
+            "event_time": f"{year}-{month:02d}-15",
+            "direction": "escalating", "magnitude": 0.5, "region_pack": "mena",
+        }
+        for year in range(1990, 2005) for month in (1, 4, 7, 10)
+    ]
+    ruptures = [
+        {
+            "dyad_id": "dyad:noisy", "dyad_name": "noisy", "baseline": -6.0,
+            "event_id": f"event:rupture-{year}", "event_time": f"{year}-02-15",
+            "direction": "escalating", "magnitude": 20.0, "region_pack": "mena",
+        }
+        for year in range(1980, 2008, 4)
+    ]
+    payload = forecasting.forecast_from_rows(chatter + ruptures, "q", region_pack="mena")
+    frozen = payload["frozen_inputs"]
+    # 67 escalating events, 7 of them real departures — the top decile lands on
+    # the ruptures and the sixty quarters of chatter open no episode at all.
+    assert frozen["significance_threshold"] == 20.0
+    assert frozen["episodes"] == len(ruptures)
+    # Every rupture is four years from the next, past the 3-year horizon.
+    assert frozen["continuations"] == 0
+
+
+def test_a_dyad_the_archive_never_watched_escalate_is_not_focal():
+    from core.reasoning import forecasting
+
+    # A dyad whose only claim is a very negative baseline used to lead the
+    # forecast on zero episodes, presenting the pooled prior as a finding
+    # about it.
+    rows = [
+        {
+            "dyad_id": "dyad:evidenced", "dyad_name": "evidenced", "baseline": -5.0,
+            "event_id": f"event:e-{year}", "event_time": f"{year}-03-15",
+            "direction": "escalating", "magnitude": 9.0, "region_pack": "mena",
+        }
+        for year in range(1990, 2000)
+    ] + [
+        {
+            "dyad_id": "dyad:silent", "dyad_name": "silent", "baseline": -10.0,
+            "event_id": "event:s-1995", "event_time": "1995-03-15",
+            "direction": "stable", "magnitude": 0.1, "region_pack": "mena",
+        }
+    ]
+    payload = forecasting.forecast_from_rows(rows, "q", region_pack="mena")
+    named = {s["scenario_name"].split(":", 1)[1] for s in payload["scenarios"]}
+    assert named == {"dyad:evidenced"}
 
 
 def test_near_term_is_deterministic_and_clock_free(db_path):

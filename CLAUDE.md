@@ -153,6 +153,29 @@ hops apart.
 - **The market-as-sensor loop updates only from REALIZED outcomes** — never
   from the model's own predictions (§4). Estimate updates are NEW
   AttributeEstimate nodes (`method='sensor_update'`), not overwrites.
+- **UNEVEN DENSITY IS THE ARCHIVE'S DEFINING HAZARD, and two estimators were
+  silently wrecked by it.** 98% of the events sit in 1979–2005 (the loaded
+  GDELT wire); the years on either side hold only a curated spine, and the
+  last twenty years hold 155 events in total. Consequences now enforced:
+  - `structural.py` drops any trailing window under `_MIN_WINDOW_SAMPLE` (30
+    coded events) and computes the composite ONLY for years holding every
+    component. Percentile-ranking a six-event window against a five-thousand-
+    event one had pinned conflict_intensity at 1.0 and, once the capability
+    series ended in 2022, quietly turned a mean of four components into a mean
+    of the two noisiest — printing 0.93, an all-time high, for 2025. Years
+    short of full coverage are reported in `coverage`, never averaged over
+    fewer terms.
+  - `forecasting.py` counts an episode only when a dyad-quarter holds a
+    departure in the top decile of in-regime departures from that dyad's OWN
+    baseline (`_SIGNIFICANCE_PERCENTILE`, read off the archive and frozen in
+    the payload), and shrinks each dyad's own rate toward the pooled rate by
+    beta-binomial method of moments instead of handing every dyad the pool.
+    Counting every escalating event pooled across all dyads had answered "is
+    this dyad chronically in the wire?" — 0.9347, identical for three
+    unrelated dyads. Focal dyads must clear an evidence bar BEFORE ranking,
+    or a dyad with zero episodes leads the forecast wearing the pooled prior.
+  - Frozen payloads now carry `evidence_span`: when a likelihood's evidence is
+    from, which is not when the archive ends.
 - **Region packs are a contract** (`core/packs.py`): seven YAMLs, core runs
   unchanged, nothing in `core/` may special-case a region NAME. Three packs
   now — `mena`, `china`, `eurasia` — and an incomplete pack directory is
@@ -162,6 +185,15 @@ hops apart.
   IS the Washington–Moscow dyad), with the old constant preserved as the
   default. That is the contract holding, not bending — the test to apply is
   "would a fourth region need this too?", not "does this mention a region?".
+- **A pack's KEY is not its caption.** `Pack.label` (declared as
+  `region_label` in the pack's actors.yaml, defaulting to the pack name) is
+  what the surface shows; `pack.name` is what every `region=` parameter takes
+  and what every record carries in `region_pack`. `packs/china` is captioned
+  ASIA — the roster reaches Taiwan, Japan and Korea — while staying keyed
+  `china`, because renaming the key is a data migration: it is written into
+  the GDELT artifact filenames and into the deployed volume, and the boot's
+  resume check counts events BY that key. `/api/packs` serves both fields;
+  `web/src/regions.ts` is the single fetch behind every header.
 - **Shared market nodes must be described identically by every pack that
   names them.** Packs seed alphabetically, so two descriptions of
   `market:brent` is one description plus a silent loser — and the

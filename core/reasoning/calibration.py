@@ -81,6 +81,10 @@ def retrodict(
             "as_of": as_of, "region_pack": region_pack,
             "verdict": "insufficient realized data in the lookahead horizon",
             "flagged_years": [], "hits": [], "hit_rate": None, "base_rate": None,
+            # This return is still long-horizon output, so it still carries the
+            # boundary statement. Dropping it here made the ONE shape a reader
+            # meets when the archive is thin the one shape missing its caveat.
+            "boundary_statement": structural.BOUNDARY_STATEMENT,
         }
 
     ordered = sorted(horizon.values())

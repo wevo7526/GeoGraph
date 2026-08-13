@@ -42,6 +42,21 @@ _EVENT_WINDOW_YEARS = 5
 _ELEVATED = 0.6
 _HIGH = 0.8
 
+#: Coded events a trailing window must hold before its share/intensity counts
+#: as a MEASUREMENT of that window rather than an anecdote about it.
+#:
+#: This floor is not fussiness. The archive's density is wildly uneven — the
+#: GDELT wire runs 1979–2005 and puts thousands of coded events in a five-year
+#: window, while the years after it hold only the curated spine, six or eight
+#: events. Percentile-ranking a six-event window against a five-thousand-event
+#: window ranks sampling noise against a measurement, and it did exactly the
+#: damage you would predict: mean |goldstein| over the two curated conflicts of
+#: 2023–2025 pinned conflict_intensity at 1.0, its all-time high, which read
+#: off the chart as the most dangerous moment in 120 years. A window under the
+#: floor yields NO value for that year — dropped and counted (`coverage`),
+#: never smoothed over.
+_MIN_WINDOW_SAMPLE = 30
+
 
 def _concentration(shares: list[float]) -> float:
     """Singer's CON: 0 when capability is evenly spread, 1 when one state
@@ -127,7 +142,7 @@ def pressure_components(db_path: Path, *, as_of: str | None = None) -> dict[str,
             if not window:
                 continue
             coded = [e for e in window if e["direction"]]
-            if coded:
+            if len(coded) >= _MIN_WINDOW_SAMPLE:
                 escalation_share[year] = sum(
                     1 for e in coded if e["direction"] == "escalating"
                 ) / len(coded)
@@ -136,7 +151,7 @@ def pressure_components(db_path: Path, *, as_of: str | None = None) -> dict[str,
                 for e in window
                 if e["quad_class"] == "material_conflict" and e["goldstein"] is not None
             ]
-            if conflicts:
+            if len(conflicts) >= _MIN_WINDOW_SAMPLE:
                 intensity[year] = sum(conflicts) / len(conflicts) / 10.0
 
     return {
@@ -165,12 +180,26 @@ def structural_forecast(
     components = pressure_components(db_path, as_of=as_of)
     ranked = {name: _percentile_ranks(series) for name, series in components.items()}
 
+    # THE COMPOSITE IS ONLY COMPARABLE ACROSS YEARS IF IT IS THE SAME COMPOSITE.
+    # Each component ends where its source ends — capability estimates at the
+    # last CINC year, the event-derived pair at the last year with a window
+    # above the sample floor — so a mean over "whatever exists this year"
+    # silently changes definition mid-series. It did: past the capability data
+    # the mean of four components became the mean of the two noisiest, and the
+    # series ended on a fabricated all-time high. A year contributes a pressure
+    # reading when EVERY component the archive can compute has a value for it,
+    # and otherwise contributes a coverage row saying what was missing.
+    expected = {name for name, series in components.items() if series}
     years = sorted({year for series in components.values() for year in series})
     pressure: dict[int, float] = {}
+    coverage: dict[int, list[str]] = {}
     for year in years:
-        ranks = [series[year] for series in ranked.values() if year in series]
-        if ranks:
-            pressure[year] = sum(ranks) / len(ranks)
+        present = {name for name in expected if year in components[name]}
+        if present != expected:
+            coverage[year] = sorted(expected - present)
+            continue
+        ranks = [ranked[name][year] for name in sorted(expected)]
+        pressure[year] = sum(ranks) / len(ranks)
 
     windows: list[dict[str, Any]] = []
     run_start: int | None = None
@@ -246,6 +275,12 @@ def structural_forecast(
         "boundary_statement": BOUNDARY_STATEMENT,
         "components": {name: dict(sorted(series.items())) for name, series in components.items()},
         "pressure": dict(sorted(pressure.items())),
+        # Where the composite stops, and what stopped it — the front end draws
+        # the boundary from this rather than running the line into thin air.
+        "coverage": {str(year): missing for year, missing in sorted(coverage.items())},
+        "pressure_span": (
+            [min(pressure), max(pressure)] if pressure else None
+        ),
         "windows": windows,
         "scenarios": scenarios,
         "method": (
