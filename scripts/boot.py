@@ -359,7 +359,15 @@ def _load_gdelt(pack_names: list[str]) -> dict[str, Any]:
             results.append({"pack": name, "ok": True,
                             "skipped": "no derived artifact in the image"})
             continue
-        expected = _artifact_events(artifacts[-1])
+        # EVERY artifact, not the last one. The modern-era backfill ships one
+        # file PER YEAR (gdelt-mena-2014.tsv.gz …), because the daily era is
+        # thousands of downloads and a harvest that cannot checkpoint between
+        # years cannot finish. Reading only artifacts[-1] here would have
+        # loaded 2026 alone and — worse — compared the graph's whole count
+        # against that one year's, so the completeness check would pass
+        # immediately and the other twenty years would never load. That is the
+        # same silent-shortfall bug the docstring above describes, one level up.
+        expected = sum(_artifact_events(artifact) for artifact in artifacts)
         held = _graph_gdelt_count(name)
         if held is not None and held >= expected:
             results.append({"pack": name, "ok": True,
@@ -372,19 +380,25 @@ def _load_gdelt(pack_names: list[str]) -> dict[str, Any]:
             continue
         if held:
             _log(f"gdelt {name}: graph holds {held}/{expected} — resuming the rest")
-        started = time.monotonic()
-        step = _run_step(
-            f"gdelt backfill {name}",
-            [sys.executable, str(_GDELT_SCRIPT), name,
-             "--from-filtered", str(artifacts[-1])],
-            timeout=int(min(_GDELT_TIMEOUT_SECONDS, budget)),
-            echo=False,
-        )
-        budget -= time.monotonic() - started
+        steps = []
+        for artifact in artifacts:
+            if budget <= 0:
+                _log(f"gdelt {name}: budget spent at {artifact.name} — deferred")
+                break
+            started = time.monotonic()
+            steps.append(_run_step(
+                f"gdelt backfill {name} {artifact.stem}",
+                [sys.executable, str(_GDELT_SCRIPT), name,
+                 "--from-filtered", str(artifact)],
+                timeout=int(min(_GDELT_TIMEOUT_SECONDS, budget)),
+                echo=False,
+            ))
+            budget -= time.monotonic() - started
         after = _graph_gdelt_count(name)
         results.append({
             "pack": name, "expected": expected, "held": after,
-            **{k: v for k, v in step.items() if k != "step"},
+            "artifacts": len(artifacts), "loaded": len(steps),
+            "ok": all(s["ok"] for s in steps) if steps else True,
         })
         if after is not None and after < expected:
             _log(f"gdelt {name}: STILL SHORT — {after}/{expected}")

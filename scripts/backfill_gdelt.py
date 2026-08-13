@@ -1,23 +1,36 @@
 """Backfill GDELT events from the free raw files — no credentials at all.
 
-  python scripts/backfill_gdelt.py                       # 1979–2005 (yearly files)
-  python scripts/backfill_gdelt.py --from 1979 --to 2013 # + monthly era
-  python scripts/backfill_gdelt.py --min-mentions 5      # denser, noisier
+  python scripts/backfill_gdelt.py                        # 1979–2005, caching
+  python scripts/backfill_gdelt.py mena --from 2006 --to 2026 \
+      --min-mentions 50 --harvest-to data/derived           # the modern era
+  python scripts/backfill_gdelt.py mena --from-filtered <artifact.tsv.gz>
 
-The file eras (data.gdeltproject.org/events/): YEARLY zips through 2005,
-MONTHLY 200601–201303, DAILY thereafter. The daily era is ~9 MB per day —
-a full backfill of it is tens of gigabytes, so it is deliberately NOT the
-default; extend --to only as far as the disk and the patience go. Downloads
-cache under GEOGRAPH_RAW_DIR/gdelt (the Railway volume), and zip members are
-parsed as streams — nothing is extracted to disk.
+TWO PATHS, and the difference is the whole story on a 5 GB volume.
 
-Stop the API first: writing events needs the Kuzu write lock. Ends with the
-archive-wide Head B rescore and the provenance backstop.
+The CACHING path (`_fetch`) keeps every archive under GEOGRAPH_RAW_DIR. That
+was fine for 1979–2005: 27 yearly zips, 2.0 GB, downloaded once. It does not
+survive contact with the modern era — the file eras are YEARLY through 2005,
+MONTHLY to 2013-03, then one file per DAY, and the daily files measure ~9 MB
+each. 2013-04 to now is ~4,900 of them: about 45 GB, on a volume that holds
+five.
+
+The HARVEST path (`--harvest-to`) streams each archive through memory,
+filters it against the pack roster, appends the survivors to a PER-YEAR
+artifact and discards the download. Peak disk is one file, ~12 MB. What it
+leaves behind is what was worth keeping: at --min-mentions 50 the whole
+2006–2026 span is single-digit megabytes per pack, against the ~52 GB of
+archives it was distilled from. Harvest touches no graph and takes no lock,
+so it can run for hours beside a live container; `--from-filtered` then loads
+the artifacts, resumably, in a short pass that does need the lock.
+
+Stop the API before LOADING. Ends with the archive-wide Head B rescore and
+the provenance backstop.
 """
 
 from __future__ import annotations
 
 import argparse
+import datetime as dt
 import gzip
 import io
 import os
@@ -44,23 +57,31 @@ _BASE = "http://data.gdeltproject.org/events"
 #: The eras and their file naming. Monthly begins 2006-01; daily 2013-04.
 _YEARLY_THROUGH = 2005
 _MONTHLY_THROUGH = (2013, 3)
+#: The first day the daily export exists.
+_DAILY_FROM = dt.date(2013, 4, 1)
 
 
-def _archives(start_year: int, end_year: int) -> list[str]:
+def _archives_for_year(year: int) -> list[str]:
+    """Every archive covering `year`, in the naming its era uses.
+
+    Three eras, three shapes: one zip a year through 2005, one a month to
+    2013-03, one a DAY after that. The daily era is why this function returns
+    a list per year rather than a flat list for a range — 2014 alone is 365
+    downloads, and a caller that cannot checkpoint between years cannot
+    finish.
+    """
+    if year <= _YEARLY_THROUGH:
+        return [f"{year}.zip"]
     names: list[str] = []
-    for year in range(start_year, min(end_year, _YEARLY_THROUGH) + 1):
-        names.append(f"{year}.zip")
-    for year in range(max(start_year, 2006), end_year + 1):
-        last_month = _MONTHLY_THROUGH[1] if year == _MONTHLY_THROUGH[0] else 12
-        if year > _MONTHLY_THROUGH[0]:
-            break
-        for month in range(1, last_month + 1):
-            names.append(f"{year}{month:02d}.zip")
-    if end_year > _MONTHLY_THROUGH[0]:
-        print(
-            "note: the daily era (2013-04 onward) is not backfilled by default — "
-            "~9 MB per day; extend deliberately."
-        )
+    if year <= _MONTHLY_THROUGH[0]:
+        last = _MONTHLY_THROUGH[1] if year == _MONTHLY_THROUGH[0] else 12
+        names.extend(f"{year}{month:02d}.zip" for month in range(1, last + 1))
+    if year >= _MONTHLY_THROUGH[0]:
+        day = max(_DAILY_FROM, dt.date(year, 1, 1))
+        end = min(dt.date(year, 12, 31), dt.date.today() - dt.timedelta(days=1))
+        while day <= end:
+            names.append(f"{day:%Y%m%d}.export.CSV.zip")
+            day += dt.timedelta(days=1)
     return names
 
 
@@ -124,12 +145,152 @@ def _fetch(name: str) -> Path:
     return target
 
 
+def _roster(pack: Any) -> dict[str, dict[str, Any]]:
+    """iso3 → the node the GDELT country code resolves to for this lens."""
+    return {
+        a["iso3"]: {"node_id": a["id"], "name": a["name"]}
+        for a in pack.actors
+        if a.get("iso3")
+    }
+
+
+class _Missing(Exception):
+    """A dated archive GDELT does not publish. Some days simply have no file;
+    that is a gap in the source, not a failure of this run."""
+
+
+def _stream_lines(name: str) -> Iterator[str]:
+    """The archive's lines, downloaded to MEMORY and discarded after.
+
+    CACHING THE DAILY ERA IS NOT AN OPTION ON A 5 GB VOLUME. The 1979–2005
+    yearly files are 2.0 GB cached and that already dominates the volume; the
+    daily era measures ~9 MB a day, which is ~45 GB from 2013-04 to now. The
+    output is what is worth keeping — the filtered artifact for the whole
+    daily era is single-digit megabytes — so the archives stream through
+    memory one at a time and are never written down. Peak footprint is one
+    file, about 12 MB.
+    """
+    url = f"{_BASE}/{name}"
+    try:
+        with urllib.request.urlopen(url, timeout=300) as response:  # noqa: S310
+            payload = response.read()
+    except urllib.error.HTTPError as exc:
+        if exc.code == 404:
+            raise _Missing(name) from exc
+        raise
+    with zipfile.ZipFile(io.BytesIO(payload)) as zf:
+        member = zf.namelist()[0]
+        with zf.open(member) as fh:
+            yield from io.TextIOWrapper(fh, encoding="latin-1", errors="replace")
+
+
+def harvest(
+    lenses: list[tuple[Any, dict[str, dict[str, Any]]]],
+    *,
+    start_year: int,
+    end_year: int,
+    min_mentions: int,
+    out_dir: Path,
+) -> dict[str, int]:
+    """Stream every archive in [start_year, end_year] into PER-YEAR artifacts,
+    filtering it against EVERY lens in one pass.
+
+    All packs together, because the archives are what cost: 2006–2026 is about
+    52 GB of downloads, and harvesting three regions one after another would
+    stream that three times over for no reason. Each file is fetched once, run
+    against each roster, and dropped.
+
+    Per year, not per range, because the daily era makes this thousands of
+    downloads and a run that cannot checkpoint cannot finish: a year already
+    harvested for a lens is skipped, so an interruption costs the year it was
+    in. The artifact is the durable output — a year of filtered lines is
+    around a megabyte gzipped against the ~3 GB of archives behind it.
+
+    Nothing is written to the graph. Loading is the --from-filtered path,
+    which is separately resumable and needs the write lock this does not.
+    """
+    out_dir.mkdir(parents=True, exist_ok=True)
+    totals = {pack.name: 0 for pack, _ in lenses}
+    for year in range(start_year, end_year + 1):
+        pending = [
+            (pack, roster, out_dir / f"gdelt-{pack.name}-{year}.tsv.gz")
+            for pack, roster in lenses
+            if not (out_dir / f"gdelt-{pack.name}-{year}.tsv.gz").exists()
+        ]
+        if not pending:
+            print(f"{year}: artifacts present for every lens, skipping")
+            continue
+        names = _archives_for_year(year)
+        if not names:
+            continue
+        kept = {pack.name: 0 for pack, _, _ in pending}
+        scanned = missing = 0
+        # Write to PARTIAL files and rename at the end: a killed run must not
+        # leave a half-year artifact that the skip-check above would then treat
+        # as complete.
+        # One handle per lens, all open across the year's archives — a
+        # with-block per file would reopen and re-header each of them 366
+        # times. Closed in the finally below.
+        handles = {
+            pack.name: gzip.open(  # noqa: SIM115
+                target.with_suffix(".gz.partial"), "wt", encoding="latin-1"
+            )
+            for pack, _, target in pending
+        }
+        try:
+            for index, name in enumerate(names, 1):
+                try:
+                    lines = list(_stream_lines(name))
+                except _Missing:
+                    missing += 1
+                    continue
+                scanned += len(lines)
+                for pack, roster, _target in pending:
+                    events, _edges, _result = gdelt.parse_lines(
+                        lines,
+                        actors_by_iso3=roster,
+                        region_pack=pack.name,
+                        min_mentions=min_mentions,
+                        external_powers=pack.external_powers,
+                        keep_lines=handles[pack.name],
+                    )
+                    kept[pack.name] += len(events)
+                if index % 25 == 0 or index == len(names):
+                    tally = " ".join(f"{n} {v:,}" for n, v in sorted(kept.items()))
+                    print(
+                        f"  {year} {index}/{len(names)} archives · "
+                        f"{scanned:,} scanned · {tally}"
+                        + (f" · {missing} absent" if missing else ""),
+                        flush=True,
+                    )
+        finally:
+            for handle in handles.values():
+                handle.close()
+        for pack, _roster, target in pending:
+            target.with_suffix(".gz.partial").rename(target)
+            print(f"{year}: {pack.name} {kept[pack.name]:,} events -> "
+                  f"{target.name} ({target.stat().st_size / 1e6:.1f} MB)")
+            totals[pack.name] += kept[pack.name]
+    return totals
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("pack", nargs="?", default="mena")
+    parser.add_argument(
+        "pack", nargs="?", default="mena",
+        help="a pack name, or 'all' to harvest every installed lens in one "
+             "download pass (--harvest-to only)",
+    )
     parser.add_argument("--from", dest="start", type=int, default=1979)
     parser.add_argument("--to", dest="end", type=int, default=2005)
     parser.add_argument("--min-mentions", type=int, default=10)
+    parser.add_argument(
+        "--harvest-to",
+        help="stream the archives into PER-YEAR artifacts in this directory "
+             "and write nothing to the graph. The only way to cover the daily "
+             "era: nothing is cached, so the run costs ~12 MB of disk rather "
+             "than the ~45 GB the archives themselves weigh.",
+    )
     parser.add_argument(
         "--export-filtered",
         help="ALSO write the kept raw lines to this gz file — a derived cache "
@@ -143,14 +304,32 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    pack = packs.load(args.pack)
-    actors_by_iso3 = {
-        a["iso3"]: {"node_id": a["id"], "name": a["name"]}
-        for a in pack.actors
-        if a.get("iso3")
-    }
+    pack = packs.load(packs.available()[0] if args.pack == "all" else args.pack)
+    actors_by_iso3 = _roster(pack)
     if not actors_by_iso3:
         sys.exit(f"packs/{pack.name} has no iso3-coded actors to match against.")
+
+    # HARVEST TOUCHES NO GRAPH. Kuzu is single-writer and the API holds the
+    # lock, so a step that only downloads and filters must not take it — this
+    # can run for hours beside a live container, and the load that does need
+    # the lock is a separate, short, resumable pass.
+    if args.harvest_to:
+        # `all` harvests every installed lens in ONE download pass. The named
+        # form stays for a single region, but three sequential harvests stream
+        # the same ~52 GB three times.
+        if args.pack == "all":
+            lenses = [(packs.load(n), _roster(packs.load(n))) for n in packs.available()]
+        else:
+            lenses = [(pack, actors_by_iso3)]
+        totals = harvest(
+            lenses,
+            start_year=args.start, end_year=args.end,
+            min_mentions=args.min_mentions, out_dir=Path(args.harvest_to),
+        )
+        print(f"\nharvested into {args.harvest_to}")
+        for name, count in sorted(totals.items()):
+            print(f"  {name:<10} {count:,} events")
+        return
 
     settings = settings_module.load()
     conn = kuzu_store.connect(settings.kuzu_db_path)
@@ -191,7 +370,18 @@ def main() -> None:
                     print(f"  +{result.written} ({total_written} this run)", flush=True)
             print(f"{Path(args.from_filtered).name}: {total_written} events")
         else:
-            for name in _archives(args.start, args.end):
+            archives = [
+                name
+                for year in range(args.start, args.end + 1)
+                for name in _archives_for_year(year)
+            ]
+            if len(archives) > 24:
+                print(
+                    f"note: {len(archives)} archives on the CACHING path "
+                    f"(~{len(archives) * 9 / 1000:.1f} GB written to "
+                    f"{_RAW}). --harvest-to streams instead and keeps nothing."
+                )
+            for name in archives:
                 archive = _fetch(name)
                 with zipfile.ZipFile(archive) as zf:
                     member = zf.namelist()[0]

@@ -132,6 +132,28 @@ def test_the_shipped_artifacts_report_their_real_size():
         assert boot._artifact_events(matches[-1]) == expected
 
 
+def test_the_expected_count_sums_every_artifact_not_just_the_last(tmp_path):
+    # The modern-era backfill ships one artifact PER YEAR, because the daily
+    # era is thousands of downloads and a harvest that cannot checkpoint
+    # between years cannot finish. Taking artifacts[-1] would compare the
+    # graph's whole count against one year's — the completeness check would
+    # pass on the first boot and the other twenty years would never load,
+    # which is the same silent-shortfall this module exists to prevent.
+    derived = tmp_path / "derived"
+    derived.mkdir()
+    sizes = {"1979-2005": 1_000, "2006": 40, "2007": 60, "2026": 25}
+    for suffix, count in sizes.items():
+        with gzip.open(derived / f"gdelt-mena-{suffix}.tsv.gz", "wt", encoding="latin-1") as fh:
+            for i in range(count):
+                fh.write(_line(f"{suffix}-{i}"))
+    artifacts = sorted(derived.glob("gdelt-mena-*.tsv.gz"))
+    assert len(artifacts) == 4
+    # Sorting puts the per-year files after the span, so the naive read would
+    # have expected 25 and declared a 1,000-event graph complete.
+    assert boot._artifact_events(artifacts[-1]) == 25
+    assert sum(boot._artifact_events(a) for a in artifacts) == sum(sizes.values())
+
+
 def test_gdelt_gets_a_ceiling_of_its_own_well_above_the_price_fetch():
     # The incident: the load borrowed _LOAD_TIMEOUT_SECONDS (900s, sized for
     # yfinance) and died partway through ~100k merges.
