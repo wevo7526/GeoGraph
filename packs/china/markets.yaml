@@ -73,6 +73,28 @@ markets:
     trading_calendar: global_futures
     inception_date: "1905-01-01"   # long-run annual gold price; futures from 1974
     native_frequency: '{"1905": "year", "1974": "day"}'
+  # THE FRONT END, added for the game layer (docs/game-spec.md section 3.2).
+  # Equity prices how BAD a crisis is; the term structure prices how LONG.
+  # A shock the market expects to pass moves the bill and leaves the long
+  # bond; one it expects to persist moves the long end. The ratio between
+  # them is a market-implied duration, and duration is the quantity a
+  # SEQUENCE forecast is actually about — so the front end is not decoration
+  # here, it is the instrument that separates a dyad's patience from its
+  # cost of fighting when the event record alone cannot.
+  - id: market:dgs3mo
+    name: US 3-Month Treasury bill yield
+    ticker: DGS3MO
+    market_type: sovereign_yield
+    trading_calendar: us
+    inception_date: "1934-01-01"   # FRED secondary-market series; daily from 1954
+    native_frequency: '{"1934": "month", "1954": "day"}'
+  - id: market:dgs2
+    name: US 2-Year Treasury yield
+    ticker: DGS2
+    market_type: sovereign_yield
+    trading_calendar: us
+    inception_date: "1976-06-01"
+    native_frequency: '{"1976": "day"}'
   - id: market:dgs10
     name: US 10-Year Treasury yield
     ticker: DGS10
