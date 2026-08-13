@@ -205,6 +205,18 @@ enums:
           FITTED and can only be trusted as far as its walk-forward score.
           Both travel in frozen_inputs_json, and a model whose gate failed is
           never frozen at all.
+      sequence:
+        description: >-
+          A SOLVED forecast (docs/game-spec.md): a distribution over event
+          sequences from the Markov Perfect Bayesian Equilibrium of a
+          finite-horizon bargaining game, with each step's market implication
+          read from measured AFFECTED edges. A fourth mode because it is
+          believed for a third reason again — not counted, not fitted to
+          outcomes, but SOLVED from a payoff structure whose parameters were
+          fitted to observed action frequencies. It always carries the
+          kernel's measurement coverage and the fit's boundary caveats, since
+          a game solved over a mostly-unmeasured kernel is a game about the
+          fallback.
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Slots — defined once, reused. `required` here is what the validator enforces.

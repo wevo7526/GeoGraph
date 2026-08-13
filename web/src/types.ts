@@ -218,9 +218,9 @@ export interface Retrodiction {
 
 export interface ForecastSummary {
   node_id: string
-  // 'model' is the LEARNED mode — kept distinct from the two counted modes
-  // because they are believed for different reasons (docs/ml-spec.md).
-  mode: 'near_term' | 'long_horizon' | 'model'
+  // Four modes, believed for four different reasons: near_term and
+  // long_horizon are COUNTED, model is FITTED, sequence is SOLVED.
+  mode: 'near_term' | 'long_horizon' | 'model' | 'sequence'
   region_pack: string | null
   question: string
   generated_at: string
@@ -269,6 +269,78 @@ export interface ForecastDetail extends ForecastSummary {
       rmse: number
       rmse_persistence: number
     }>
+    // mode='sequence' only — the solved distribution over event paths.
+    dyads?: SequenceDyad[]
+    equilibrium?: {
+      concept: string
+      payoffs: Record<string, number>
+      distance: number
+      converged: boolean
+      seed: number
+      identification: string
+      method: string
+    }
+    kernel?: {
+      cells: number
+      measured: number
+      fallback: number
+      share_measured: number
+      observations: number
+    }
+    bands?: number[]
+  }
+}
+
+/** One market's measured effect distribution for a predicted step. Never a
+ *  modelled price — these are quantiles of measured AFFECTED abnormal
+ *  returns for comparable past events. */
+export interface StepMarket {
+  market_id: string
+  market_name: string
+  n: number
+  match: 'quad+band' | 'quad only'
+  thin: boolean
+  min: number
+  p25: number
+  median: number
+  p75: number
+  max: number
+}
+
+export interface SequenceStep {
+  period: number
+  action_a: string
+  action_b: string
+  quad: string
+  intensity_band: number
+  band_spread: [number, number]
+  market: StepMarket[]
+}
+
+export interface SequenceDyad {
+  dyad_id: string
+  dyad_name: string
+  active_quarters: number
+  opening_band: number
+  paths: Array<{ probability: number; steps: SequenceStep[] }>
+  paths_enumerated: number
+  retained_probability: number
+  // The per-period distribution over intensity bands. This LEADS the display:
+  // the path tail is long and flat (8 of 271 paths can retain under a tenth of
+  // the mass), so the fan is the honest summary and the paths are the detail.
+  marginal: Array<{
+    period: number
+    distribution: number[]
+    modal_band: number
+    expected_band: number
+  }>
+  pricing: {
+    measurements: number
+    cells: number
+    regime_gated_to: string
+    min_measurements: number
+    method: string
+    note: string | null
   }
 }
 

@@ -2,7 +2,81 @@ import { useEffect, useMemo, useState } from 'react'
 import { getDyadSeries, getForecasts, getForecast, getPanelDyads, getPrecedent } from '../api'
 import { BoxRow, Empty, Fan, LineBand, Strip } from './charts/Charts'
 import { useRegionLabel } from '../regions'
-import type { DyadSeries, ForecastDetail, PanelDyad, Precedent } from '../types'
+import type {
+  DyadSeries, ForecastDetail, PanelDyad, Precedent, SequenceDyad, SequenceStep,
+} from '../types'
+
+/** The solved mode's per-period fan: where the equilibrium puts its mass.
+ *
+ *  This LEADS the sequence panel rather than the paths, because the path tail
+ *  is long and flat — eight of 271 paths can retain under a tenth of the
+ *  probability — so a list of sequences reads as more certainty than exists.
+ *  The fan shows the whole distribution at a glance and cannot. */
+function BandFan({ marginal, bands }: { marginal: SequenceDyad['marginal']; bands: number }) {
+  return (
+    <div className="space-y-1">
+      {marginal.map((row) => (
+        <div key={row.period} className="flex items-center gap-2">
+          <span className="mono text-[10px] w-8" style={{ color: 'var(--muted)' }}>
+            +{row.period}q
+          </span>
+          <span className="flex-1 flex h-4">
+            {Array.from({ length: bands }, (_, band) => {
+              const share = row.distribution[band] ?? 0
+              return (
+                <span
+                  key={band}
+                  title={`band ${band}: ${(share * 100).toFixed(1)}%`}
+                  style={{
+                    width: `${100 / bands}%`,
+                    background: share > 0 ? 'var(--alert)' : 'var(--line)',
+                    opacity: share > 0 ? 0.25 + 0.75 * share : 0.25,
+                  }}
+                />
+              )
+            })}
+          </span>
+          <span className="mono text-[10px] w-16 text-right" style={{ color: 'var(--muted)' }}>
+            E {row.expected_band.toFixed(2)}
+          </span>
+        </div>
+      ))}
+    </div>
+  )
+}
+
+/** One predicted step, with whatever the archive measured after events like
+ *  it. A step with no measured market says so rather than showing nothing. */
+function Step({ step }: { step: SequenceStep }) {
+  return (
+    <li className="text-xs">
+      <div className="flex items-baseline gap-2">
+        <span className="mono w-8" style={{ color: 'var(--muted)' }}>+{step.period}q</span>
+        <span style={{ color: step.quad.includes('conflict') ? 'var(--alert)' : 'var(--accent)' }}>
+          {step.action_a} / {step.action_b}
+        </span>
+        <span className="mono" style={{ color: 'var(--muted)' }}>
+          band {step.intensity_band}
+        </span>
+      </div>
+      {step.market.length > 0 && (
+        <div className="ml-10 mt-0.5 flex flex-wrap gap-x-4 gap-y-0.5">
+          {step.market.slice(0, 4).map((m) => (
+            <span key={m.market_id} className="mono text-[10px]">
+              <span style={{ color: 'var(--muted)' }}>{m.market_name.slice(0, 14)}</span>{' '}
+              <span style={{ color: m.median >= 0 ? 'var(--accent)' : 'var(--alert)' }}>
+                {(m.median * 100).toFixed(2)}%
+              </span>
+              <span style={{ color: 'var(--muted)' }}>
+                {' '}n={m.n}{m.thin ? ' thin' : ''}{m.match === 'quad only' ? ' loose' : ''}
+              </span>
+            </span>
+          ))}
+        </div>
+      )}
+    </li>
+  )
+}
 
 /** ONE QUESTION, FOUR CHARTS: pick a dyad, see where it stands, what the
  *  archive measured after comparable moments, what markets did then, and what
@@ -47,6 +121,7 @@ export default function ReasoningPage({ region }: { region: string; onNavigate: 
   const [series, setSeries] = useState<DyadSeries | null | undefined>(undefined)
   const [precedent, setPrecedent] = useState<Precedent | null | undefined>(undefined)
   const [model, setModel] = useState<ForecastDetail | null | undefined>(undefined)
+  const [sequence, setSequence] = useState<ForecastDetail | null | undefined>(undefined)
 
   useEffect(() => {
     setDyads(null)
@@ -76,13 +151,20 @@ export default function ReasoningPage({ region }: { region: string; onNavigate: 
   useEffect(() => {
     let live = true
     setModel(undefined)
+    setSequence(undefined)
     getForecasts(region).then((r) => {
-      const row = (r?.rows ?? []).find((f) => f.mode === 'model')
-      if (!row) {
-        if (live) setModel(null)
-        return
+      const rows = r?.rows ?? []
+      for (const [mode, set] of [
+        ['model', setModel],
+        ['sequence', setSequence],
+      ] as const) {
+        const row = rows.find((f) => f.mode === mode)
+        if (!row) {
+          if (live) set(null)
+          continue
+        }
+        getForecast(row.node_id).then((d) => live && set(d ?? null))
       }
-      getForecast(row.node_id).then((d) => live && setModel(d ?? null))
     })
     return () => {
       live = false
@@ -92,6 +174,11 @@ export default function ReasoningPage({ region }: { region: string; onNavigate: 
   const trajectory = useMemo(
     () => model?.frozen_inputs?.trajectories?.find((t) => t.dyad_id === selected) ?? null,
     [model, selected],
+  )
+
+  const solved = useMemo(
+    () => sequence?.frozen_inputs?.dyads?.find((d) => d.dyad_id === selected) ?? null,
+    [sequence, selected],
   )
 
   const marks = useMemo(
@@ -253,6 +340,66 @@ export default function ReasoningPage({ region }: { region: string; onNavigate: 
             {model.boundary_statement && (
               <p className="text-xs mt-3 leading-relaxed" style={{ color: 'var(--muted)' }}>
                 {model.boundary_statement}
+              </p>
+            )}
+          </>
+        )}
+      </Panel>
+
+      <Panel
+        n={5}
+        title="What the equilibrium plays"
+        method={
+          sequence?.frozen_inputs?.equilibrium
+            ? `${sequence.frozen_inputs.equilibrium.concept} · payoffs fitted to observed action frequencies, distance ${sequence.frozen_inputs.equilibrium.distance} · kernel ${((sequence.frozen_inputs.kernel?.share_measured ?? 0) * 100).toFixed(0)}% measured`
+            : 'a solved forecast appears only when the transition kernel is mostly measured'
+        }
+      >
+        {sequence === undefined ? (
+          <Empty note="reading the archive…" />
+        ) : !sequence ? (
+          <Empty note="No sequence forecast is frozen for this region — the kernel is too sparsely measured to carry an equilibrium, or none has been frozen yet. The four panels above do not depend on it." />
+        ) : !solved ? (
+          <Empty note="This dyad is outside the solved set. The counted panels above still hold." />
+        ) : (
+          <>
+            <BandFan
+              marginal={solved.marginal}
+              bands={sequence.frozen_inputs.bands?.length ?? 6}
+            />
+            <p className="mono text-[10px] mt-1" style={{ color: 'var(--muted)' }}>
+              probability mass over intensity bands, per quarter ahead · opening band{' '}
+              {solved.opening_band}
+            </p>
+
+            <div className="mt-4">
+              <p className="mono text-[10px]" style={{ color: 'var(--muted)' }}>
+                most-weighted sequences — {solved.paths.length} of{' '}
+                {solved.paths_enumerated} paths, holding{' '}
+                {(solved.retained_probability * 100).toFixed(1)}% of the mass
+              </p>
+              {solved.paths.slice(0, 3).map((path, i) => (
+                <div key={i} className="mt-2">
+                  <span className="mono text-[10px]" style={{ color: 'var(--accent)' }}>
+                    p={path.probability.toFixed(3)}
+                  </span>
+                  <ul className="mt-0.5 space-y-0.5">
+                    {path.steps.map((step) => (
+                      <Step key={step.period} step={step} />
+                    ))}
+                  </ul>
+                </div>
+              ))}
+            </div>
+
+            {solved.pricing.note && (
+              <p className="mono text-[10px] mt-3" style={{ color: 'var(--muted)' }}>
+                {solved.pricing.note}
+              </p>
+            )}
+            {sequence.boundary_statement && (
+              <p className="text-xs mt-3 leading-relaxed" style={{ color: 'var(--muted)' }}>
+                {sequence.boundary_statement}
               </p>
             )}
           </>

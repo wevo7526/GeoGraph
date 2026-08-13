@@ -123,6 +123,126 @@ def _model_forecast(
     }
 
 
+_SEQUENCE_QUESTION = "Which sequences does the equilibrium put weight on, and what did they price?"
+
+#: Dyads the sequence forecast covers, by how much the archive has watched
+#: them. A path for a dyad with eight quarters of history is a number the
+#: reader cannot weigh.
+_SEQUENCE_DYADS = 6
+
+
+def _sequence_forecast(
+    db_path: Path, *, region_pack: str, generated_at: str
+) -> dict[str, str] | None:
+    """The solved mode — or None, loudly, when it should not speak.
+
+    Returns None when the kernel is too sparsely measured to carry an
+    equilibrium. A game solved over mostly-fallback transitions is a game
+    about the fallback, and shipping it beside three grounded forecasts in
+    the same typography would be the overclaim docs/game-spec.md section 7
+    exists to prevent.
+    """
+    from core.games import estimate, paths, pricing, solve, state, transition
+    from core.models import panel as panel_module
+
+    conn = kuzu_store.connect(db_path, read_only=True)
+    try:
+        table = panel_module.build(
+            panel_module.dyad_event_rows(conn), region_pack=region_pack
+        )
+        events = transition.event_rows(conn)
+        effects = pricing.measured_effects(conn, region_pack=region_pack)
+    finally:
+        kuzu_store.close(conn)
+
+    if not table:
+        print(f"{region_pack}: sequence not frozen — no modelable dyad")
+        return None
+
+    joint = transition.joint_actions(events, quarter_of=panel_module.quarter_index)
+    kernel, observed = transition.kernel(transition.count(table, joint))
+    coverage = transition.coverage(observed)
+    if coverage["share_measured"] < 0.5:
+        print(f"{region_pack}: sequence not frozen — kernel only "
+              f"{coverage['share_measured']:.0%} measured")
+        return None
+
+    # Payoffs fitted to observed ACTION FREQUENCIES, not to the ridge decay —
+    # the decay was measured to have no leverage (docs/game-spec.md §11).
+    frequencies = estimate.observed_frequencies(table, joint)
+    fit = estimate.fit(kernel, frequencies, max_evaluations=120)
+    payoffs = solve.Payoffs(
+        discount=fit["payoffs"]["discount"],
+        cost_resolute=fit["payoffs"]["cost_resolute"],
+        cost_irresolute=fit["payoffs"]["cost_irresolute"],
+        stake=fit["payoffs"]["stake"],
+        audience=fit["payoffs"]["audience"],
+    )
+    equilibrium = solve.solve(kernel, payoffs, horizon=4)
+
+    as_of = max(row["date"] for row in table)
+    summaries = panel_module.dyad_summary(table)[:_SEQUENCE_DYADS]
+    frozen = []
+    for summary in summaries:
+        own = [r for r in table if r["dyad_id"] == summary["dyad_id"]]
+        if not own:
+            continue
+        scale = state.dyad_scale([float(r["intensity"]) for r in own])
+        latest = max(own, key=lambda r: r["q"])
+        band = state.intensity_band(float(latest["intensity"]), scale)
+        result = paths.enumerate_paths(
+            equilibrium, kernel, intensity=band, capability=1,
+            belief_a=0.5, belief_b=0.5, payoffs=payoffs,
+        )
+        priced = pricing.price_paths(result, effects, as_of=as_of, scale=scale or 1.0)
+        frozen.append({
+            "dyad_id": summary["dyad_id"],
+            "dyad_name": summary["dyad_name"],
+            "active_quarters": summary["active_quarters"],
+            "opening_band": band,
+            "marginal": paths.marginal_intensity(result, 4),
+            **priced,
+        })
+
+    if not frozen:
+        print(f"{region_pack}: sequence not frozen — no dyad produced a path")
+        return None
+
+    return {
+        "node_id": f"forecast:sequence:{region_pack}:{as_of}",
+        "region_pack": region_pack,
+        "mode": "sequence",
+        "question": _SEQUENCE_QUESTION,
+        "generated_at": generated_at,
+        "horizon_end": as_of[:4] + "-12-31",
+        "scenarios_json": json.dumps([]),
+        "frozen_inputs_json": json.dumps({
+            "as_of": as_of,
+            "dyads": frozen,
+            "equilibrium": {
+                "concept": equilibrium["concept"],
+                "payoffs": fit["payoffs"],
+                "distance": fit["distance"],
+                "converged": fit["converged"],
+                "seed": fit["seed"],
+                "identification": fit["identification"],
+                "method": fit["method"],
+            },
+            # The kernel's coverage travels with every path built on it.
+            "kernel": coverage,
+            "bands": list(state.INTENSITY_EDGES),
+        }),
+        "boundary_statement": (
+            "A SOLVED forecast, not a counted or fitted one: a distribution "
+            "over sequences from the equilibrium of a bargaining game whose "
+            "payoffs were fitted to observed action frequencies. Read the "
+            "paths as a distribution — the retained probability says how much "
+            "of it is shown — and every price beside them is a measured "
+            "abnormal return from comparable past events, never a model's."
+        ),
+    }
+
+
 def freeze(db_path: Path, *, region_pack: str) -> list[dict[str, str]]:
     """Compute both modes, then persist. Returns the written node summaries."""
     near = forecasting.forecast(db_path, _NEAR_QUESTION, region_pack=region_pack)
@@ -175,6 +295,18 @@ def freeze(db_path: Path, *, region_pack: str) -> list[dict[str, str]]:
     )
     if model_row is not None:
         rows.append(model_row)
+
+    # The solved mode, likewise optional: three grounded forecasts do not
+    # depend on a game existing, converging, or having a measured kernel.
+    try:
+        sequence_row = _sequence_forecast(
+            db_path, region_pack=region_pack, generated_at=generated_at
+        )
+    except Exception as exc:  # noqa: BLE001 - a failed solve must not lose the rest
+        print(f"{region_pack}: sequence not frozen — {exc}")
+        sequence_row = None
+    if sequence_row is not None:
+        rows.append(sequence_row)
 
     conn = kuzu_store.connect(db_path)
     try:

@@ -90,6 +90,19 @@ _GDELT_TIMEOUT_SECONDS = 2400
 #: up — a served archive that names its gap beats a dead container.
 _GDELT_BUDGET_SECONDS = 3600
 
+#: The archive-wide rescore's own ceiling, separate and much larger because it
+#: is the one step here that CANNOT be resumed. Head B folds escalation per
+#: dyad across every era at once; an interrupted run leaves nothing behind and
+#: the next boot starts from the beginning, so a timeout that cuts it short
+#: does not slow the archive down, it stops it converging at all.
+#:
+#: Sized from measurement: 456,711 events rescored locally in ~29 minutes,
+#: about 262/sec. Production will hold roughly 1.5M across three lenses, and
+#: Railway is slower than a laptop, so the honest budget is hours. It only
+#: runs on the boot where loading is already complete, so it is not competing
+#: with the load for the window.
+_RESCORE_TIMEOUT_SECONDS = int(os.getenv("GEOGRAPH_RESCORE_TIMEOUT", "9000"))
+
 #: WHAT THIS BUDGET MEANS AFTER THE 2006–2026 BACKFILL, stated so nobody reads
 #: a deferred load as a broken one. The modern-era harvest adds roughly a
 #: million events across the three lenses; at the ~110 events/sec measured on
@@ -424,18 +437,47 @@ def _load_gdelt(pack_names: list[str]) -> dict[str, Any]:
         if after is not None and after < expected:
             _log(f"gdelt {name}: STILL SHORT — {after}/{expected}")
 
-    # ONE rescore, after every pack's artifacts are in. Escalation is
-    # relational and archive-wide: a dyad's baseline depends on events from
-    # other lenses and other eras, so this cannot be done per pack either.
-    # Skipped entirely when nothing loaded — the graph's scores are already
-    # current and rewriting every event to reach the same answer is the
-    # slowest no-op available.
+    # ONE rescore, and ONLY once every lens is fully loaded.
+    #
+    # Escalation is relational and archive-wide — a dyad's baseline depends on
+    # events from other lenses and other eras — so this cannot be split per
+    # pack, and it is NOT RESUMABLE: an interrupted run leaves nothing behind
+    # and the next boot starts over.
+    #
+    # That combination is why it waits for completeness. The 2006-2026 backfill
+    # takes two or three boots to load, and rescoring after each of them would
+    # spend an hour rewriting an archive that is about to grow again, be killed
+    # by its own timeout, and never finish. Waiting means it runs on the boot
+    # where loading is already skipped — so the whole window is available for
+    # the one job that needs an uninterrupted stretch.
+    #
+    # Measured locally: 456,711 events in ~29 minutes, ~262/sec. Production
+    # will hold roughly 1.5M across three lenses, so budget hours rather than
+    # minutes and see _RESCORE_TIMEOUT_SECONDS.
+    complete = [
+        r for r in results
+        if r.get("expected") is not None and r.get("held") is not None
+    ]
+    short = [
+        r for r in complete
+        if int(str(r["held"])) < int(str(r["expected"]))
+    ]
+    if short:
+        _log(
+            "rescore deferred — "
+            + ", ".join(f"{r['pack']} {r['held']}/{r['expected']}" for r in short)
+            + " (it is archive-wide and not resumable; it runs when loading ends)"
+        )
+        results.append({"pack": "*", "step": "rescore", "ok": True,
+                        "skipped": "archive still loading"})
+        return {"ok": all(r["ok"] for r in results), "packs": results}
+
     loaded_any = any(r.get("loaded") for r in results)
     if loaded_any:
         rescore = _run_step(
-            "gdelt rescore (archive-wide, once)",
+            "gdelt rescore (archive-wide, once, not resumable)",
             [sys.executable, str(_GDELT_SCRIPT), pack_names[0], "--rescore-only"],
-            timeout=int(_GDELT_TIMEOUT_SECONDS),
+            timeout=int(_RESCORE_TIMEOUT_SECONDS),
             echo=False,
         )
         results.append({"pack": "*", "step": "rescore", **{
