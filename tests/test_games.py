@@ -524,3 +524,67 @@ def test_the_counterfactual_payload_declares_itself():
     body = inspect.getsource(games_router.explore)
     assert '"frozen": False' in body
     assert "COUNTERFACTUAL, not a forecast" in body
+
+
+# ── market-implied duration ──────────────────────────────────────────────────
+
+
+def _tenor(event: str, market: str, ret: float) -> dict[str, Any]:
+    return {"event_id": event, "market_id": market, "abnormal_return": ret}
+
+
+def test_a_front_end_shock_reads_as_transient():
+    # The market moved the bill and left the long bond: it expects this to
+    # pass. That is what a low long-end share MEANS.
+    from core.games import duration
+
+    readings = {"front": 0.020, "long": 0.001}
+    share = duration.implied_persistence(readings)
+    assert share is not None and share < 0.1
+
+
+def test_a_long_end_shock_reads_as_persistent():
+    from core.games import duration
+
+    share = duration.implied_persistence({"front": 0.001, "long": 0.020})
+    assert share is not None and share > 0.9
+
+
+def test_direction_does_not_change_duration():
+    # A flight to quality and an inflation scare move yields opposite ways
+    # while both say "this matters". Duration is about WHERE on the curve.
+    from core.games import duration
+
+    up = duration.implied_persistence({"front": 0.004, "long": 0.016})
+    down = duration.implied_persistence({"front": -0.004, "long": -0.016})
+    assert up == pytest.approx(down)
+
+
+def test_an_event_with_only_one_end_is_not_a_duration():
+    # The statistic is a ratio between the ends; one end alone says nothing.
+    from core.games import duration
+
+    only_front = [_tenor("e1", "market:dgs3mo", 0.02)]
+    assert duration.curve_response(only_front) == {}
+
+
+def test_a_thin_dyad_is_flagged_rather_than_dropped():
+    from core.games import duration
+
+    effects = []
+    for i in range(3):
+        effects += [_tenor(f"e{i}", "market:dgs3mo", 0.01),
+                    _tenor(f"e{i}", "market:dgs10", 0.03)]
+    rows = duration.by_dyad(effects, {f"e{i}": "dyad:x" for i in range(3)})
+    assert rows and rows[0]["thin"] is True and rows[0]["n"] == 3
+
+
+def test_an_unmeasured_curve_says_so():
+    # The state this ships in until FRED yields reach the panel: not an error,
+    # and not a silently empty table either.
+    from core.games import duration
+
+    body = duration.report([], {})
+    assert body["events_with_a_curve_response"] == 0
+    assert body["note"] and "FRED_API_KEY" in body["note"]
+    assert body["calibration"], "the uncalibrated mapping must travel with it"

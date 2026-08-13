@@ -161,7 +161,7 @@ def _sequence_forecast(
     the same typography would be the overclaim docs/game-spec.md section 7
     exists to prevent.
     """
-    from core.games import paths, pricing, solve, state, transition
+    from core.games import duration, paths, pricing, solve, state, transition
     from core.models import panel as panel_module
 
     conn = kuzu_store.connect(db_path, read_only=True)
@@ -255,6 +255,17 @@ def _sequence_forecast(
             },
             # The kernel's coverage travels with every path built on it.
             "kernel": coverage,
+            # What the yield curve says about how LONG these dyads' crises
+            # last — the second moment §2.2 wants for identification. Reports
+            # its own absence until FRED yields reach the panel, and carries
+            # the uncalibrated-mapping caveat either way.
+            "duration": duration.report(
+                effects,
+                {
+                    str(e["event_id"]): str(e.get("dyad_id", ""))
+                    for e in effects if e.get("event_id")
+                },
+            ),
             "bands": list(state.INTENSITY_EDGES),
         }),
         "boundary_statement": (

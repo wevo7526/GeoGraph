@@ -44,10 +44,14 @@ def measured_effects(conn: Any, *, region_pack: str | None = None) -> list[dict[
     return kuzu_store.query(
         conn,
         "MATCH (e:Event)-[a:AFFECTED]->(m:Market) "
+        # OPTIONAL: an event with a measured effect but no coded dyad is still
+        # a priceable event — dropping it here would quietly shrink the sample
+        # every step is matched against.
+        "OPTIONAL MATCH (e)-[:OF_DYAD]->(d:Dyad) "
         f"{where}"
         "RETURN e.node_id AS event_id, e.event_time AS event_time, "
         "e.quad_class AS quad_class, "
-        "e.escalation_magnitude AS magnitude, "
+        "e.escalation_magnitude AS magnitude, d.node_id AS dyad_id, "
         "m.node_id AS market_id, m.name AS market_name, "
         "a.abnormal_return AS abnormal_return, a.window AS window, "
         "a.resolution AS resolution",

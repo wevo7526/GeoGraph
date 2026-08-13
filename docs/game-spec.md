@@ -431,3 +431,37 @@ Three rules the surface enforces:
 And it **refuses rather than guesses**: a region whose kernel is under half
 measured returns 409 with the coverage in the message. Solving over pooled
 fallback transitions describes the fallback, not the region.
+
+
+---
+
+## 13. The term structure, built (§3.2)
+
+`core/games/duration.py`. Equity prices how bad; the curve prices how long,
+and sequencing is a duration question.
+
+**The statistic.** Per event, the share of the total curve response sitting at
+the LONG end: `|10Y| / (|3M| + |10Y|)`. Near 0 the market moved the bill and
+left the long bond — it expects this to pass. Near 1 the long end carried it —
+the market is repricing something it expects to last. Absolute values, because
+a flight to quality and an inflation scare move yields opposite ways while both
+saying "this matters"; duration is about WHERE on the curve, not which way.
+
+**Ingestion needed no code.** The packs route by `market_type:
+sovereign_yield`, so adding DGS3MO (and the 2Y that china and eurasia lacked)
+was the entire change — `market_data.py` already sends that type to FRED.
+
+**The honest gap, and it is load-bearing.** The mapping from long-end share to
+expected QUARTERS is **not established**. So this ships as a VALIDATION target
+— compare its ordering across dyads against the equilibrium's own run lengths
+(`simulated_persistence`) — and NOT as a moment to fit against. Fitting δ to an
+uncalibrated mapping would recover a number in units nobody can name, which is
+worse than leaving δ jointly fitted and saying so.
+
+Which means §2.2's identification problem is **narrowed, not solved**. The
+measurement now exists and is attached to every sequence forecast; calibrating
+it is the next real step, and until then `at_bounds` on the payoff artifact
+remains the honest caveat.
+
+Until FRED yields reach the panel the report says so rather than returning an
+empty table — `note` names the missing key.
