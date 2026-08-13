@@ -340,3 +340,61 @@ Written down in advance so it is not rationalized later.
 - **Eight markets.** The cost term needs *both* sides' exposure. For dyads
   where one side has no traded instrument, the payoff is half-observed and the
   artifact must say so rather than imputing a zero.
+
+---
+
+## 11. G3 built, and the moment it fits is not the one this document proposed
+
+Implemented in `core/games/estimate.py`. §2.1 named the shipped ridge's decay
+as the binding moment. **That was wrong, and the measurement is unambiguous.**
+
+### 11.1 The decay has no leverage
+
+Sweeping the plausible parameter space moves the SIMULATED decay almost not at
+all, while it moves the action mix enormously:
+
+| θ | simulated decay | P(escalate \| resolute) |
+|---|---|---|
+| default | 48.9% | 0.249 |
+| patient (δ=0.98) | 48.7% | 0.246 |
+| impatient (δ=0.55) | 49.1% | 0.260 |
+| cheap war | 50.4% | 0.470 |
+| costly war | 46.4% | 0.001 |
+
+The reason is structural rather than incidental: **the transition kernel is
+measured and fixed**, so it dominates how intensity evolves. The payoffs
+choose which actions feed the kernel; the kernel decides what the intensity
+path looks like. A statistic about the intensity path is therefore almost
+blind to the payoffs.
+
+The OBSERVED decay is unusable independently — it reads +22.6% on 1979–1995,
++19.5% on 1990–2005, +3.4% pooled and **−9.2%** on 2015–2020. Which is to say
+it is mostly a statement about the window, which is the same coverage drift
+that turned `base_level` into a clock (docs/ml-spec.md §10.2). Three separate
+statistics have now been distorted by it; assume the next one is too until
+checked.
+
+### 11.2 What replaced it
+
+**Action frequency by intensity band**, counted identically for the archive
+(off coded events, via `joint_actions`) and for the simulation (off the
+policy). Distance to the archive across the same sweep: cheap war 0.740,
+default 1.755, costly war 4.302 — a sixfold spread where the decay had none.
+That is identification.
+
+### 11.3 What the fit establishes, and what it does not
+
+Fitted distance **0.650** against 1.755 at the defaults, converged in 89–150
+evaluations, ~46s. Real improvement.
+
+But `discount` lands at 0.99 and `cost_resolute` at 0.05 — both on their clip
+bounds. **A boundary solution means the game cannot fully reproduce the
+archive's action mix**, so the parameter values are a direction, not an
+estimate. Reporting them as recovered structural quantities would be exactly
+the overclaim §7 was written to prevent.
+
+The honest reading: the game's *mechanism* is identified — costlier war means
+less escalation, and the data prefers a patient, low-cost-to-the-resolute
+configuration — while its *magnitudes* are not yet pinned. The market-implied
+duration of §3.2 remains the intended second moment and is still blocked on
+the term structure reaching the panel.

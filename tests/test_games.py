@@ -244,3 +244,78 @@ def test_no_price_is_attached_here():
     for path in _paths()["paths"]:
         for step in path["steps"]:
             assert not {"price", "return", "market", "effect"} & set(step)
+
+
+# ── indirect inference ───────────────────────────────────────────────────────
+
+
+def test_action_frequencies_are_shares_per_band():
+    from core.games import estimate
+
+    bands = [0, 0, 3, 3]
+    actions = [(2, 2), (2, 1), (0, 0), (0, 1)]
+    freq = estimate.action_frequencies(bands, actions)
+    grid = freq.reshape(len(state.INTENSITY_EDGES), len(state.ACTIONS))
+    assert np.allclose(grid.sum(axis=1), 1.0)
+    # Band 0 saw three escalations and one hold across the two sides.
+    assert grid[0][state.ACTIONS.index("escalate")] == pytest.approx(0.75)
+    # A band never observed is uniform, not zero — absence of evidence must
+    # not read as "never escalates".
+    assert np.allclose(grid[5], 1.0 / len(state.ACTIONS))
+
+
+def test_the_payoffs_move_the_frequencies():
+    # THE IDENTIFICATION TEST, and the reason this moment replaced the decay.
+    # Sweeping the whole parameter space moved the ridge's decay only between
+    # 46.4% and 50.4% — no leverage, because the measured kernel dominates how
+    # intensity evolves. What the payoffs control is which ACTION is played.
+    from core.games import estimate
+
+    kernel = _realistic_kernel()
+    seen = []
+    for payoffs in (
+        solve.Payoffs(cost_resolute=0.05, cost_irresolute=0.2),   # cheap war
+        solve.Payoffs(),
+        solve.Payoffs(cost_resolute=2.0, cost_irresolute=5.0),    # costly war
+    ):
+        equilibrium = solve.solve(kernel, payoffs, horizon=4)
+        rows = estimate.simulate(equilibrium, kernel, payoffs, seed=7, dyads=20, quarters=40)
+        seen.append(estimate.simulated_frequencies(rows))
+    escalate = state.ACTIONS.index("escalate")
+    stride = len(state.ACTIONS)
+    bands = range(len(state.INTENSITY_EDGES))
+    cheap = float(np.mean([seen[0][b * stride + escalate] for b in bands]))
+    costly = float(np.mean([seen[2][b * stride + escalate] for b in bands]))
+    assert cheap > costly + 0.05, f"frequencies carry no signal: {cheap} vs {costly}"
+
+
+def test_simulation_is_reproducible_from_its_seed():
+    # Frozen forecasts have to be recomputable, and a simulation that needs a
+    # clock could not be.
+    from core.games import estimate
+
+    kernel = _realistic_kernel()
+    equilibrium = solve.solve(kernel, solve.Payoffs(), horizon=4)
+    first = estimate.simulate(equilibrium, kernel, solve.Payoffs(), seed=11, dyads=10, quarters=20)
+    second = estimate.simulate(equilibrium, kernel, solve.Payoffs(), seed=11, dyads=10, quarters=20)
+    assert [r["band"] for r in first] == [r["band"] for r in second]
+    other = estimate.simulate(equilibrium, kernel, solve.Payoffs(), seed=12, dyads=10, quarters=20)
+    assert [r["band"] for r in first] != [r["band"] for r in other]
+
+
+def test_the_type_ordering_cannot_be_relabelled_by_the_optimiser():
+    # Without the constraint, a fit can swap which type is resolute and report
+    # a perfect distance with the meanings inverted.
+    from core.games import estimate
+
+    payoffs = estimate._theta_to_payoffs(
+        np.array([0.9, 1.5, -0.8, 1.0, 0.3]), solve.Payoffs()
+    )
+    assert payoffs.cost_resolute < payoffs.cost_irresolute
+
+
+def test_a_simulation_that_cannot_be_fitted_is_penalised_not_skipped():
+    from core.games import estimate
+
+    bad = np.array([np.nan, 1.0, 1.0, 1.0])
+    assert estimate.distance(bad, np.ones(4)) >= 1e6
