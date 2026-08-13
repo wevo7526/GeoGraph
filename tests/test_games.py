@@ -396,3 +396,131 @@ def test_paths_without_measured_effects_say_so_rather_than_pricing_nothing():
     assert priced["pricing"]["measurements"] == 0
     assert priced["pricing"]["note"], "an empty index must state itself"
     assert priced["paths"][0]["steps"][0]["market"] == []
+
+
+# ── counterfactuals ──────────────────────────────────────────────────────────
+
+
+def _game_app(tmp_path: Any, monkeypatch: Any) -> Any:
+    """A graph with one dyad rich enough to solve over."""
+    import importlib.util
+    from pathlib import Path
+
+    from core import packs
+    from core.graph import kuzu_store
+
+    root = Path(__file__).resolve().parent.parent
+    spec = importlib.util.spec_from_file_location("seed_pack", root / "scripts" / "seed_pack.py")
+    assert spec and spec.loader
+    seed_pack = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(seed_pack)
+
+    path = tmp_path / "games.kuzu"
+    conn = kuzu_store.connect(path)
+    try:
+        seed_pack.seed(conn, packs.load("mena"))
+        kuzu_store.merge_nodes(conn, "Dyad", [{
+            "node_id": "dyad:g", "name": "Game Dyad", "ewma_baseline": -5.0,
+            "actor_a_id": "actor:cow-630", "actor_b_id": "actor:cow-645",
+        }])
+        events = [{
+            "node_id": f"event:g-{q}", "name": f"g{q}",
+            "event_time": f"{1990 + q // 4}-{(q % 4) * 3 + 1:02d}-15",
+            "action_cameo_code": "190", "goldstein": -8.0,
+            "quad_class": "material_conflict" if q % 3 else "verbal_cooperation",
+            "region_pack": "mena", "fidelity_tier": "deep_structured",
+            "temporal_resolution": "day", "source_scale": "cow_hostility",
+            "escalation_direction": "escalating",
+            "escalation_magnitude": 9.0 if q % 3 == 0 else 2.0,
+            "escalation_baseline": -5.0,
+        } for q in range(60)]
+        kuzu_store.merge_nodes(conn, "Event", events)
+        kuzu_store.merge_edges(conn, "OF_DYAD", [
+            {"src": e["node_id"], "dst": "dyad:g"} for e in events
+        ])
+        kuzu_store.merge_edges(conn, "INITIATED_BY", [
+            {"src": e["node_id"], "dst": "actor:cow-630", "source_id": "source:cow-mid"}
+            for e in events
+        ])
+    finally:
+        kuzu_store.close(conn)
+
+    monkeypatch.setenv("KUZU_DB_PATH", str(path))
+    monkeypatch.delenv("DATABASE_URL", raising=False)
+    from core.api.app import create_app
+    from core.api.routers import games as games_router
+
+    games_router._CACHE.clear()
+    return create_app()
+
+
+def test_a_sparse_kernel_refuses_to_solve_rather_than_guess(tmp_path, monkeypatch):
+    # THE MOST IMPORTANT BEHAVIOUR ON THIS ENDPOINT. One dyad cannot fill 54
+    # cells at twelve observations each, so almost every transition would be
+    # the pooled fallback — and a game solved over fallback transitions
+    # describes the fallback, not the region. It refuses, with the coverage
+    # in the message, instead of returning a confident-looking path set.
+    from fastapi.testclient import TestClient
+
+    with TestClient(_game_app(tmp_path, monkeypatch)) as client:
+        response = client.get("/api/games/explore?region=mena&dyad=dyad:g")
+        assert response.status_code == 409
+        detail = response.json()["detail"]
+        assert "measured" in detail and "fallback" in detail
+
+
+def test_the_defaults_open_on_the_fitted_payoffs(tmp_path, monkeypatch):
+    # "No change" has to reproduce the frozen forecast, or a comparison
+    # against it means nothing.
+    import json
+
+    from fastapi.testclient import TestClient
+
+    from core.games import solve as solve_module
+    from core.models import registry
+
+    with TestClient(_game_app(tmp_path, monkeypatch)) as client:
+        body = client.get("/api/games/defaults?region=mena").json()
+    assert set(body["payoffs"]) == {
+        "discount", "cost_resolute", "cost_irresolute", "stake", "audience",
+    }
+    artifact = registry.MODELS_DIR / "game-mena.json"
+    if artifact.exists():
+        # The FITTED payoffs, so a slider left alone reproduces the frozen
+        # forecast's equilibrium rather than an arbitrary starting point.
+        with open(artifact, encoding="utf-8") as fh:
+            assert body["payoffs"] == json.load(fh)["payoffs"]
+    else:
+        # No artifact: the code's own defaults, never a guess.
+        assert body["payoffs"]["discount"] == solve_module.Payoffs().discount
+    assert body["kernel"]["share_measured"] <= 1.0
+    assert body["bands"] and body["actions"]
+
+
+def test_out_of_range_payoffs_are_refused(tmp_path, monkeypatch):
+    # Bounds match the estimator's own clips, so a reader cannot explore a
+    # region of the space the fit was never allowed to reach.
+    from fastapi.testclient import TestClient
+
+    with TestClient(_game_app(tmp_path, monkeypatch)) as client:
+        assert client.get(
+            "/api/games/explore?region=mena&dyad=dyad:g&discount=2.0"
+        ).status_code == 422
+        assert client.get(
+            "/api/games/explore?region=mena&dyad=dyad:g&cost_resolute=99"
+        ).status_code == 422
+
+
+def test_the_counterfactual_payload_declares_itself():
+    # The frozen sequence forecast is the call of record and gets scored; a
+    # counterfactual persists nothing. Without the label a slider quietly
+    # becomes a prediction nobody committed to. Asserted on the router's own
+    # constant so it cannot be dropped in a refactor.
+    from core.api.routers import games as games_router
+
+    source = games_router.__doc__ or ""
+    assert "persists nothing" in source
+    import inspect
+    body = inspect.getsource(games_router.explore)
+    assert '"frozen": False' in body
+    assert "COUNTERFACTUAL, not a forecast" in body

@@ -1,9 +1,13 @@
 import { useEffect, useMemo, useState } from 'react'
-import { getDyadSeries, getForecasts, getForecast, getPanelDyads, getPrecedent } from '../api'
+import {
+  exploreGame, getDyadSeries, getForecasts, getForecast, getGameDefaults,
+  getPanelDyads, getPrecedent,
+} from '../api'
 import { BoxRow, Empty, Fan, LineBand, Strip } from './charts/Charts'
 import { useRegionLabel } from '../regions'
 import type {
-  DyadSeries, ForecastDetail, PanelDyad, Precedent, SequenceDyad, SequenceStep,
+  DyadSeries, ForecastDetail, GameDefaults, GameExplore, PanelDyad, Precedent,
+  SequenceDyad, SequenceStep,
 } from '../types'
 
 /** The solved mode's per-period fan: where the equilibrium puts its mass.
@@ -41,6 +45,78 @@ function BandFan({ marginal, bands }: { marginal: SequenceDyad['marginal']; band
           </span>
         </div>
       ))}
+    </div>
+  )
+}
+
+/** The counterfactual controls — the one thing a fitted policy buys that a
+ *  black box cannot.
+ *
+ *  Each slider is a PARAMETER WITH A MEANING, not a weight with a position,
+ *  which is why "what if war were costly for the resolute side" is a question
+ *  this can answer at all. Bounds match the estimator's own clips, so a reader
+ *  cannot explore a region of the space the fit was never allowed to reach.
+ *
+ *  What is NOT adjustable is the transition kernel: what escalation has
+ *  historically led to is counted from the archive and is evidence, not a
+ *  setting. */
+const CONTROLS: Array<{ key: string; label: string; min: number; max: number; step: number }> = [
+  { key: 'discount', label: 'patience (δ)', min: 0.5, max: 0.99, step: 0.01 },
+  { key: 'cost_resolute', label: 'cost of war · resolute', min: 0.05, max: 3.0, step: 0.05 },
+  { key: 'cost_irresolute', label: 'cost of war · irresolute', min: 0.05, max: 6.0, step: 0.05 },
+  { key: 'stake', label: 'stake', min: 0.1, max: 3.0, step: 0.05 },
+  { key: 'audience', label: 'audience cost', min: 0.0, max: 2.0, step: 0.05 },
+]
+
+function Controls({
+  values, fitted, onChange, onReset, busy,
+}: {
+  values: Record<string, number>
+  fitted: Record<string, number>
+  onChange: (key: string, value: number) => void
+  onReset: () => void
+  busy: boolean
+}) {
+  const dirty = CONTROLS.some((c) => Math.abs((values[c.key] ?? 0) - (fitted[c.key] ?? 0)) > 1e-9)
+  return (
+    <div className="mt-3 pt-3 border-t" style={{ borderColor: 'var(--line)' }}>
+      <div className="flex items-baseline justify-between gap-3">
+        <span className="kicker">counterfactual</span>
+        {dirty && (
+          <button
+            type="button"
+            onClick={onReset}
+            className="mono text-[10px]"
+            style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--accent)' }}
+          >
+            reset to fitted
+          </button>
+        )}
+      </div>
+      <div className="mt-2 space-y-1.5">
+        {CONTROLS.map((c) => {
+          const value = values[c.key] ?? fitted[c.key] ?? c.min
+          const moved = Math.abs(value - (fitted[c.key] ?? 0)) > 1e-9
+          return (
+            <label key={c.key} className="flex items-center gap-2 text-[11px]">
+              <span className="w-40 shrink-0" style={{ color: 'var(--muted)' }}>{c.label}</span>
+              <input
+                type="range"
+                min={c.min} max={c.max} step={c.step} value={value}
+                onChange={(e) => onChange(c.key, Number(e.target.value))}
+                className="flex-1"
+                disabled={busy}
+              />
+              <span
+                className="mono w-12 text-right"
+                style={{ color: moved ? 'var(--alert)' : 'var(--muted)' }}
+              >
+                {value.toFixed(2)}
+              </span>
+            </label>
+          )
+        })}
+      </div>
     </div>
   )
 }
@@ -122,6 +198,10 @@ export default function ReasoningPage({ region }: { region: string; onNavigate: 
   const [precedent, setPrecedent] = useState<Precedent | null | undefined>(undefined)
   const [model, setModel] = useState<ForecastDetail | null | undefined>(undefined)
   const [sequence, setSequence] = useState<ForecastDetail | null | undefined>(undefined)
+  const [gameDefaults, setGameDefaults] = useState<GameDefaults | null>(null)
+  const [knobs, setKnobs] = useState<Record<string, number>>({})
+  const [counterfactual, setCounterfactual] = useState<GameExplore | null>(null)
+  const [solving, setSolving] = useState(false)
 
   useEffect(() => {
     setDyads(null)
@@ -170,6 +250,48 @@ export default function ReasoningPage({ region }: { region: string; onNavigate: 
       live = false
     }
   }, [region])
+
+  useEffect(() => {
+    let live = true
+    setGameDefaults(null)
+    setKnobs({})
+    setCounterfactual(null)
+    getGameDefaults(region).then((d) => {
+      if (!live || !d) return
+      setGameDefaults(d)
+      setKnobs({ ...d.payoffs })
+    })
+    return () => {
+      live = false
+    }
+  }, [region])
+
+  // Re-solve when a knob moves. Debounced because a slider fires on every
+  // pixel and a solve is ~30ms of server work — fast, but not free, and a
+  // burst of them would queue behind each other for no benefit.
+  useEffect(() => {
+    if (!gameDefaults || !selected || !Object.keys(knobs).length) return
+    const dirty = CONTROLS.some(
+      (c) => Math.abs((knobs[c.key] ?? 0) - (gameDefaults.payoffs[c.key] ?? 0)) > 1e-9,
+    )
+    if (!dirty) {
+      setCounterfactual(null)
+      return
+    }
+    let live = true
+    setSolving(true)
+    const timer = setTimeout(() => {
+      exploreGame(region, selected, knobs).then((r) => {
+        if (!live) return
+        setCounterfactual(r)
+        setSolving(false)
+      })
+    }, 200)
+    return () => {
+      live = false
+      clearTimeout(timer)
+    }
+  }, [knobs, selected, region, gameDefaults])
 
   const trajectory = useMemo(
     () => model?.frozen_inputs?.trajectories?.find((t) => t.dyad_id === selected) ?? null,
@@ -364,21 +486,56 @@ export default function ReasoningPage({ region }: { region: string; onNavigate: 
         ) : (
           <>
             <BandFan
-              marginal={solved.marginal}
+              marginal={(counterfactual ?? solved).marginal}
               bands={sequence.frozen_inputs.bands?.length ?? 6}
             />
             <p className="mono text-[10px] mt-1" style={{ color: 'var(--muted)' }}>
               probability mass over intensity bands, per quarter ahead · opening band{' '}
               {solved.opening_band}
+              {counterfactual && (
+                <span style={{ color: 'var(--alert)' }}>
+                  {' '}· COUNTERFACTUAL, re-solved — not frozen, not scored
+                </span>
+              )}
+              {solving && <span style={{ color: 'var(--muted)' }}> · solving…</span>}
             </p>
+
+            {gameDefaults && (
+              <Controls
+                values={knobs}
+                fitted={gameDefaults.payoffs}
+                onChange={(key, value) => setKnobs((k) => ({ ...k, [key]: value }))}
+                onReset={() => setKnobs({ ...gameDefaults.payoffs })}
+                busy={solving}
+              />
+            )}
+
+            {counterfactual && (
+              <div className="mt-3">
+                <p className="mono text-[10px]" style={{ color: 'var(--muted)' }}>
+                  P(escalate) by band, under the moved payoffs
+                </p>
+                {Object.entries(counterfactual.escalation_propensity).map(([type, byBand]) => (
+                  <div key={type} className="flex items-baseline gap-2 text-[11px]">
+                    <span className="w-20" style={{ color: 'var(--muted)' }}>{type}</span>
+                    <span className="mono">
+                      {byBand.map((v) => v.toFixed(3)).join('  ')}
+                    </span>
+                  </div>
+                ))}
+                <p className="text-xs mt-2 leading-relaxed" style={{ color: 'var(--muted)' }}>
+                  {counterfactual.boundary_statement}
+                </p>
+              </div>
+            )}
 
             <div className="mt-4">
               <p className="mono text-[10px]" style={{ color: 'var(--muted)' }}>
-                most-weighted sequences — {solved.paths.length} of{' '}
-                {solved.paths_enumerated} paths, holding{' '}
-                {(solved.retained_probability * 100).toFixed(1)}% of the mass
+                most-weighted sequences — {(counterfactual ?? solved).paths.length} of{' '}
+                {(counterfactual ?? solved).paths_enumerated} paths, holding{' '}
+                {((counterfactual ?? solved).retained_probability * 100).toFixed(1)}% of the mass
               </p>
-              {solved.paths.slice(0, 3).map((path, i) => (
+              {(counterfactual ?? solved).paths.slice(0, 3).map((path, i) => (
                 <div key={i} className="mt-2">
                   <span className="mono text-[10px]" style={{ color: 'var(--accent)' }}>
                     p={path.probability.toFixed(3)}

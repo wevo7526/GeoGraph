@@ -579,3 +579,43 @@ export interface CaseStudyIndexEntry {
   dek: string
   events: string[]
 }
+
+
+/** What a counterfactual control panel needs to open: the region's FITTED
+ *  payoffs (so "no change" reproduces the frozen forecast), the dyads worth
+ *  asking about, and how much of the kernel is real. */
+export interface GameDefaults {
+  region: string
+  payoffs: Record<string, number>
+  kernel: { cells: number; measured: number; share_measured: number; observations: number }
+  bands: number[]
+  actions: string[]
+  dyads: Array<{ dyad_id: string; dyad_name: string; active_quarters: number }>
+}
+
+/** A re-solved equilibrium. `frozen` is always false and the boundary
+ *  statement says why — this is an exploration, not a call anyone made. */
+export interface GameExplore {
+  region: string
+  dyad_id: string
+  dyad_name: string
+  opening_band: number
+  payoffs: Record<string, number>
+  changed: Record<string, number>
+  capability: number
+  beliefs: { a: number; b: number }
+  marginal: Array<{
+    period: number
+    distribution: number[]
+    modal_band: number
+    expected_band: number
+  }>
+  escalation_propensity: Record<string, number[]>
+  paths: Array<{ probability: number; steps: SequenceStep[] }>
+  paths_enumerated: number
+  retained_probability: number
+  pricing: { measurements: number; note: string | null }
+  kernel: { share_measured: number }
+  frozen: false
+  boundary_statement: string
+}

@@ -398,3 +398,36 @@ less escalation, and the data prefers a patient, low-cost-to-the-resolute
 configuration — while its *magnitudes* are not yet pinned. The market-implied
 duration of §3.2 remains the intended second moment and is still blocked on
 the term structure reaching the panel.
+
+---
+
+## 12. Counterfactuals — built (§5 of the map)
+
+`GET /api/games/explore` re-solves the equilibrium with any payoff moved, in
+about **30ms** once the kernel is cached. Measured on the live archive:
+raising `cost_resolute` from the fitted 0.05 to 2.5 collapses
+P(escalate | resolute) from ~0.56–0.61 to ~0.0005, and the expected intensity
+band at +1q from 0.211 to 0.0.
+
+**This is the capability the whole structural approach buys.** A fitted policy
+answers "what if war were costly for the side that will bear it" because its
+parameters have meanings; a black box cannot answer it at all.
+
+Three rules the surface enforces:
+
+- **`frozen: false` on every response**, with a boundary statement saying so.
+  The frozen `sequence` Forecast is the call of record and gets scored; this
+  persists nothing. Without the label a slider quietly becomes a prediction
+  nobody committed to — the same posture as the what-if engine, which also
+  computes on request and writes nothing.
+- **No overrides reproduces the fitted equilibrium.** Defaults come from
+  `models/game-<region>.json`, so a comparison against the frozen forecast is
+  meaningful rather than against an arbitrary starting point.
+- **The kernel is not adjustable.** A caller can move what the sides want;
+  what escalation has historically led to is counted from the archive and is
+  evidence, not a setting. Bounds on the payoffs match the estimator's own
+  clips, so nobody can explore a region the fit was never allowed to reach.
+
+And it **refuses rather than guesses**: a region whose kernel is under half
+measured returns 409 with the coverage in the message. Solving over pooled
+fallback transitions describes the fallback, not the region.

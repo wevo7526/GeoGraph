@@ -12,6 +12,8 @@ import type {
   ForecastDetail,
   ForecastSummary,
   ForwardView,
+  GameDefaults,
+  GameExplore,
   GraphActor,
   Health,
   PaperBook,
@@ -113,6 +115,25 @@ export const getPrecedent = (dyadId: string, region?: string) => {
   const query = new URLSearchParams({ dyad: dyadId })
   if (region) query.set('region', region)
   return get<Precedent>(`/api/precedent?${query}`)
+}
+
+// Counterfactuals: re-solved on request, never frozen and never scored. The
+// payload says so itself; the UI must not present one as a forecast.
+export const getGameDefaults = (region?: string) =>
+  get<GameDefaults>(
+    `/api/games/defaults${region ? `?region=${encodeURIComponent(region)}` : ''}`,
+  )
+
+export const exploreGame = (
+  region: string,
+  dyad: string,
+  overrides: Record<string, number> = {},
+) => {
+  const query = new URLSearchParams({ region, dyad })
+  for (const [key, value] of Object.entries(overrides)) {
+    if (Number.isFinite(value)) query.set(key, String(value))
+  }
+  return get<GameExplore>(`/api/games/explore?${query}`)
 }
 
 export const getForecasts = (region?: string) =>
