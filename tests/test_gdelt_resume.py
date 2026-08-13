@@ -124,12 +124,17 @@ def test_the_artifact_count_is_its_line_count(tmp_path):
 def test_the_shipped_artifacts_report_their_real_size():
     # The counts the boot compares against are the ones the loads produced:
     # china 66,669 and eurasia 95,070 were the totals those runs reported.
+    #
+    # Named explicitly rather than globbed-and-last: the modern-era harvest
+    # adds one artifact per year beside this span, and 'the last match'
+    # silently became gdelt-china-2013 the moment it did. Same assumption
+    # that made boot.py load one year and call the lens complete.
     derived = _ROOT / "data" / "derived"
     for name, expected in (("china", 66_669), ("eurasia", 95_070)):
-        matches = sorted(derived.glob(f"gdelt-{name}-*.tsv.gz"))
-        if not matches:
+        span = derived / f"gdelt-{name}-1979-2005.tsv.gz"
+        if not span.exists():
             continue
-        assert boot._artifact_events(matches[-1]) == expected
+        assert boot._artifact_events(span) == expected
 
 
 def test_the_expected_count_sums_every_artifact_not_just_the_last(tmp_path):

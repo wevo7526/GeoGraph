@@ -67,6 +67,39 @@ def test_cutoff_truncates_the_panel():
     assert max(r["date"] for r in full) > "1991-07"
 
 
+def test_a_barely_watched_quarter_is_a_hole_not_a_quiet_quarter():
+    # The archive's coverage grew ~50x between 2006 and 2019: at one mention
+    # threshold, 2006 kept 492 MENA events and 2019 kept 25,553. A quarter
+    # covered a fraction as well looks QUIET to a panel that counts events, so
+    # every dyad in it reads as de-escalated and the model learns the growth of
+    # the corpus. Such quarters are dropped, not zero-filled.
+    dense = [
+        {
+            "dyad_id": f"dyad:{d}", "dyad_name": str(d),
+            "event_time": f"{1990 + q // 4}-{(q % 4) * 3 + 1:02d}-15",
+            "direction": "escalating", "magnitude": 9.0, "goldstein": -5.0,
+            "quad_class": "material_conflict", "region_pack": "mena",
+        }
+        for q in range(16) if q != 9          # quarter 9 is the thin one
+        for d in range(20)                    # twenty events a quarter
+    ]
+    thin = [{
+        "dyad_id": "dyad:0", "dyad_name": "0",
+        "event_time": "1992-04-15",           # quarter 9, a single event
+        "direction": "escalating", "magnitude": 9.0, "goldstein": -5.0,
+        "quad_class": "material_conflict", "region_pack": "mena",
+    }]
+    table = panel.build(dense + thin, min_occupied=2)
+    thin_quarter = panel.quarter_index("1992-04-15")
+    assert thin_quarter not in {r["q"] for r in table}
+    # …and the well-covered quarters around it survive on both sides.
+    assert {thin_quarter - 1, thin_quarter + 1} <= {r["q"] for r in table}
+    # Passing 0.0 keeps everything, which is how the coverage report measures
+    # what the floor removed.
+    kept = panel.build(dense + thin, min_occupied=2, min_coverage=0.0)
+    assert thin_quarter in {r["q"] for r in kept}
+
+
 # ── features: the leak is the thing to test ──────────────────────────────────
 
 

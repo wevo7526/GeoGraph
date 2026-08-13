@@ -31,6 +31,23 @@ from core.graph import kuzu_store
 #: dyad in the archive has three.
 MIN_OCCUPIED_QUARTERS = 8
 
+#: A quarter must hold at least this share of the archive's MEDIAN quarterly
+#: event count to enter the panel.
+#:
+#: The archive's coverage is not constant and never was. The GDELT corpus grew
+#: roughly fiftyfold between 2006 and 2019 — at one fixed mention threshold the
+#: 2006 harvest kept 492 MENA events and 2019 kept 25,553 — and none of that is
+#: the Middle East becoming more violent. A quarter covered a fiftieth as well
+#: looks QUIET to a panel that counts events, so every dyad in it reads as
+#: de-escalated and the model learns the growth of the internet. That is
+#: precisely the failure docs/ml-spec.md section 2.4 measured.
+#:
+#: A relative floor is the same instrument structural.py already uses for its
+#: trailing windows: judged against the archive's own median rather than an
+#: absolute count, so it needs no retuning when a region or a threshold
+#: changes. Quarters below it are DROPPED AND COUNTED, never imputed.
+MIN_QUARTER_COVERAGE = 0.25
+
 
 def quarter_index(date: str) -> int:
     """Quarters since year 0, so lags are arithmetic. Accepts any archive
@@ -71,12 +88,48 @@ def load_rows(db_path: Path) -> list[dict[str, Any]]:
         kuzu_store.close(conn)
 
 
+def well_covered_quarters(
+    cells: dict[tuple[str, int], dict[str, Any]], min_coverage: float
+) -> set[int]:
+    """Quarters holding at least `min_coverage` of the MEDIAN quarter's events.
+
+    Archive-wide, not per dyad: coverage is a property of what the wire was
+    reporting that quarter, and judging it per dyad would confuse a quiet dyad
+    with an unwatched one. The median is the reference because the mean is
+    dragged by the dense modern years the floor exists to compare against.
+    """
+    if min_coverage <= 0.0 or not cells:
+        return {q for _, q in cells}
+    per_quarter: dict[int, int] = defaultdict(int)
+    for (_dyad, q), cell in cells.items():
+        per_quarter[q] += int(cell["n"])
+    # Over the archive's whole SPAN, zeros included. A quarter absent from
+    # `cells` held no events anywhere, which is the least-covered a quarter
+    # can be — leaving it out of the median would measure coverage only over
+    # the quarters that had some, and the median would drift up with exactly
+    # the sparsity it is meant to detect.
+    first, last = min(per_quarter), max(per_quarter)
+    counts = sorted(per_quarter.get(q, 0) for q in range(first, last + 1))
+    median = counts[len(counts) // 2]
+    floor = median * min_coverage
+    return {q for q in range(first, last + 1) if per_quarter.get(q, 0) >= floor}
+
+
+def coverage_by_year(cells: dict[tuple[str, int], dict[str, Any]]) -> dict[int, int]:
+    """Events per YEAR across every dyad — what the coverage report draws."""
+    per_year: dict[int, int] = defaultdict(int)
+    for (_dyad, q), cell in cells.items():
+        per_year[q // 4] += int(cell["n"])
+    return dict(sorted(per_year.items()))
+
+
 def build(
     rows: list[dict[str, Any]],
     *,
     region_pack: str | None = None,
     cutoff: str | None = None,
     min_occupied: int = MIN_OCCUPIED_QUARTERS,
+    min_coverage: float = MIN_QUARTER_COVERAGE,
 ) -> list[dict[str, Any]]:
     """The panel, ascending by dyad then quarter.
 
@@ -87,6 +140,10 @@ def build(
     `region_pack` filters to dyads the region has TOUCHED, not to events: a
     dyad's history outside the region is still that dyad's history, and
     dropping it would make the same dyad look different through two lenses.
+
+    `min_coverage` drops quarters the archive barely watched — see
+    MIN_QUARTER_COVERAGE. Pass 0.0 to keep every quarter, which is what the
+    coverage report itself does to measure what the floor removes.
     """
     if cutoff is not None:
         rows = [r for r in rows if str(r["event_time"]) <= cutoff]
@@ -113,9 +170,12 @@ def build(
         if row["direction"] == "escalating" and row["magnitude"] is not None:
             cell["intensity"] = max(cell["intensity"], float(row["magnitude"]))
 
+    covered = well_covered_quarters(cells, min_coverage)
+
     occupied: dict[str, set[int]] = defaultdict(set)
     for dyad, q in cells:
-        occupied[dyad].add(q)
+        if q in covered:
+            occupied[dyad].add(q)
 
     panel: list[dict[str, Any]] = []
     for dyad in sorted(occupied):
@@ -123,6 +183,11 @@ def build(
             continue
         quarters = sorted(occupied[dyad])
         for q in range(quarters[0], quarters[-1] + 1):
+            # A thinly-covered quarter INSIDE a dyad's span is a hole, not a
+            # quiet quarter: filling it with a zero would tell the model the
+            # dyad calmed down when the archive simply stopped watching.
+            if q not in covered:
+                continue
             filled = cells.get((dyad, q))
             panel.append({
                 "dyad_id": dyad,

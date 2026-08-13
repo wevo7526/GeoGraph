@@ -38,6 +38,8 @@ import sys
 import urllib.request
 import zipfile
 from collections.abc import Iterable, Iterator
+from concurrent.futures import ThreadPoolExecutor
+from functools import partial
 from pathlib import Path
 from typing import Any
 
@@ -159,6 +161,62 @@ class _Missing(Exception):
     that is a gap in the source, not a failure of this run."""
 
 
+#: Archives downloaded AND prescreened at once. The work is mostly waiting on
+#: data.gdeltproject.org, so a single stream leaves the link idle between
+#: files and 4,900 files fetched one at a time is an hour of that idling.
+_PARALLEL_FETCHES = 24
+
+
+def _prefilter(lines: list[str], codes: frozenset[str]) -> list[str]:
+    """Lines whose actor pair could match SOME lens, by one bounded split.
+
+    `parse_lines` is the authority on what a lens keeps, but running it once
+    per lens meant three full passes over 150,000 lines per archive when the
+    same two fields decide nearly all of it. This is one pass against the
+    UNION of the rosters; whatever survives goes to the real filter unchanged,
+    so the output is identical and only the work is smaller.
+
+    MEASURED, after a slower attempt. Prescreening each line with a compiled
+    regex over the roster codes — the obvious "do it in C" move — was TWICE as
+    slow: this split has maxsplit=18 and stops eighteen tabs in, while a
+    forty-way alternation scans the whole two-kilobyte line, most of which is
+    URLs. The C call lost to the interpreter loop it was meant to replace.
+    """
+    kept = []
+    limit = max(_A1_COUNTRY_RAW, _A2_COUNTRY_RAW) + 1
+    for line in lines:
+        fields = line.split("\t", limit)
+        if len(fields) <= limit:
+            continue
+        if fields[_A1_COUNTRY_RAW] in codes and fields[_A2_COUNTRY_RAW] in codes:
+            kept.append(line)
+    return kept
+
+
+def _fetch_and_screen(
+    name: str, *, codes: frozenset[str]
+) -> tuple[int, list[str]] | None:
+    """Download AND prescreen inside the worker thread.
+
+    Handing 150,000 raw lines per archive back to one consumer thread makes
+    that thread the bottleneck — at 24 workers it was the whole cost. Handing
+    back only the few thousand that survive does not. None means the archive
+    is one GDELT does not publish.
+    """
+    try:
+        lines = list(_stream_lines(name))
+    except _Missing:
+        return None
+    return len(lines), _prefilter(lines, codes)
+
+
+#: Actor country-code columns in the export layout, for the prefilter above.
+#: The authoritative indices live in core/ingestion/gdelt.py; these are read
+#: from it rather than re-counted, so a layout change moves one file.
+_A1_COUNTRY_RAW = gdelt._A1_COUNTRY
+_A2_COUNTRY_RAW = gdelt._A2_COUNTRY
+
+
 def _stream_lines(name: str) -> Iterator[str]:
     """The archive's lines, downloaded to MEMORY and discarded after.
 
@@ -237,25 +295,35 @@ def harvest(
             )
             for pack, _, target in pending
         }
+        # The union of every lens's roster, for the cheap first pass.
+        codes = frozenset().union(*(frozenset(roster) for _, roster, _ in pending))
+
+        fetch = partial(_fetch_and_screen, codes=codes)
+
         try:
-            for index, name in enumerate(names, 1):
-                try:
-                    lines = list(_stream_lines(name))
-                except _Missing:
-                    missing += 1
-                    continue
-                scanned += len(lines)
-                for pack, roster, _target in pending:
-                    events, _edges, _result = gdelt.parse_lines(
-                        lines,
-                        actors_by_iso3=roster,
-                        region_pack=pack.name,
-                        min_mentions=min_mentions,
-                        external_powers=pack.external_powers,
-                        keep_lines=handles[pack.name],
-                    )
-                    kept[pack.name] += len(events)
-                if index % 25 == 0 or index == len(names):
+            index = 0
+            # Chunked rather than one big map: the executor would otherwise
+            # race ahead and hold every archive of the year in memory at once.
+            with ThreadPoolExecutor(max_workers=_PARALLEL_FETCHES) as pool:
+                for start in range(0, len(names), _PARALLEL_FETCHES):
+                    chunk = names[start:start + _PARALLEL_FETCHES]
+                    for result in pool.map(fetch, chunk):
+                        index += 1
+                        if result is None:
+                            missing += 1
+                            continue
+                        seen, candidates = result
+                        scanned += seen
+                        for pack, roster, _target in pending:
+                            events, _edges, _result = gdelt.parse_lines(
+                                candidates,
+                                actors_by_iso3=roster,
+                                region_pack=pack.name,
+                                min_mentions=min_mentions,
+                                external_powers=pack.external_powers,
+                                keep_lines=handles[pack.name],
+                            )
+                            kept[pack.name] += len(events)
                     tally = " ".join(f"{n} {v:,}" for n, v in sorted(kept.items()))
                     print(
                         f"  {year} {index}/{len(names)} archives · "
