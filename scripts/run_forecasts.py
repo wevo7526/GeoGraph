@@ -19,6 +19,7 @@ import datetime as dt
 import json
 import sys
 from pathlib import Path
+from typing import Any
 
 from core import settings as settings_module
 from core.graph import kuzu_store
@@ -131,6 +132,24 @@ _SEQUENCE_QUESTION = "Which sequences does the equilibrium put weight on, and wh
 _SEQUENCE_DYADS = 6
 
 
+def _load_game_artifact(region_pack: str) -> dict[str, Any] | None:
+    """The region's fitted payoffs, or None with the reason on stdout.
+
+    Absent is the NORMAL state for a region whose kernel is too sparse to fit
+    — scripts/fit_game.py refuses those — so this is a skip, not an error.
+    """
+    from core.models import registry
+
+    target = registry.MODELS_DIR / f"game-{region_pack}.json"
+    if not target.exists():
+        print(f"{region_pack}: sequence not frozen — no {target.name} "
+              "(run scripts/fit_game.py)")
+        return None
+    with open(target, encoding="utf-8") as fh:
+        artifact: dict[str, Any] = json.load(fh)
+    return artifact
+
+
 def _sequence_forecast(
     db_path: Path, *, region_pack: str, generated_at: str
 ) -> dict[str, str] | None:
@@ -142,7 +161,7 @@ def _sequence_forecast(
     the same typography would be the overclaim docs/game-spec.md section 7
     exists to prevent.
     """
-    from core.games import estimate, paths, pricing, solve, state, transition
+    from core.games import paths, pricing, solve, state, transition
     from core.models import panel as panel_module
 
     conn = kuzu_store.connect(db_path, read_only=True)
@@ -167,10 +186,14 @@ def _sequence_forecast(
               f"{coverage['share_measured']:.0%} measured")
         return None
 
-    # Payoffs fitted to observed ACTION FREQUENCIES, not to the ridge decay —
-    # the decay was measured to have no leverage (docs/game-spec.md §11).
-    frequencies = estimate.observed_frequencies(table, joint)
-    fit = estimate.fit(kernel, frequencies, max_evaluations=120)
+    # PAYOFFS ARE READ, NOT FITTED HERE. Indirect inference is a hundred and
+    # twenty solve-and-simulate cycles per region; this step has five minutes
+    # for every region and every mode, and a wall-clock timeout would lose the
+    # two COUNTED forecasts along with this one. Same split as the learned
+    # model: fit offline (scripts/fit_game.py), freeze from the artifact.
+    fit = _load_game_artifact(region_pack)
+    if fit is None:
+        return None
     payoffs = solve.Payoffs(
         discount=fit["payoffs"]["discount"],
         cost_resolute=fit["payoffs"]["cost_resolute"],
@@ -226,6 +249,8 @@ def _sequence_forecast(
                 "converged": fit["converged"],
                 "seed": fit["seed"],
                 "identification": fit["identification"],
+                "at_bounds": fit.get("at_bounds", []),
+                "fitted_on": fit.get("panel_rows"),
                 "method": fit["method"],
             },
             # The kernel's coverage travels with every path built on it.

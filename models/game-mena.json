@@ -1,0 +1,37 @@
+{
+  "region": "mena",
+  "payoffs": {
+    "discount": 0.99,
+    "cost_resolute": 0.05,
+    "cost_irresolute": 0.9886,
+    "stake": 1.9978,
+    "audience": 0.5976
+  },
+  "distance": 0.65023,
+  "converged": true,
+  "evaluations": 143,
+  "seed": 20260813,
+  "at_bounds": [
+    "discount",
+    "cost_resolute"
+  ],
+  "kernel": {
+    "cells": 54,
+    "measured": 54,
+    "fallback": 0,
+    "share_measured": 1.0,
+    "observations": 13904,
+    "min_cell_observations": 12
+  },
+  "panel_rows": 32840,
+  "bands": [
+    0.0,
+    0.5,
+    1.0,
+    1.5,
+    2.0,
+    3.0
+  ],
+  "identification": "discount and cost both flatten the decay and are NOT separately identified from it alone; treat the pair as jointly fitted",
+  "method": "indirect inference on ACTION FREQUENCIES by intensity band, counted the same way for the archive and for a simulated panel; Nelder-Mead over five structural parameters at a fixed seed. The ridge decay originally proposed as the moment was measured to have no leverage (46.4-50.4% across the whole parameter space) and was replaced"
+}

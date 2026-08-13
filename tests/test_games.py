@@ -319,3 +319,80 @@ def test_a_simulation_that_cannot_be_fitted_is_penalised_not_skipped():
 
     bad = np.array([np.nan, 1.0, 1.0, 1.0])
     assert estimate.distance(bad, np.ones(4)) >= 1e6
+
+
+# ── pricing: the path that had never returned a row ─────────────────────────
+
+
+def _effect(event: str, quad: str, magnitude: float, market: str, ret: float,
+            when: str = "2019-06-15") -> dict[str, Any]:
+    return {
+        "event_id": event, "event_time": when, "quad_class": quad,
+        "magnitude": magnitude, "market_id": market,
+        "market_name": market.replace("market:", "").upper(),
+        "abnormal_return": ret, "window": "0_1", "resolution": "day",
+    }
+
+
+def test_a_step_is_priced_from_measured_effects():
+    # Built against an archive whose AFFECTED table was empty, so until this
+    # test existed the branch that actually RETURNS market rows had never run.
+    from core.games import pricing
+
+    effects = [
+        _effect(f"e{i}", "material_conflict", 9.0, "market:brent", 0.01 + i * 0.002)
+        for i in range(12)
+    ]
+    index = pricing.build_index(effects, as_of="2019-12-31", scale=9.0)
+    assert index, "no cell was indexed — the regime gate rejected everything"
+    band = state.intensity_band(9.0, 9.0)
+    rows = pricing.price_step(
+        {"quad": "material_conflict", "intensity_band": band}, index,
+        {"market:brent": "Brent"},
+    )
+    assert rows, "the priced branch still returns nothing"
+    row = rows[0]
+    assert row["n"] == 12 and not row["thin"] and row["match"] == "quad+band"
+    assert row["min"] <= row["median"] <= row["max"]
+
+
+def test_a_thin_cell_loosens_the_match_and_says_so():
+    from core.games import pricing
+
+    effects = (
+        [_effect("a", "material_conflict", 9.0, "market:brent", 0.02)]
+        + [_effect(f"b{i}", "material_conflict", 1.0, "market:brent", -0.01)
+           for i in range(10)]
+    )
+    index = pricing.build_index(effects, as_of="2019-12-31", scale=9.0)
+    rows = pricing.price_step(
+        {"quad": "material_conflict", "intensity_band": state.intensity_band(9.0, 9.0)},
+        index, {},
+    )
+    # One measurement in the exact cell is not a market implication, so the
+    # match widens to the quad and the row admits it did.
+    assert rows[0]["match"] == "quad only"
+    assert rows[0]["n"] == 11
+
+
+def test_pricing_refuses_evidence_from_another_regime():
+    from core.games import pricing
+
+    # Bretton Woods evidence for a modern question — the same admissibility
+    # gate the analogy engine applies, not a similarity score.
+    old = [_effect(f"e{i}", "material_conflict", 9.0, "market:brent", 0.02,
+                   when="1960-06-15") for i in range(12)]
+    assert pricing.build_index(old, as_of="2019-12-31", scale=9.0) == {}
+
+
+def test_paths_without_measured_effects_say_so_rather_than_pricing_nothing():
+    from core.games import pricing
+
+    priced = pricing.price_paths(
+        {"paths": [{"probability": 1.0, "steps": [
+            {"period": 1, "quad": "material_conflict", "intensity_band": 3}]}]},
+        [], as_of="2019-12-31", scale=9.0,
+    )
+    assert priced["pricing"]["measurements"] == 0
+    assert priced["pricing"]["note"], "an empty index must state itself"
+    assert priced["paths"][0]["steps"][0]["market"] == []
