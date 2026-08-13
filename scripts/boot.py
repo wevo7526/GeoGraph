@@ -88,7 +88,7 @@ _GDELT_TIMEOUT_SECONDS = 2400
 #: out of budget leaves the remaining lens short, which is REPORTED (the
 #: count check below) rather than silently accepted, and the API still comes
 #: up — a served archive that names its gap beats a dead container.
-_GDELT_BUDGET_SECONDS = 3600
+_GDELT_BUDGET_SECONDS = int(os.getenv("GEOGRAPH_GDELT_BUDGET", "7200"))
 
 #: The archive-wide rescore's own ceiling, separate and much larger because it
 #: is the one step here that CANNOT be resumed. Head B folds escalation per
@@ -96,26 +96,40 @@ _GDELT_BUDGET_SECONDS = 3600
 #: the next boot starts from the beginning, so a timeout that cuts it short
 #: does not slow the archive down, it stops it converging at all.
 #:
-#: Sized from measurement: 456,711 events rescored locally in ~29 minutes,
-#: about 262/sec. Production will hold roughly 1.5M across three lenses, and
-#: Railway is slower than a laptop, so the honest budget is hours. It only
-#: runs on the boot where loading is already complete, so it is not competing
-#: with the load for the window.
-_RESCORE_TIMEOUT_SECONDS = int(os.getenv("GEOGRAPH_RESCORE_TIMEOUT", "9000"))
-
-#: WHAT THIS BUDGET MEANS AFTER THE 2006–2026 BACKFILL, stated so nobody reads
-#: a deferred load as a broken one. The modern-era harvest adds roughly a
-#: million events across the three lenses; at the ~110 events/sec measured on
-#: Railway that is about 2.7 hours of merging, against an hour of budget and a
-#: 5400s healthcheck window the API has to bind inside.
+#: Sized from measurement AND bounded by the window it runs in. 456,711 events
+#: rescored locally in ~29 minutes, about 262/sec; production will hold ~1.5M
+#: across three lenses on slower hardware. It runs on a boot where loading is
+#: already complete, so GDELT contributes nothing — but the other steps still
+#: want ~1,975s, and 10800 − 1975 leaves 8,825. Taking 7800 keeps ~1,000s of
+#: margin.
 #:
-#: So the FIRST boots after that backfill will run out of budget and stop
-#: partway, on purpose. That is the resumable design working: the loader skips
-#: ids already present, the completeness check compares against the SUM of
-#: every artifact, and each boot picks up where the last stopped — expect two
-#: or three deploys before a lens reports its full count. Raising this to
-#: swallow it in one go would push the boot past the healthcheck and kill a
-#: container that was working, which is the exact failure of 2026-08-12.
+#: It may well NOT FINISH in that on the first attempt, and that is survivable
+#: precisely because the trigger is "are there unscored events" rather than
+#: "did the archive grow": an interrupted rescore leaves them unscored, so the
+#: next boot tries again and keeps trying until it converges. A count-based
+#: trigger would have skipped forever after one timeout.
+_RESCORE_TIMEOUT_SECONDS = int(os.getenv("GEOGRAPH_RESCORE_TIMEOUT", "7800"))
+
+#: SIZED AGAINST THE HEALTHCHECK WINDOW, and the arithmetic is the whole story.
+#: Two deploys failed on 2026-08-13 — health checks giving up after 138
+#: attempts — because the boot's worst case was 5,575s against a 5400s window:
+#:
+#:     seed 20 + deep tier 90 + GDELT + 13f 10 + study 1500
+#:     + metrics 90 + forecasts 90 + score 25 + backtest 150
+#:
+#: With the window at 10800s (railway.json) everything except GDELT accounts
+#: for ~1,975s, so this can take 7200 and still leave ~1,600s of margin. That
+#: matters because the budget decides HOW MANY DEPLOYS the backfill needs: at
+#: the ~110 events/sec measured on Railway, an hour loads ~400k events and two
+#: hours loads ~790k, so the 1.5M archive converges in two boots rather than
+#: four.
+#:
+#: The first boots still run out of budget and stop partway, on purpose — that
+#: is the resumable design working: the loader skips ids already present, the
+#: completeness check counts DISTINCT ids across every artifact, and each boot
+#: resumes where the last stopped. What must not happen is this growing past
+#: the window and killing a container that was working, which is what both
+#: failed deploys did.
 
 #: The full-archive study's ceiling. With the measured-events watermark only
 #: NEW events pay compute, so a normal boot uses seconds of this — the
@@ -469,16 +483,14 @@ def _load_gdelt(pack_names: list[str]) -> dict[str, Any]:
     return {"ok": all(r["ok"] for r in results), "packs": results}
 
 
-def _capture_events_before() -> dict[str, Any]:
-    """Record the archive's size before any loader runs, so the rescore below
-    can tell a deploy that added events from one that added code."""
-    global _EVENTS_BEFORE
-    _EVENTS_BEFORE = _archive_events()
-    return {"ok": True, "events": _EVENTS_BEFORE}
+def _unscored_events() -> int | None:
+    """Events Head B has not scored. None if the graph is unreadable.
 
-
-def _archive_events() -> int | None:
-    """How many events the graph holds. None if unaskable."""
+    THE RESCORE'S TRIGGER. GDELT's loader writes events with no escalation
+    fields — those are Head B's to fill — so this count is exactly "how much
+    work is outstanding", and it falls to zero only when the rescore has
+    actually finished.
+    """
     from core import settings as settings_module
     from core.graph import kuzu_store
 
@@ -488,18 +500,16 @@ def _archive_events() -> int | None:
     conn = None
     try:
         conn = kuzu_store.connect(settings.kuzu_db_path, read_only=True)
-        rows = kuzu_store.query(conn, "MATCH (e:Event) RETURN count(e) AS n")
+        rows = kuzu_store.query(
+            conn,
+            "MATCH (e:Event) WHERE e.escalation_direction IS NULL "
+            "OR e.escalation_direction = '' RETURN count(e) AS n",
+        )
         return int(rows[0]["n"]) if rows else None
     except Exception:  # noqa: BLE001 - an unreadable graph is the caller's problem
         return None
     finally:
         kuzu_store.close(conn)
-
-
-#: Events in the archive before any loader ran this boot. The rescore's whole
-#: gate: escalation is a function of the event stream, so if the stream did
-#: not change there is nothing to recompute.
-_EVENTS_BEFORE: int | None = None
 
 
 def _rescore_if_new_events(pack_names: list[str]) -> dict[str, Any]:
@@ -516,11 +526,18 @@ def _rescore_if_new_events(pack_names: list[str]) -> dict[str, Any]:
     deploy adds no events, the count is identical, and this returns in
     milliseconds. Only a boot that loaded something pays, and it pays once.
     """
-    before, after = _EVENTS_BEFORE, _archive_events()
-    if before is None or after is None:
-        return {"ok": True, "skipped": "event count unavailable"}
-    if after <= before:
-        return {"ok": True, "skipped": f"no new events ({after:,} unchanged)"}
+    # TRIGGERED BY THE CONDITION ITSELF, not by a proxy for it. An earlier
+    # version compared the event count before and after loading, which is
+    # wrong in the case that matters: if the rescore times out, the NEXT boot
+    # loads nothing, sees an unchanged count, and skips forever — leaving
+    # every backfilled event permanently unscored. Asking "are there events
+    # Head B has not scored?" retries automatically until it succeeds, and
+    # clears itself the moment it has.
+    unscored = _unscored_events()
+    if unscored is None:
+        return {"ok": True, "skipped": "graph unreadable"}
+    if unscored == 0:
+        return {"ok": True, "skipped": "every event is scored"}
 
     # Still loading: rescoring a partial archive is work that the next boot's
     # load invalidates, and this step cannot be resumed to make up for it.
@@ -538,14 +555,15 @@ def _rescore_if_new_events(pack_names: list[str]) -> dict[str, Any]:
         return {"ok": True, "skipped": "archive still loading",
                 "incomplete": incomplete}
 
-    _log(f"rescore: archive grew {before:,} -> {after:,}, folding Head B once")
+    _log(f"rescore: {unscored:,} events unscored, folding Head B once")
     result = _run_step(
         "rescore (archive-wide, once, not resumable)",
         [sys.executable, str(_GDELT_SCRIPT), pack_names[0], "--rescore-only"],
         timeout=int(_RESCORE_TIMEOUT_SECONDS),
         echo=False,
     )
-    return {"grew_from": before, "grew_to": after,
+    return {"unscored_before": unscored,
+            "unscored_after": _unscored_events(),
             **{k: v for k, v in result.items() if k != "step"}}
 
 
@@ -672,7 +690,6 @@ def _boot_status() -> dict[str, Any]:
     # the study from reporting why it could not run, and neither may stop the
     # API from coming up.
     steps: tuple[tuple[str, Callable[[], dict[str, Any] | None]], ...] = (
-        ("events_before", _capture_events_before),
         ("deep", _load_deep_tier),
         ("gdelt", lambda: _load_gdelt(names)),
         ("rescore", lambda: _rescore_if_new_events(names)),

@@ -201,14 +201,46 @@ def test_expected_counts_distinct_ids_not_lines(tmp_path):
     assert boot._expected_events(artifacts) == 15
 
 
-def test_the_rescore_skips_when_no_events_were_added(monkeypatch):
+def test_the_rescore_skips_when_every_event_is_scored(monkeypatch):
     # THE STEP THAT KEEPS A ROUTINE DEPLOY FAST. A frontend or model push adds
-    # no events, so there is nothing for Head B to recompute — and the rescore
-    # is hours on a large archive and cannot be resumed.
-    monkeypatch.setattr(boot, "_EVENTS_BEFORE", 1_000)
-    monkeypatch.setattr(boot, "_archive_events", lambda: 1_000)
+    # no events, so Head B has nothing outstanding — and the rescore is hours
+    # on a large archive and cannot be resumed.
+    monkeypatch.setattr(boot, "_unscored_events", lambda: 0)
     result = boot._rescore_if_new_events(["mena"])
-    assert result["ok"] and "no new events" in result["skipped"]
+    assert result["ok"] and "every event is scored" in result["skipped"]
+
+
+def test_an_interrupted_rescore_is_retried_rather_than_skipped_forever(monkeypatch):
+    # THE REASON THE TRIGGER IS "UNSCORED EVENTS" AND NOT "DID THE ARCHIVE
+    # GROW". A count-based gate skips any boot that loaded nothing — so a
+    # rescore killed by its timeout would never run again, and every
+    # backfilled event would stay permanently unscored. Asking the condition
+    # directly retries until it converges.
+    monkeypatch.setattr(boot, "_unscored_events", lambda: 350_000)
+    seen: dict[str, bool] = {}
+
+    def record(*_args: object, **_kwargs: object) -> dict[str, object]:
+        seen["ran"] = True
+        return {"ok": True}
+
+    monkeypatch.setattr(boot, "_run_step", record)
+    monkeypatch.setattr(boot, "_graph_gdelt_count", lambda name: 10)
+    monkeypatch.setattr(boot, "_DERIVED_DIR", _ROOT / "nonexistent")
+    boot._rescore_if_new_events(["mena"])
+    assert seen.get("ran"), "an outstanding rescore must be attempted again"
+
+
+def test_every_boot_shape_fits_the_healthcheck_window():
+    # Two deploys died at 138 health-check attempts because the worst case was
+    # 5,575s against a 5400s window. The ceilings and the window are one
+    # arithmetic problem, so they are checked together.
+    import json
+
+    window = json.loads((_ROOT / "railway.json").read_text(encoding="utf-8"))
+    window = window["deploy"]["healthcheckTimeout"]
+    other = 20 + 90 + 10 + boot._STUDY_TIMEOUT_SECONDS + 90 + 90 + 25 + 150
+    assert other + boot._GDELT_BUDGET_SECONDS < window, "a loading boot cannot bind"
+    assert other + boot._RESCORE_TIMEOUT_SECONDS < window, "a rescore boot cannot bind"
 
 
 def test_the_deep_tier_defers_its_rescore_to_the_boot():
