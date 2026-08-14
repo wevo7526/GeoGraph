@@ -41,6 +41,7 @@ import contextlib
 import gzip
 import json
 import os
+import shutil
 import subprocess
 import sys
 import time
@@ -866,14 +867,79 @@ def _score_forecasts() -> dict[str, Any]:
     return {k: v for k, v in result.items() if k != "step"}
 
 
+def _reset_graph_if_asked() -> dict[str, Any] | None:
+    """Delete the graph so the boot rebuilds it. OPT-IN, ONE VARIABLE, LOUD.
+
+    THE RECOVERY PATH FOR A FULL VOLUME, and it is safe for one specific
+    reason: NOTHING ON THIS VOLUME IS AN ORIGINAL. The packs, the deep tier and
+    the GDELT artifacts all ship inside the image; the price panel lives in
+    Postgres on a different volume; AFFECTED, NetworkMetric and every Forecast
+    are computed from those two. The graph is a cache of a deterministic
+    function, so deleting it costs a rebuild and never a fact.
+
+    Why it is needed at all: Kuzu has no VACUUM. Space from rewritten rows is
+    not reclaimed, and until the marker fix landed every boot re-merged the
+    whole archive — so the file grew with each deploy while the data did not.
+    A rebuilt graph is the compaction step the engine does not offer.
+
+    Deliberately awkward: it must be set for the ONE deploy that rebuilds and
+    unset afterwards, or every future boot throws the archive away and reloads
+    it. The log says so, twice, because a destructive default that is quiet is
+    how an archive dies.
+    """
+    if os.getenv("GEOGRAPH_RESET_GRAPH", "").strip().lower() not in {"1", "true", "yes"}:
+        return None
+
+    from core import settings as settings_module
+
+    path = settings_module.load().kuzu_db_path
+    _log("=" * 68)
+    _log("GEOGRAPH_RESET_GRAPH is set — DELETING the graph and rebuilding it")
+    _log("UNSET IT after this deploy, or every boot reloads from zero")
+    _log("=" * 68)
+
+    removed: list[dict[str, Any]] = []
+    for target in (path, path.with_name(path.name + ".wal"),
+                   path.with_name(path.name + ".tmp")):
+        if not target.exists():
+            continue
+        size = (target.stat().st_size if target.is_file()
+                else sum(f.stat().st_size for f in target.rglob("*") if f.is_file()))
+        try:
+            if target.is_dir():
+                shutil.rmtree(target)
+            else:
+                target.unlink()
+            removed.append({"path": str(target), "bytes": size})
+            _log(f"removed {target.name} ({size / 1e9:.2f} GB)")
+        except OSError as exc:
+            _log(f"could NOT remove {target.name}: {exc}")
+            return {"ok": False, "error": str(exc)}
+
+    # The markers describe the graph that was just deleted. Leaving them would
+    # make the very next step skip the load that has to happen.
+    for name in _pack_names():
+        _clear_markers(name)
+    _log("markers cleared — every artifact will reload")
+    freed = sum(int(r["bytes"]) for r in removed)
+    return {"ok": True, "removed": removed, "freed_gb": round(freed / 1e9, 2)}
+
+
 def _boot_status() -> dict[str, Any]:
     if _disabled():
         _log("seeding disabled by GEOGRAPH_SEED_ON_BOOT")
         return {"seeded": False, "reason": "disabled by GEOGRAPH_SEED_ON_BOOT"}
 
+    # BEFORE anything opens the graph — a reset that runs after the seed has
+    # taken the single-writer lock deletes a database out from under a live
+    # connection.
+    reset = _reset_graph_if_asked()
+
     status: dict[str, Any] = {
         "seeded": True, "packs": [], "panel": None, "prices": None, "study": None,
     }
+    if reset is not None:
+        status["reset"] = reset
     try:
         names = _pack_names()
     except Exception as exc:  # noqa: BLE001 - a broken pack must not stop the boot

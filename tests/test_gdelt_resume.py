@@ -368,6 +368,48 @@ def test_the_rescore_waits_on_artifacts_not_on_a_count(tmp_path, monkeypatch):
     assert ran, "every artifact loaded — the rescore must run despite the count"
 
 
+def test_the_graph_reset_is_opt_in_and_off_by_default(tmp_path, monkeypatch):
+    # A destructive step that runs by accident throws away the archive on every
+    # boot. Absence of the variable must mean "do nothing", and so must every
+    # value that is not an explicit yes.
+    monkeypatch.delenv("GEOGRAPH_RESET_GRAPH", raising=False)
+    assert boot._reset_graph_if_asked() is None
+    for value in ("", "0", "false", "no", "maybe"):
+        monkeypatch.setenv("GEOGRAPH_RESET_GRAPH", value)
+        assert boot._reset_graph_if_asked() is None, f"{value!r} must not delete"
+
+
+def test_the_graph_reset_removes_the_database_and_its_markers(tmp_path, monkeypatch):
+    # Kuzu has no VACUUM: space from rewritten rows is never reclaimed, so a
+    # rebuild IS the compaction step. Safe because nothing on the volume is an
+    # original — packs, deep tier and GDELT artifacts ship in the image, the
+    # panel is in Postgres, and every measured or frozen node is computed from
+    # those. The markers must go with it, or the next step skips the reload.
+    db = tmp_path / "geograph.kuzu"
+    db.mkdir()
+    (db / "data.kz").write_bytes(b"x" * 4096)
+    (tmp_path / "geograph.kuzu.wal").write_bytes(b"y" * 1024)
+
+    class _Settings:
+        kuzu_db_path = db
+
+    monkeypatch.setenv("GEOGRAPH_RESET_GRAPH", "1")
+    monkeypatch.setattr(boot, "_loaded_dir", lambda: tmp_path / "marks")
+    monkeypatch.setattr(boot, "_pack_names", lambda: ["mena"])
+    marker = boot._loaded_dir() / "mena-gdelt-mena-2024.tsv.done"
+    marker.parent.mkdir(parents=True, exist_ok=True)
+    marker.write_text("x", encoding="utf-8")
+
+    import core.settings as settings_module
+    monkeypatch.setattr(settings_module, "load", lambda: _Settings())
+
+    result = boot._reset_graph_if_asked()
+    assert result is not None and result["ok"]
+    assert not db.exists(), "the graph must be gone"
+    assert not (tmp_path / "geograph.kuzu.wal").exists(), "the WAL must go too"
+    assert not marker.exists(), "markers describe a graph that no longer exists"
+
+
 def test_the_deep_tier_defers_its_rescore_to_the_boot():
     # It used to rescore unconditionally on EVERY boot — 643s against a 267k
     # archive, and past its own timeout on a 1.5M one, for no benefit.
