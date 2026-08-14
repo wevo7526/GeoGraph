@@ -32,8 +32,13 @@ export default function TopBar({
     getHealth().then((h) => setHealthy(h?.graph === 'open'))
   }, [])
 
+  // Front-of-house first: the Explorer (browse), a Relationship (the answer),
+  // the Watchlist (follow). The technical surfaces stay reachable for now;
+  // they fold into the Relationship page as evidence in the IA pass.
   const pages: Array<[string, string]> = [
     ['/explore', 'Explorer'],
+    ['/relationship', 'Relationship'],
+    ['/watchlist', 'Watchlist'],
     ['/reasoning', 'Reasoning'],
     ['/games', 'The game'],
     ['/trading', 'Trading'],

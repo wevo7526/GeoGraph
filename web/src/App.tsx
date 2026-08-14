@@ -7,6 +7,8 @@ import TopBar from './components/TopBar'
 // front door must not pay for it. Working pages load when entered.
 const CaseStudyView = lazy(() => import('./components/CaseStudyView'))
 const Explorer = lazy(() => import('./components/Explorer'))
+const RelationshipPage = lazy(() => import('./components/RelationshipPage'))
+const WatchlistPage = lazy(() => import('./components/WatchlistPage'))
 const ReasoningPage = lazy(() => import('./components/ReasoningPage'))
 const GamesPage = lazy(() => import('./components/GamesPage'))
 const TradingPage = lazy(() => import('./components/TradingPage'))
@@ -67,6 +69,12 @@ export default function App() {
     scrollPage = true
   } else if (route.startsWith('/cases')) {
     page = <CasesPage region={region} onNavigate={navigate} />
+    scrollPage = true
+  } else if (route.startsWith('/relationship')) {
+    page = <RelationshipPage region={region} onNavigate={navigate} />
+    scrollPage = true
+  } else if (route.startsWith('/watchlist')) {
+    page = <WatchlistPage region={region} onNavigate={navigate} />
     scrollPage = true
   } else if (route.startsWith('/games')) {
     page = <GamesPage region={region} onNavigate={navigate} />
