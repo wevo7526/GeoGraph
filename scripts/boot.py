@@ -70,6 +70,7 @@ from __future__ import annotations
 
 import contextlib
 import gzip
+import hashlib
 import json
 import os
 import shutil
@@ -397,13 +398,22 @@ def _save_fingerprint(step: str, value: str) -> None:
 
 def _image_fingerprint() -> str:
     """The shipped inputs: corpus artifacts, model artifacts, packs. Constant
-    for the life of an image — changes exactly when a build changes them."""
+    for the life of an image — changes exactly when a build changes them.
+
+    MUST be stable ACROSS PROCESSES, and builtin `hash()` is not: Python salts
+    the hash of str/tuple per interpreter via PYTHONHASHSEED (unset here), so
+    `str(hash(tuple(parts)))` returned a different value on every boot — which
+    silently defeated EVERY fingerprint guard, since a stored fingerprint from
+    boot N never matched boot N+1 and `deep`/`metrics`/`scores` recomputed in
+    full on every routine deploy. A content digest is process-stable, so the
+    guards skip when the shipped inputs are byte-identical, as designed.
+    """
     parts = []
     for directory in (_DERIVED_DIR, _ROOT / "models", _ROOT / "packs"):
         for path in sorted(directory.rglob("*")):
             if path.is_file():
                 parts.append(f"{path.relative_to(_ROOT)}:{path.stat().st_size}")
-    return str(hash(tuple(parts)))
+    return hashlib.sha256("\n".join(parts).encode("utf-8")).hexdigest()
 
 
 #: The graph facets a step can declare as INPUTS. A step's fingerprint must

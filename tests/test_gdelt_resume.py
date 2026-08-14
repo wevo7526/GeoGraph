@@ -633,3 +633,31 @@ def test_fingerprint_guards_skip_only_matching_complete_runs(monkeypatch, tmp_pa
     monkeypatch.setenv("GEOGRAPH_SKIP_GUARDS", "0")
     boot._guarded("teststep", lambda: fp["value"], runner)
     assert len(calls) == 4
+
+
+def test_image_fingerprint_is_stable_across_processes():
+    # THE 2026-08-14 GUARD BUG. _image_fingerprint fed every guarded step's
+    # fingerprint, but used builtin hash(), which Python salts per interpreter
+    # via PYTHONHASHSEED — so the value differed on every boot and NO guard ever
+    # matched across restarts, making deep/metrics/scores recompute in full on
+    # every routine deploy. The whole point is process-stability: two fresh
+    # interpreters with DIFFERENT hash seeds must agree on identical inputs.
+    import subprocess
+    import sys
+
+    prog = (
+        "import importlib.util, pathlib;"
+        f"root=pathlib.Path(r'{_ROOT}');"
+        "spec=importlib.util.spec_from_file_location('boot', root/'scripts'/'boot.py');"
+        "m=importlib.util.module_from_spec(spec);spec.loader.exec_module(m);"
+        "print(m._image_fingerprint())"
+    )
+    out = []
+    for seed in ("0", "1", "12345"):
+        env = {**__import__("os").environ, "PYTHONHASHSEED": seed}
+        res = subprocess.run([sys.executable, "-c", prog], capture_output=True,
+                             text=True, env=env, check=True)
+        out.append(res.stdout.strip())
+    assert out[0] and len(set(out)) == 1, (
+        f"fingerprint must not depend on PYTHONHASHSEED, got {out}"
+    )
