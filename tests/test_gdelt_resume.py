@@ -230,35 +230,142 @@ def test_an_interrupted_rescore_is_retried_rather_than_skipped_forever(monkeypat
     assert seen.get("ran"), "an outstanding rescore must be attempted again"
 
 
-def test_every_boot_shape_fits_the_healthcheck_window():
-    # THREE deploys died on this arithmetic — 138 attempts, then 209. The
-    # second time the mistake was counting the study once when its ceiling is
-    # paid PER PACK, so three regions spent 4,500s against a budget of 1,500.
-    # Ceilings and window are one problem and are checked as one.
+def test_the_boot_window_matches_railway_json():
+    # The two must not drift. boot.py budgets against _WINDOW_SECONDS; Railway
+    # kills the container at healthcheckTimeout. If they disagree, every budget
+    # in the file is computed against a deadline that is not the real one.
     import json
 
     window = json.loads((_ROOT / "railway.json").read_text(encoding="utf-8"))
-    window = window["deploy"]["healthcheckTimeout"]
-    fixed = 60 + 90 + 10 + 120 + 120 + 30 + 200   # seeds, deep, 13f, metrics,
-    #                                               forecasts, score, backtest
-    loading = fixed + boot._GDELT_BUDGET_SECONDS + boot._STUDY_BUDGET_SECONDS
-    rescoring = fixed + boot._RESCORE_TIMEOUT_SECONDS + boot._STUDY_BUDGET_SECONDS
-    assert loading < window, f"a loading boot needs {loading}s of {window}s"
-    assert rescoring < window, f"a rescore boot needs {rescoring}s of {window}s"
+    assert window["deploy"]["healthcheckTimeout"] == boot._WINDOW_SECONDS
 
 
-def test_every_per_pack_step_has_a_budget_across_packs():
-    # The rule the 209-attempt failure bought: a ceiling paid per region
-    # multiplies with the number of regions, so adding a fourth lens would
-    # silently break a boot that fits with three. Every such step carries a
-    # SHARED budget, and the budget is what the window arithmetic counts.
+def test_budgets_are_read_off_the_clock_not_predicted():
+    # THREE deploys died on hand-arithmetic over fixed budgets — 138 attempts,
+    # then 209. The second mistake was counting the study once when its ceiling
+    # is paid PER PACK, so three regions spent 4,500s against a budget of
+    # 1,500. The cure is not better arithmetic, it is not doing arithmetic: a
+    # step asks the clock what is left. A fixed slice cannot be checked here
+    # because it encodes a PREDICTION of what ran before it, and the prediction
+    # is the thing that keeps being wrong.
     source = (_ROOT / "scripts" / "boot.py").read_text(encoding="utf-8")
-    for step, budget in (("_load_gdelt", "_GDELT_BUDGET_SECONDS"),
-                         ("_run_study", "_STUDY_BUDGET_SECONDS")):
+    for step in ("_load_gdelt", "_run_study", "_rescore_if_new_events"):
         body = source[source.index(f"def {step}("):]
         body = body[: body.index(chr(10) + "def ", 1)]
-        assert budget in body, f"{step} iterates packs without a shared budget"
+        assert "_remaining(" in body, f"{step} budgets without reading the clock"
+    # And the two that iterate packs must still stop when the shared pool is
+    # spent, or a fourth lens breaks a boot that fits with three.
+    for step in ("_load_gdelt", "_run_study"):
+        body = source[source.index(f"def {step}("):]
+        body = body[: body.index(chr(10) + "def ", 1)]
         assert "budget <= 0" in body, f"{step} does not stop when its budget is spent"
+
+
+def test_remaining_never_promises_more_window_than_exists():
+    # _remaining is the primitive every budget is built on, so its floor and
+    # ceiling are the whole safety argument.
+    assert boot._remaining(0) <= boot._WINDOW_SECONDS
+    assert boot._remaining(boot._WINDOW_SECONDS * 2) == 0.0, "must floor at zero"
+    # Reserving more leaves less. Stated because an inverted sign here would
+    # hand the study MORE time the later it starts.
+    assert boot._remaining(1000) < boot._remaining(0)
+
+
+def test_the_expensive_steps_reserve_room_for_what_follows_them():
+    # GDELT and the rescore run BEFORE the study, so they must leave it a
+    # working window; the study runs last and takes the remainder. If these
+    # reserves were equal, the study would routinely start with nothing.
+    early = boot._TAIL_RESERVE_SECONDS + boot._STUDY_MIN_SECONDS
+    assert early > boot._TAIL_RESERVE_SECONDS
+    # The rescore cannot be resumed, so starting it without room to finish
+    # wastes the whole pass — it must decline rather than be cut off.
+    assert boot._RESCORE_MIN_SECONDS > boot._STUDY_MIN_SECONDS
+
+
+def _fake_artifacts(tmp_path, pack: str, years: tuple[str, ...]):
+    files = []
+    for year in years:
+        path = tmp_path / f"gdelt-{pack}-{year}.tsv.gz"
+        path.write_bytes(b"")
+        files.append(path)
+    return sorted(files)
+
+
+def test_completeness_is_per_artifact_not_a_count(tmp_path, monkeypatch):
+    # THE 2026-08-14 BUG. Completeness compared the graph's per-lens event
+    # count against the distinct ids in that lens's artifacts, which looks
+    # airtight and is not: region_pack is a property of the NODE, and since
+    # external_powers moved onto the pack every lens harvests the USA/RUS
+    # dyads. The same wire events are written once and carry whichever lens
+    # merged them first, so eurasia read 512,806/534,534 and mena
+    # 432,803/454,531 — short by an IDENTICAL 21,728. Completeness was
+    # unreachable for every lens but the alphabetically-first one, so the boot
+    # re-merged a finished archive every time and the rescore NEVER RAN.
+    monkeypatch.setattr(boot, "_loaded_dir", lambda: tmp_path / "marks")
+    artifacts = _fake_artifacts(tmp_path, "mena", ("2024", "2025", "2026"))
+
+    assert boot._pending_artifacts("mena", artifacts) == artifacts
+    for artifact in artifacts:
+        boot._mark_artifact_loaded("mena", artifact)
+    # Complete — and note the graph count was never consulted to decide it.
+    assert boot._pending_artifacts("mena", artifacts) == []
+
+
+def test_a_failed_artifact_stays_pending(tmp_path, monkeypatch):
+    # The resumability the count was supposed to provide and could not: a
+    # timed-out artifact must be retried by the next boot, and only it.
+    monkeypatch.setattr(boot, "_loaded_dir", lambda: tmp_path / "marks")
+    artifacts = _fake_artifacts(tmp_path, "mena", ("2024", "2025", "2026"))
+    boot._mark_artifact_loaded("mena", artifacts[0])
+    boot._mark_artifact_loaded("mena", artifacts[2])
+    assert boot._pending_artifacts("mena", artifacts) == [artifacts[1]]
+
+
+def test_markers_do_not_survive_the_graph_they_describe(tmp_path, monkeypatch):
+    # A marker is a claim ABOUT a graph. If the volume was rebuilt the graph is
+    # empty and the claim is false, and trusting it would skip a load that has
+    # to happen — the same silent-shortfall failure in a new costume.
+    monkeypatch.setattr(boot, "_loaded_dir", lambda: tmp_path / "marks")
+    monkeypatch.setattr(boot, "_DERIVED_DIR", tmp_path)
+    monkeypatch.setattr(boot, "_graph_gdelt_count", lambda name: 0)
+    monkeypatch.setattr(boot, "_expected_events", lambda artifacts: 100)
+    artifacts = _fake_artifacts(tmp_path, "mena", ("2024", "2025"))
+    for artifact in artifacts:
+        boot._mark_artifact_loaded("mena", artifact)
+
+    ran: list[str] = []
+
+    def record(label, *_args, **_kwargs):
+        ran.append(label)
+        return {"ok": True, "step": label}
+
+    monkeypatch.setattr(boot, "_run_step", record)
+    boot._load_gdelt(["mena"])
+    assert len(ran) == 2, "an empty graph must invalidate its markers and reload"
+
+
+def test_the_rescore_waits_on_artifacts_not_on_a_count(tmp_path, monkeypatch):
+    # The other half of the same bug: the rescore's completeness gate used the
+    # same unreachable comparison, so it deferred on every boot forever.
+    monkeypatch.setattr(boot, "_loaded_dir", lambda: tmp_path / "marks")
+    monkeypatch.setattr(boot, "_DERIVED_DIR", tmp_path)
+    monkeypatch.setattr(boot, "_unscored_events", lambda: 350_000)
+    # A count far short of the artifacts' ids — the condition that used to
+    # block the rescore permanently.
+    monkeypatch.setattr(boot, "_graph_gdelt_count", lambda name: 1)
+    artifacts = _fake_artifacts(tmp_path, "mena", ("2024", "2025"))
+    for artifact in artifacts:
+        boot._mark_artifact_loaded("mena", artifact)
+
+    ran: list[str] = []
+
+    def record(label, *_args, **_kwargs):
+        ran.append(label)
+        return {"ok": True, "step": label}
+
+    monkeypatch.setattr(boot, "_run_step", record)
+    boot._rescore_if_new_events(["mena"])
+    assert ran, "every artifact loaded — the rescore must run despite the count"
 
 
 def test_the_deep_tier_defers_its_rescore_to_the_boot():

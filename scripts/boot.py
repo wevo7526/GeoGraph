@@ -37,6 +37,7 @@ same numbers.
 
 from __future__ import annotations
 
+import contextlib
 import gzip
 import json
 import os
@@ -110,6 +111,13 @@ _GDELT_BUDGET_SECONDS = int(os.getenv("GEOGRAPH_GDELT_BUDGET", "5400"))
 #: trigger would have skipped forever after one timeout.
 _RESCORE_TIMEOUT_SECONDS = int(os.getenv("GEOGRAPH_RESCORE_TIMEOUT", "7800"))
 
+#: Below this the rescore declines rather than starts. It cannot be resumed,
+#: so a pass that gets cut off produces nothing at all — and unlike the study,
+#: "some progress" is not one of its outcomes. Measured at ~262 events/sec on
+#: 456,711 events; 1800s is enough to be worth the attempt on a lens-sized
+#: archive and short enough that declining is rare.
+_RESCORE_MIN_SECONDS = 1800
+
 #: SIZED AGAINST THE HEALTHCHECK WINDOW, and the arithmetic is the whole story.
 #: Two deploys failed on 2026-08-13 — health checks giving up after 138
 #: attempts — because the boot's worst case was 5,575s against a 5400s window:
@@ -143,7 +151,39 @@ _RESCORE_TIMEOUT_SECONDS = int(os.getenv("GEOGRAPH_RESCORE_TIMEOUT", "7800"))
 #: whose cost multiplies with the number of regions needs a budget, or adding
 #: a fourth lens silently breaks the boot.
 _STUDY_TIMEOUT_SECONDS = 1200
-_STUDY_BUDGET_SECONDS = int(os.getenv("GEOGRAPH_STUDY_BUDGET", "3600"))
+
+#: WHEN THIS BOOT STARTED. Every budget below is derived from this and the
+#: window, rather than fixed in advance, and that is the point.
+#:
+#: Two deploys died on 2026-08-13 (138 and 209 health-check attempts) because
+#: hand-arithmetic over fixed budgets was wrong — first about the window, then
+#: about a ceiling that multiplies per pack. Fixed budgets encode a PREDICTION
+#: of how long earlier steps take, and the prediction is what keeps being
+#: wrong. Reading the clock cannot be wrong: whatever GDELT actually spends,
+#: the rescore sees the truth, and whatever the rescore spends, the study sees
+#: the truth.
+#:
+#: The second reason is throughput, which is why this landed tonight. A fixed
+#: slice makes a boot stop early with an hour of its window unused, and
+#: deferred work does not drain on its own — the boot runs ONCE per deploy, so
+#: every deferral waits for a human to redeploy. Spending the whole window is
+#: the difference between converging in one deploy and converging in three.
+_BOOT_STARTED = time.monotonic()
+
+#: The healthcheck window this boot must finish inside. Must agree with
+#: railway.json's `healthcheckTimeout` — `test_boot_window_matches_railway_json`
+#: is what keeps the two from drifting apart.
+_WINDOW_SECONDS = int(os.getenv("GEOGRAPH_BOOT_WINDOW", "14400"))
+
+#: What the steps AFTER the study need: metrics, forecasts, scores, backtest.
+#: Measured at ~320s across the 2026-08-13 boots; 600 leaves margin for a
+#: larger archive. This is the ONLY estimate left in the budget arithmetic.
+_TAIL_RESERVE_SECONDS = 600
+
+#: Never begin the study with less than this — a 90-second study measures a
+#: handful of events and spends its startup cost for nothing. Below this the
+#: step declines and says so, which is honest and costs the same.
+_STUDY_MIN_SECONDS = 600
 
 #: How far before the spine's EARLIEST event the panel must reach: the
 #: estimation window (120 sessions) plus its gap and the measurement windows,
@@ -153,6 +193,17 @@ _LOOKBACK_DAYS = 400
 
 def _log(message: str) -> None:
     print(f"boot: {message}", flush=True)
+
+
+def _remaining(reserve: float) -> float:
+    """Seconds this boot can still spend, leaving `reserve` for what follows.
+
+    The one primitive the budgeted steps share. `reserve` is what MUST still
+    happen after the caller returns — never what might be nice to have — so a
+    step that takes everything `_remaining` offers still leaves a boot that
+    binds.
+    """
+    return max(0.0, _WINDOW_SECONDS - (time.monotonic() - _BOOT_STARTED) - reserve)
 
 
 def _disabled() -> bool:
@@ -325,8 +376,20 @@ def _run_study(pack_names: list[str]) -> dict[str, Any] | None:
     # watermark, so a truncated pass costs nothing and the next boot resumes
     # where it stopped. What is NOT safe is a step whose cost multiplies with
     # the number of regions inside a fixed window.
+    #
+    # THE STUDY IS LAST AMONG THE EXPENSIVE STEPS, so it takes every second the
+    # window has left rather than a fixed slice. It is the right step to hand
+    # the remainder to: it is the most resumable thing the boot does — a
+    # watermark, per event — so an extra forty minutes here is forty minutes of
+    # permanent progress, and stopping mid-pass costs nothing.
     results = []
-    budget = float(_STUDY_BUDGET_SECONDS)
+    budget = _remaining(_TAIL_RESERVE_SECONDS)
+    if budget < _STUDY_MIN_SECONDS:
+        _log(f"event study: {int(budget)}s left in the window — too little to "
+             f"be worth starting, deferred")
+        return {"ok": True, "skipped": "window spent", "remaining": int(budget)}
+    _log(f"event study: {int(budget)}s of window remaining, "
+         f"{int(_STUDY_TIMEOUT_SECONDS)}s ceiling per pack")
     for name in pack_names:
         if budget <= 0:
             _log(f"event study {name}: out of budget — deferred to the next boot")
@@ -405,6 +468,67 @@ def _artifact_events(artifact: Path) -> int:
         return sum(1 for _ in fh)
 
 
+def _loaded_dir() -> Path:
+    """Where per-artifact load markers live — on the VOLUME, beside the graph.
+
+    Boot bookkeeping, deliberately NOT a node class: the LinkML ontology is the
+    source of truth for facts about the WORLD, and "this container finished
+    loading gdelt-mena-2014" is a fact about this container. Beside the graph
+    because the two must share a lifetime — a rebuilt volume loses both
+    together, which is what the stale-marker guard in `_load_gdelt` relies on.
+    """
+    from core import settings as settings_module
+
+    return settings_module.load().kuzu_db_path.parent / ".gdelt-loaded"
+
+
+def _pending_artifacts(pack_name: str, artifacts: list[Path]) -> list[Path]:
+    """The artifacts of this lens that have not yet loaded clean.
+
+    THE ARTIFACT IS THE UNIT OF COMPLETENESS, NOT THE EVENT COUNT — and that
+    correction is the whole reason this function exists. Comparing the graph's
+    per-lens count against the artifacts' distinct ids looks airtight and is
+    not, because `region_pack` is a property of the NODE and a GDELT id can
+    appear in more than one lens's artifacts. Since `external_powers` moved
+    onto the pack, every lens harvests the USA/RUS dyads, so the same wire
+    events are written once and carry whichever lens merged them first
+    (packs seed alphabetically, so: china). The 2026-08-14 boot measured the
+    consequence exactly — eurasia 512,806/534,534 and mena 432,803/454,531,
+    short by an IDENTICAL 21,728 — and the identity across two independent
+    lenses is the tell that this is a shared set, not a partial load.
+
+    Cost of believing the count: completeness is unreachable for every lens but
+    the alphabetically-first one, so every boot re-merges a finished archive
+    for ~13 minutes and the rescore that waits on completeness NEVER RUNS.
+
+    A marker is also correct under the other explanation for a shortfall — a
+    loader that legitimately drops records it cannot code. Dropping and
+    counting is the archive's rule; a load that dropped is still a load that
+    finished, and only the artifact knows that. Counts stay, as a diagnostic.
+    """
+    marker_dir = _loaded_dir()
+    return [a for a in artifacts
+            if not (marker_dir / f"{pack_name}-{a.stem}.done").exists()]
+
+
+def _mark_artifact_loaded(pack_name: str, artifact: Path) -> None:
+    """Record that this artifact loaded clean. Best-effort by design."""
+    marker_dir = _loaded_dir()
+    try:
+        marker_dir.mkdir(parents=True, exist_ok=True)
+        (marker_dir / f"{pack_name}-{artifact.stem}.done").write_text(
+            artifact.name, encoding="utf-8")
+    except OSError as exc:  # a read-only volume must not fail the boot
+        _log(f"could not mark {artifact.name} loaded: {exc}")
+
+
+def _clear_markers(pack_name: str) -> None:
+    """Forget this lens's markers — the graph they described is gone."""
+    for marker in _loaded_dir().glob(f"{pack_name}-*.done"):
+        with contextlib.suppress(OSError):  # best effort, one file at a time
+            marker.unlink()
+
+
 def _graph_gdelt_count(pack_name: str) -> int | None:
     """How many GDELT events the graph holds for THIS lens. None if unaskable."""
     from core import settings as settings_module
@@ -449,7 +573,12 @@ def _load_gdelt(pack_names: list[str]) -> dict[str, Any]:
     if os.getenv("GEOGRAPH_GDELT_ON_BOOT", "1").strip().lower() in {"0", "false", "no"}:
         return {"ok": True, "skipped": "disabled by GEOGRAPH_GDELT_ON_BOOT"}
     results = []
-    budget = float(_GDELT_BUDGET_SECONDS)
+    # Its own ceiling OR what the window can spare, whichever is smaller. The
+    # ceiling still matters: GDELT runs FIRST among the expensive steps, so
+    # without it a large backfill would eat the window and starve the rescore
+    # that has to follow it.
+    budget = min(float(_GDELT_BUDGET_SECONDS),
+                 _remaining(_TAIL_RESERVE_SECONDS + _STUDY_MIN_SECONDS))
     for name in pack_names:
         artifacts = sorted(_DERIVED_DIR.glob(f"gdelt-{name}-*.tsv.gz"))
         if not artifacts:
@@ -464,21 +593,35 @@ def _load_gdelt(pack_names: list[str]) -> dict[str, Any]:
         # against that one year's, so the completeness check would pass
         # immediately and the other twenty years would never load. That is the
         # same silent-shortfall bug the docstring above describes, one level up.
-        expected = _expected_events(artifacts)
         held = _graph_gdelt_count(name)
-        if held is not None and held >= expected:
-            results.append({"pack": name, "ok": True,
-                            "skipped": f"graph holds {held}/{expected}"})
+        pending = _pending_artifacts(name, artifacts)
+        # Markers describe a graph. If that graph is gone — a rebuilt volume,
+        # a wiped database — they describe nothing, and trusting them would
+        # skip a load that has to happen. The graph is the authority on
+        # whether it is empty; the markers are only the authority on how far a
+        # non-empty one got.
+        if held == 0 and len(pending) < len(artifacts):
+            _log(f"gdelt {name}: markers survive an empty graph — reloading all")
+            _clear_markers(name)
+            pending = list(artifacts)
+        if not pending:
+            results.append({"pack": name, "ok": True, "held": held,
+                            "skipped": f"all {len(artifacts)} artifacts loaded"})
             continue
         if budget <= 0:
-            _log(f"gdelt {name}: out of budget — {held}/{expected}, deferred")
-            results.append({"pack": name, "ok": True, "expected": expected,
-                            "held": held, "skipped": "GDELT budget spent"})
+            _log(f"gdelt {name}: out of budget — "
+                 f"{len(artifacts) - len(pending)}/{len(artifacts)} artifacts, deferred")
+            results.append({"pack": name, "ok": True, "held": held,
+                            "pending": len(pending), "skipped": "GDELT budget spent"})
             continue
-        if held:
-            _log(f"gdelt {name}: graph holds {held}/{expected} — resuming the rest")
+        # The count is now a DIAGNOSTIC and never a gate, so it is computed
+        # only on a boot that is loading anyway — a pass over a few megabytes
+        # of gzip that a finished lens no longer pays for at all.
+        expected = _expected_events(artifacts)
+        _log(f"gdelt {name}: {len(pending)}/{len(artifacts)} artifacts to load "
+             f"(graph holds {held}/{expected} events)")
         steps = []
-        for artifact in artifacts:
+        for artifact in pending:
             if budget <= 0:
                 _log(f"gdelt {name}: budget spent at {artifact.name} — deferred")
                 break
@@ -490,22 +633,38 @@ def _load_gdelt(pack_names: list[str]) -> dict[str, Any]:
             # every event in the graph, so twenty-one of them over a
             # million-event archive is the difference between a boot that
             # finishes and one that dies on its healthcheck. Run once, below.
-            steps.append(_run_step(
+            step = _run_step(
                 f"gdelt backfill {name} {artifact.stem}",
                 [sys.executable, str(_GDELT_SCRIPT), name,
                  "--from-filtered", str(artifact), "--skip-rescore"],
                 timeout=int(min(_GDELT_TIMEOUT_SECONDS, budget)),
                 echo=False,
-            ))
+            )
+            steps.append(step)
+            # ONLY on success. A timed-out or failed artifact stays pending, so
+            # the next boot retries exactly it and nothing else — which is the
+            # resumability the count was supposed to provide and could not.
+            if step["ok"]:
+                _mark_artifact_loaded(name, artifact)
             budget -= time.monotonic() - started
         after = _graph_gdelt_count(name)
+        still_pending = _pending_artifacts(name, artifacts)
         results.append({
             "pack": name, "expected": expected, "held": after,
             "artifacts": len(artifacts), "loaded": len(steps),
+            "pending": len(still_pending),
             "ok": all(s["ok"] for s in steps) if steps else True,
         })
-        if after is not None and after < expected:
-            _log(f"gdelt {name}: STILL SHORT — {after}/{expected}")
+        if still_pending:
+            _log(f"gdelt {name}: {len(still_pending)} artifacts still pending")
+        elif after is not None and after < expected:
+            # Every artifact loaded and the graph is still short. NOT a failure
+            # and no longer a reason to reload: the difference is ids this lens
+            # shares with a lens that merged them first, plus records the loader
+            # dropped rather than guessed at. Said out loud, because a silent
+            # gap is the thing this archive refuses to have.
+            _log(f"gdelt {name}: complete — {after}/{expected} events held; "
+                 f"{expected - after} are shared with another lens or dropped")
 
     # (the rescore moved out to _rescore_if_new_events, so it can also cover
     #  the deep tier and can see whether the archive actually grew)
@@ -575,20 +734,33 @@ def _rescore_if_new_events(pack_names: list[str]) -> dict[str, Any]:
         artifacts = sorted(_DERIVED_DIR.glob(f"gdelt-{name}-*.tsv.gz"))
         if not artifacts:
             continue
-        expected = _expected_events(artifacts)
-        held = _graph_gdelt_count(name)
-        if held is not None and held < expected:
-            incomplete.append(f"{name} {held}/{expected}")
+        pending = _pending_artifacts(name, artifacts)
+        if pending:
+            incomplete.append(
+                f"{name} {len(artifacts) - len(pending)}/{len(artifacts)} artifacts")
     if incomplete:
         _log("rescore deferred — still loading: " + ", ".join(incomplete))
         return {"ok": True, "skipped": "archive still loading",
                 "incomplete": incomplete}
 
-    _log(f"rescore: {unscored:,} events unscored, folding Head B once")
+    # Its own ceiling OR what the window can spare. Unlike the study this step
+    # cannot be resumed, so being cut short wastes the whole pass — but running
+    # it with 200 seconds left wastes the same pass AND the window. Declining
+    # early is strictly better: the trigger is "are there unscored events", so
+    # the next boot simply tries again.
+    budget = _remaining(_TAIL_RESERVE_SECONDS + _STUDY_MIN_SECONDS)
+    timeout = min(float(_RESCORE_TIMEOUT_SECONDS), budget)
+    if timeout < _RESCORE_MIN_SECONDS:
+        _log(f"rescore deferred — {int(budget)}s of window left, needs "
+             f"{_RESCORE_MIN_SECONDS}s to be worth starting")
+        return {"ok": True, "skipped": "not enough window", "unscored": unscored}
+
+    _log(f"rescore: {unscored:,} events unscored, folding Head B once "
+         f"({int(timeout)}s available)")
     result = _run_step(
         "rescore (archive-wide, once, not resumable)",
         [sys.executable, str(_GDELT_SCRIPT), pack_names[0], "--rescore-only"],
-        timeout=int(_RESCORE_TIMEOUT_SECONDS),
+        timeout=int(timeout),
         echo=False,
     )
     return {"unscored_before": unscored,
