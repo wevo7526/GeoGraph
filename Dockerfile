@@ -44,7 +44,14 @@ WORKDIR /app
 # graph. The dependencies stay; the package must resolve to /app/core (via
 # PYTHONPATH below), not least because core/packs.py locates packs/ RELATIVE
 # to core's own location.
-COPY pyproject.toml README.md ./
+# pyproject (plus the package skeleton) keys the dependency layer. README.md
+# used to be COPYed here because pyproject references it — but that made a
+# README edit rebuild the most expensive layer in the image, so an empty stub
+# stands in for it (pip only needs the file to exist; the built package is
+# uninstalled below anyway). core/__init__.py still keys this layer — it holds
+# the package invariant and changes about never.
+COPY pyproject.toml ./
+RUN touch README.md && mkdir -p core
 COPY core/__init__.py core/
 # `ingest` and `analysis` are not optional in the image: boot loads the price
 # panel with yfinance/FRED and computes NetworkMetric with networkx before the
@@ -59,28 +66,35 @@ RUN pip install --no-cache-dir ".[api,panel,mcp,ingest,analysis,reasoning]" \
 
 ENV PYTHONPATH=/app
 
-COPY core/ core/
+# Non-root at runtime — but deliberately NOT via `USER` (the MarketGraph
+# volume lesson): a volume mounted at /data lands OVER the build-time
+# directory, owned by root, and a USER-pinned container dies at startup with
+# "Permission denied". The entrypoint starts as root, fixes the ownership of
+# the mount that actually exists, and drops privileges before exec'ing.
+# Created HERE, before the source COPYs, so each COPY can --chown as it lands
+# — a trailing `chown -R /app` re-materialised ~78MB of already-copied layers
+# on every build.
+RUN useradd --create-home --uid 10001 geograph
+
+# LEAST-CHANGED FIRST, so a code edit invalidates as little as possible. The
+# derived GDELT artifacts (68MB — the kept raw lines of the backfills, so a
+# boot loads a hundred thousand events in minutes instead of parsing
+# sixty-one million lines) change on a re-harvest; the TRAINED ARTIFACTS
+# (models/ — offline fits, committed precisely so the image can carry them;
+# absent until 2026-08-14, which shipped the learned layer as dead code) on a
+# re-fit; packs on a curation pass; core/scripts on every working day.
+COPY --chown=geograph data/derived/ data/derived/
+COPY --chown=geograph models/ models/
+# The packs are INPUTS the seed needs, not build artifacts.
+COPY --chown=geograph packs/ packs/
 # The ontology and crosswalks are not documentation: kuzu_schema.py reads the
 # YAML at runtime to generate the schema and validators — the image does not
-# boot without them. (They live under core/, copied above; named here so
-# nobody "slims" them out.)
-# The packs are INPUTS the seed needs, not build artifacts.
-COPY packs/ packs/
-COPY scripts/ scripts/
-# The derived GDELT artifact: the kept raw lines of the 1979-2005 backfill
-# (the generator is scripts/backfill_gdelt.py --export-filtered), so a boot
-# loads a hundred thousand events in a couple of minutes instead of parsing
-# sixty-one million lines on every fresh volume.
-COPY data/derived/ data/derived/
-# The TRAINED ARTIFACTS, and they were missing until 2026-08-14 — which is why
-# the boot logged "no model artifact at /app/models/intensity.json" and froze
-# two forecast modes instead of three on every deploy since the learned layer
-# landed. Training is offline (scripts/train_forecaster.py, scripts/fit_game.py)
-# and the hashed JSON is committed precisely so the image can carry it; not
-# copying it meant the whole learned layer shipped as dead code.
-COPY models/ models/
+# boot without them. (They live under core/; named here so nobody "slims"
+# them out.)
+COPY --chown=geograph core/ core/
+COPY --chown=geograph scripts/ scripts/
 
-COPY --from=web /web/dist ./web/dist
+COPY --from=web --chown=geograph /web/dist ./web/dist
 
 # The graph lives here. Mount a Railway volume at /data and it survives a
 # redeploy; leave it unmounted and the app reseeds on every boot.
@@ -88,15 +102,7 @@ ENV KUZU_DB_PATH=/data/geograph.kuzu
 # Deep-tier raw downloads (COW, Shiller) cache on the same volume, so a
 # redeploy re-loads from disk instead of re-fetching the archives.
 ENV GEOGRAPH_RAW_DIR=/data/raw
-RUN mkdir -p /data
-
-# Non-root at runtime — but deliberately NOT via `USER` (the MarketGraph
-# volume lesson): a volume mounted at /data lands OVER the build-time
-# directory, owned by root, and a USER-pinned container dies at startup with
-# "Permission denied". The entrypoint starts as root, fixes the ownership of
-# the mount that actually exists, and drops privileges before exec'ing.
-RUN useradd --create-home --uid 10001 geograph \
- && chown -R geograph /app /data
+RUN mkdir -p /data && chown geograph /data /app
 
 COPY docker-entrypoint.py /usr/local/bin/docker-entrypoint.py
 

@@ -26,7 +26,16 @@ import type {
  *  Nothing here computes at request time. Every number is either a projection
  *  of Event rows or a frozen Forecast. */
 
-export default function ReasoningPage({ region }: { region: string; onNavigate: (r: string) => void }) {
+/** The dyad a cross-page link asked for (e.g. #/reasoning?dyad=…). */
+function dyadFromHash(): string | null {
+  const query = window.location.hash.split('?')[1]
+  return query ? new URLSearchParams(query).get('dyad') : null
+}
+
+export default function ReasoningPage({
+  region,
+  onNavigate,
+}: { region: string; onNavigate: (r: string) => void }) {
   const regionLabel = useRegionLabel(region)
   const [dyads, setDyads] = useState<PanelDyad[] | null>(null)
   const [selected, setSelected] = useState<string>('')
@@ -35,6 +44,7 @@ export default function ReasoningPage({ region }: { region: string; onNavigate: 
   const [model, setModel] = useState<ForecastDetail | null | undefined>(undefined)
   const [sequence, setSequence] = useState<ForecastDetail | null | undefined>(undefined)
   const [nearTerm, setNearTerm] = useState<ForecastDetail | null | undefined>(undefined)
+  const [longHorizon, setLongHorizon] = useState<ForecastDetail | null | undefined>(undefined)
   const [gameDefaults, setGameDefaults] = useState<GameDefaults | null>(null)
   const [knobs, setKnobs] = useState<Record<string, number>>({})
   const [counterfactual, setCounterfactual] = useState<GameExplore | null>(null)
@@ -46,10 +56,12 @@ export default function ReasoningPage({ region }: { region: string; onNavigate: 
     getPanelDyads(region).then((r) => {
       const rows = r?.rows ?? []
       setDyads(rows)
-      // Open on the dyad the archive has watched most — an empty selector
-      // explains nothing, and the best-evidenced dyad is the one whose charts
-      // a reader can actually judge.
-      if (rows.length) setSelected(rows[0].dyad_id)
+      // A cross-page link's dyad wins; otherwise open on the dyad the archive
+      // has watched most — an empty selector explains nothing, and the
+      // best-evidenced dyad is the one whose charts a reader can judge.
+      const linked = dyadFromHash()
+      if (linked) setSelected(linked)
+      else if (rows.length) setSelected(rows[0].dyad_id)
     })
   }, [region])
 
@@ -70,12 +82,14 @@ export default function ReasoningPage({ region }: { region: string; onNavigate: 
     setModel(undefined)
     setSequence(undefined)
     setNearTerm(undefined)
+    setLongHorizon(undefined)
     getForecasts(region).then((r) => {
       const rows = r?.rows ?? []
       for (const [mode, set] of [
         ['model', setModel],
         ['sequence', setSequence],
         ['near_term', setNearTerm],
+        ['long_horizon', setLongHorizon],
       ] as const) {
         const row = rows.find((f) => f.mode === mode)
         if (!row) {
@@ -170,21 +184,49 @@ export default function ReasoningPage({ region }: { region: string; onNavigate: 
           concluded — the near-term forecast existed as an API node and never
           appeared here, so the page read as charts about nothing. The call
           leads; the five panels below are its evidence chain. */}
-      {nearTerm && (
-        <div className="mt-5 pb-4 border-b" style={{ borderColor: 'var(--rule-strong)' }}>
-          <div className="flex flex-wrap items-baseline gap-x-6 gap-y-1">
-            <span className="text-2xl">
-              Escalation{' '}
-              <span className="mono" style={{ color: 'var(--alert)' }}>
-                {(() => {
-                  const p = nearTerm.scenarios.find(
-                    (s) => s.scenario_name.startsWith('further_escalation'),
-                  )?.likelihood
-                  return p != null ? `${(p * 100).toFixed(1)}%` : '—'
-                })()}
+      {nearTerm && (() => {
+        // The frozen call, honestly labelled. The headline used to read
+        // "Escalation X%" where X was the FIRST focal dyad's continuation
+        // rate wearing a regional costume; the call is per dyad, so the
+        // headline names its dyad. Names come from the frozen payload —
+        // focal dyads rank by conflictuality, not roster popularity, so the
+        // top-40 roster may not contain them (two of three were dead links).
+        const dyadName = (id: string) =>
+          nearTerm.frozen_inputs?.dyad_names?.[id] ??
+          (dyads ?? []).find((d) => d.dyad_id === id)?.dyad_name ??
+          id
+        const focal = nearTerm.scenarios
+          .filter(
+            (s) => s.scenario_name.startsWith('further_escalation') && s.likelihood != null,
+          )
+          .map((s) => ({
+            dyadId: s.scenario_name.split(':').slice(1).join(':'),
+            likelihood: s.likelihood as number,
+          }))
+          .sort((a, b) => b.likelihood - a.likelihood)
+        const top = focal[0]
+        return (
+          <div className="mt-5 pb-4 border-b" style={{ borderColor: 'var(--rule-strong)' }}>
+            <div className="flex flex-wrap items-baseline gap-x-6 gap-y-1">
+              <span className="text-2xl">
+                {top ? (
+                  <>
+                    {dyadName(top.dyadId)}{' '}
+                    <span className="mono" style={{ color: 'var(--alert)' }}>
+                      {(top.likelihood * 100).toFixed(1)}%
+                    </span>
+                  </>
+                ) : (
+                  'No focal dyad cleared the evidence bar'
+                )}
               </span>
-            </span>
-            <span className="mono text-[11px]" style={{ color: 'var(--muted)' }}>
+              {top && (
+                <span className="text-sm" style={{ color: 'var(--muted)' }}>
+                  most likely to escalate again within 3y
+                </span>
+              )}
+            </div>
+            <p className="mono text-[11px] mt-1" style={{ color: 'var(--muted)' }}>
               frozen {nearTerm.generated_at?.slice(0, 10)} · as of{' '}
               {nearTerm.frozen_inputs?.as_of ?? '—'} · horizon{' '}
               {nearTerm.horizon_end?.slice(0, 4) ?? '—'}
@@ -192,45 +234,36 @@ export default function ReasoningPage({ region }: { region: string; onNavigate: 
                 ` · ${nearTerm.frozen_inputs.episodes.toLocaleString()} episodes counted`}
               {nearTerm.frozen_inputs?.evidence_span &&
                 ` · evidence ${nearTerm.frozen_inputs.evidence_span[0].slice(0, 4)}–${nearTerm.frozen_inputs.evidence_span[1].slice(0, 4)}`}
-            </span>
+            </p>
+            <div className="mt-2 space-y-0.5">
+              {focal.map(({ dyadId, likelihood }) => (
+                <p key={dyadId} className="text-xs flex items-baseline gap-2">
+                  <span className="mono w-12" style={{ color: 'var(--alert)' }}>
+                    {(likelihood * 100).toFixed(0)}%
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => setSelected(dyadId)}
+                    className="mono text-xs"
+                    style={{
+                      background: 'none', border: 'none', padding: 0,
+                      cursor: 'pointer', color: 'var(--ink)',
+                      textDecoration: 'underline dotted',
+                    }}
+                  >
+                    {dyadName(dyadId)}
+                  </button>
+                  <span style={{ color: 'var(--muted)' }}>escalates again within 3y</span>
+                </p>
+              ))}
+            </div>
+            <p className="mono text-[10px] mt-2" style={{ color: 'var(--muted)' }}>
+              likelihoods ARE base rates counted from the archive — recountable, then
+              Brier-scored against what happens · {nearTerm.question}
+            </p>
           </div>
-          <div className="mt-2 space-y-0.5">
-            {nearTerm.scenarios
-              .filter((s) => s.scenario_name.startsWith('further_escalation'))
-              .slice(0, 3)
-              .map((s) => {
-                const dyadName = s.scenario_name.split(':').slice(1).join(':')
-                return (
-                  <p key={s.scenario_name} className="text-xs flex items-baseline gap-2">
-                    <span className="mono w-12" style={{ color: 'var(--alert)' }}>
-                      {s.likelihood != null ? `${(s.likelihood * 100).toFixed(0)}%` : '—'}
-                    </span>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        const hit = (dyads ?? []).find((d) => d.dyad_id === dyadName)
-                        if (hit) setSelected(hit.dyad_id)
-                      }}
-                      className="mono text-xs"
-                      style={{
-                        background: 'none', border: 'none', padding: 0,
-                        cursor: 'pointer', color: 'var(--ink)',
-                        textDecoration: 'underline dotted',
-                      }}
-                    >
-                      {(dyads ?? []).find((d) => d.dyad_id === dyadName)?.dyad_name ?? dyadName}
-                    </button>
-                    <span style={{ color: 'var(--muted)' }}>escalates again within 3y</span>
-                  </p>
-                )
-              })}
-          </div>
-          <p className="mono text-[10px] mt-2" style={{ color: 'var(--muted)' }}>
-            likelihoods ARE base rates counted from the archive — recountable, then
-            Brier-scored against what happens · {nearTerm.question}
-          </p>
-        </div>
-      )}
+        )
+      })()}
 
       <div className="mt-4 flex flex-wrap items-baseline gap-3">
         <label className="kicker">dyad</label>
@@ -246,6 +279,13 @@ export default function ReasoningPage({ region }: { region: string; onNavigate: 
               {d.dyad_name} · {d.active_quarters}q
             </option>
           ))}
+          {selected && !(dyads ?? []).some((d) => d.dyad_id === selected) && (
+            // A focal dyad from the lede can sit outside the roster's top-40
+            // slice; selecting it must not silently snap back to the list.
+            <option value={selected}>
+              {nearTerm?.frozen_inputs?.dyad_names?.[selected] ?? selected}
+            </option>
+          )}
         </select>
         {summary && (
           <span className="mono text-[11px]" style={{ color: 'var(--muted)' }}>
@@ -254,6 +294,18 @@ export default function ReasoningPage({ region }: { region: string; onNavigate: 
             {summary.peak_intensity.toFixed(1)}
           </span>
         )}
+        <button
+          type="button"
+          onClick={() => onNavigate(`/games?dyad=${encodeURIComponent(selected)}`)}
+          className="mono text-[10px]"
+          style={{
+            background: 'none', border: 'none', padding: 0,
+            cursor: 'pointer', color: 'var(--accent)',
+            textDecoration: 'underline dotted',
+          }}
+        >
+          open in the game →
+        </button>
       </div>
 
       {dyads !== null && !dyads.length && (
@@ -463,6 +515,87 @@ export default function ReasoningPage({ region }: { region: string; onNavigate: 
             {sequence.boundary_statement && (
               <p className="text-xs mt-3 leading-relaxed" style={{ color: 'var(--muted)' }}>
                 {sequence.boundary_statement}
+              </p>
+            )}
+          </>
+        )}
+      </Panel>
+
+      {/* Region-level, deliberately last: the decades close the page the way
+          the frozen call opened it. This mode existed as an API node from
+          Phase 5 and rendered NOWHERE — the platform's long-horizon half was
+          invisible. */}
+      <Panel
+        n={6}
+        title="Where the pressure runs"
+        method={
+          longHorizon?.retrodiction?.method ??
+          'structural pressure over windows for the whole lens — never dated predictions'
+        }
+      >
+        {longHorizon === undefined ? (
+          <Empty note="reading the archive…" />
+        ) : !longHorizon ? (
+          <Empty note="No long-horizon forecast is frozen for this region yet." />
+        ) : (
+          <>
+            {(() => {
+              const pressure = Object.entries(longHorizon.frozen_inputs?.pressure ?? {})
+                .map(([year, value]) => ({ x: Number(year), y: value }))
+                .sort((a, b) => a.x - b.x)
+              return pressure.length ? (
+                <Strip
+                  values={pressure}
+                  label={`${regionLabel} structural pressure by year`}
+                />
+              ) : (
+                <Empty note="no year holds every pressure component — see coverage" />
+              )
+            })()}
+            {(longHorizon.frozen_inputs?.windows ?? []).length > 0 && (
+              <div className="flex flex-wrap gap-2 mt-2">
+                {(longHorizon.frozen_inputs?.windows ?? []).map((w) => (
+                  <span
+                    key={`${w.start}-${w.end}`}
+                    className="mono text-[10px] uppercase tracking-wider border px-2 py-1"
+                    style={{
+                      borderColor: w.level === 'high' ? 'var(--alert)' : 'var(--line)',
+                      color: w.level === 'high' ? 'var(--alert)' : 'var(--muted)',
+                    }}
+                  >
+                    {w.start}–{w.end} · {w.level}
+                  </span>
+                ))}
+              </div>
+            )}
+            {longHorizon.retrodiction && (
+              <p className="mono text-[11px] mt-3" style={{ color: 'var(--muted)' }}>
+                {longHorizon.retrodiction.hit_rate != null ? (
+                  <>
+                    the method's own record:{' '}
+                    <span style={{ color: 'var(--text)' }}>
+                      {(longHorizon.retrodiction.hit_rate * 100).toFixed(0)}% of{' '}
+                      {longHorizon.retrodiction.flagged_total ?? '—'} flagged years ran hot
+                    </span>
+                    {' vs a '}
+                    {longHorizon.retrodiction.base_rate != null
+                      ? `${(longHorizon.retrodiction.base_rate * 100).toFixed(0)}%`
+                      : '—'}{' '}
+                    base rate, across {longHorizon.retrodiction.anchors_evaluated ?? '—'}{' '}
+                    as-of anchors — reported, never adjudicated
+                  </>
+                ) : (
+                  <>
+                    the method flagged no years at any of{' '}
+                    {longHorizon.retrodiction.anchors_evaluated ?? '—'} as-of anchors for
+                    this lens — it has no verification record here to claim
+                  </>
+                )}
+              </p>
+            )}
+            {longHorizon.boundary_statement && (
+              <p className="text-xs mt-2 leading-relaxed italic" style={{ color: 'var(--muted)' }}>
+                {longHorizon.boundary_statement}
               </p>
             )}
           </>

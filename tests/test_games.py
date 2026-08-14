@@ -588,3 +588,76 @@ def test_an_unmeasured_curve_says_so():
     assert body["events_with_a_curve_response"] == 0
     assert body["note"] and "FRED_API_KEY" in body["note"]
     assert body["calibration"], "the uncalibrated mapping must travel with it"
+
+
+# -- kernel stochasticity, the opening state, and the ML bridge (2026-08-14) --
+
+
+def test_the_fan_is_a_fan_not_a_modal_collapse():
+    # The walk used to take each kernel row's MODAL band, which made every
+    # period's marginal identical and band_spread the only trace of the
+    # discarded distribution. The marginal must now be a real distribution
+    # that evolves across periods.
+    kern = _realistic_kernel()
+    equilibrium = solve.solve(kern, solve.Payoffs(), horizon=4)
+    result = paths.enumerate_paths(
+        equilibrium, kern, intensity=2, capability=1,
+        belief_a=0.5, belief_b=0.5, payoffs=solve.Payoffs(),
+    )
+    marginal = result["marginal"]
+    assert len(marginal) == 4
+    spread_bands = sum(1 for share in marginal[0]["distribution"] if share > 0.05)
+    assert spread_bands >= 2, "period 1 must carry the kernel row's spread"
+    assert any(
+        marginal[i]["distribution"] != marginal[0]["distribution"]
+        for i in range(1, 4)
+    ), "the distribution must evolve across periods"
+    # Shares are rounded to 4 decimals in the payload, so the sum can drift
+    # by a few 1e-4 — the assertion is "a distribution", not "unrounded".
+    assert all(
+        abs(sum(row["distribution"]) - 1.0) < 2e-3 for row in marginal
+    )
+
+
+def test_the_tilt_is_bounded_audited_and_identity_at_zero():
+    from core.games import bridge
+
+    kern = _realistic_kernel()
+    assert bridge.tilted_kernel(kern, 0.0) is kern
+
+    path = [
+        {"deviation": 3.0, "lo": -1.0, "hi": 1.0},
+        {"deviation": 0.5, "lo": -1.0, "hi": 1.0},
+    ]
+    eta = bridge.eta_from_trajectory(path)
+    # First step clips at 1.0, second is 0.5; mean 0.75 scaled by TILT_SCALE.
+    assert eta == pytest.approx(bridge.TILT_SCALE * 0.75)
+    tilted = bridge.tilted_kernel(kern, eta)
+    assert np.allclose(tilted.sum(axis=-1), 1.0)
+    bands = kern.shape[-1]
+    expected_next = kern[2, 1, 1] @ np.arange(bands)
+    expected_tilted = tilted[2, 1, 1] @ np.arange(bands)
+    assert expected_tilted > expected_next, "positive drift leans the rows up"
+
+    audit = bridge.audit(eta, {"name": "intensity", "hash": "abc123"})
+    assert audit is not None and audit["model"] == "intensity@abc123"
+    assert bridge.audit(0.0, {"name": "intensity", "hash": "abc123"}) is None
+
+
+def test_beliefs_are_filtered_from_observed_actions():
+    from core.games import opening
+
+    payoffs = solve.Payoffs()
+    joint: dict[tuple[str, int], tuple[str, str]] = {}
+    for q in range(100, 112):
+        joint[("dyad:hawks", q)] = ("escalate", "escalate")
+        joint[("dyad:doves", q)] = ("de-escalate", "de-escalate")
+    hawks = opening.filtered_beliefs(joint, "dyad:hawks", payoffs)
+    doves = opening.filtered_beliefs(joint, "dyad:doves", payoffs)
+    unseen = opening.filtered_beliefs(joint, "dyad:unseen", payoffs)
+    assert hawks["a"] > 0.9 and hawks["b"] > 0.9
+    assert doves["a"] < 0.1 and doves["b"] < 0.1
+    assert unseen == {
+        "a": 0.5, "b": 0.5, "quarters_observed": 0, "source": "default",
+    }
+    assert hawks["source"] == "bayes_filter"

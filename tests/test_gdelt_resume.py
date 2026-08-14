@@ -494,13 +494,14 @@ def test_a_deep_but_stale_panel_refreshes_its_recent_window(monkeypatch):
     assert not ran
 
 
-def test_the_paper_backtest_is_off_by_default(monkeypatch):
-    # The corpus made walk_forward infeasible at boot (~425 quarters x 1.31M
-    # rows through the live estimator — the locked no-backtest-only-path
-    # principle), and the first corpus boot ground on it for its full 900s
-    # ceiling while the site was dark. Same rule as GDELT and the rescore: a
-    # step that cannot finish inside a boot does not belong in one.
-    monkeypatch.delenv("GEOGRAPH_BACKTEST_ON_BOOT", raising=False)
+def test_the_paper_backtest_is_on_by_default_and_declinable(monkeypatch):
+    # The gate MOVED, on evidence, 2026-08-14: the walk was banished from the
+    # boot when each cutoff cost a full 1.31M-row pass (the first corpus boot
+    # burned its whole 900s ceiling), and readmitted when AsofArchive made the
+    # ~425 cutoffs cost ~2s total through the same locked estimator path. The
+    # step must still honour an explicit opt-out — downtime budgeting belongs
+    # to the operator.
+    monkeypatch.setenv("GEOGRAPH_BACKTEST_ON_BOOT", "0")
     result = boot._run_backtest()
     assert result["ok"] and "GEOGRAPH_BACKTEST_ON_BOOT" in result["skipped"]
 
@@ -562,3 +563,42 @@ def test_the_deep_tier_defers_its_rescore_to_the_boot():
     assert '_DEEP_TIER_SCRIPT), "--skip-rescore"' in source
     loader = (_ROOT / "scripts" / "load_deep_tier.py").read_text(encoding="utf-8")
     assert '"--skip-rescore"' in loader
+
+
+def test_fingerprint_guards_skip_only_matching_complete_runs(monkeypatch, tmp_path):
+    # The guard's contract: a matching fingerprint skips in ms; a run that
+    # completes records the POST-run fingerprint (self-modifying steps like
+    # the freeze would otherwise never match again); a partial run records
+    # nothing so the next boot retries.
+    monkeypatch.setenv("KUZU_DB_PATH", str(tmp_path / "g.kuzu"))
+    monkeypatch.delenv("GEOGRAPH_SKIP_GUARDS", raising=False)
+    calls = []
+
+    def runner():
+        calls.append(1)
+        return {"ok": True}
+
+    fp = {"value": "a"}
+    first = boot._guarded("teststep", lambda: fp["value"], runner)
+    assert first == {"ok": True} and len(calls) == 1
+    second = boot._guarded("teststep", lambda: fp["value"], runner)
+    assert second is not None and "skipped" in second and len(calls) == 1
+
+    fp["value"] = "b"
+    third = boot._guarded("teststep", lambda: fp["value"], runner)
+    assert third == {"ok": True} and len(calls) == 2
+
+    # An incomplete run must not record.
+    fp["value"] = "c"
+    partial = boot._guarded(
+        "teststep", lambda: fp["value"],
+        lambda: {"ok": False, "error": "boom"},
+    )
+    assert partial is not None and not partial["ok"]
+    retried = boot._guarded("teststep", lambda: fp["value"], runner)
+    assert retried == {"ok": True} and len(calls) == 3
+
+    # GEOGRAPH_SKIP_GUARDS=0 disables the whole mechanism.
+    monkeypatch.setenv("GEOGRAPH_SKIP_GUARDS", "0")
+    boot._guarded("teststep", lambda: fp["value"], runner)
+    assert len(calls) == 4

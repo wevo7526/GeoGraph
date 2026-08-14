@@ -35,9 +35,9 @@ opt-in, and the study is metered rather than run to completion.
   GEOGRAPH_LOAD_PANEL=0       never fetch prices at boot
   GEOGRAPH_STUDY_ON_BOOT=0    never run the transmission engine at boot
   GEOGRAPH_STUDY_BUDGET=600   seconds the study may spend ACROSS packs
-  GEOGRAPH_BACKTEST_ON_BOOT=1 opt IN to the walk-forward paper backtest
-                              (infeasible at corpus scale until the walk is
-                              incremental; off by default)
+  GEOGRAPH_BACKTEST_ON_BOOT=0 skip the walk-forward paper backtest (on by
+                              default since AsofArchive made ~425 cutoffs
+                              cost ~2s through the locked estimator path)
   GEOGRAPH_GDELT_ON_BOOT=1    opt IN to loading the wire (hours; off by default)
   GEOGRAPH_RESCORE_ON_BOOT=1  opt IN to the archive-wide rescore (hours, and
                               un-resumable; off by default)
@@ -338,6 +338,140 @@ def _seed_one(name: str) -> dict[str, Any]:
         timeout=_SEED_TIMEOUT_SECONDS,
     )
     return {"pack": name, **{k: v for k, v in result.items() if k != "step"}}
+
+
+# ── input fingerprints: unchanged inputs cost milliseconds ───────────────────
+#
+# Metrics, forecasts, scores, the deep tier and the (converged) study used to
+# run UNCONDITIONALLY every boot — ~290s of recomputation whose inputs are a
+# pure function of (image content, graph content, panel edge), none of which
+# change on a frontend-only push. Each guarded step records a fingerprint of
+# exactly what it reads, on the volume beside the graph (so a volume wipe
+# invalidates every fingerprint with the data), and skips in milliseconds when
+# nothing moved. GEOGRAPH_SKIP_GUARDS=0 disables all of it.
+
+_FINGERPRINTS_FILE = ".boot-fingerprints.json"
+
+
+def _guards_enabled() -> bool:
+    return os.getenv("GEOGRAPH_SKIP_GUARDS", "1").strip().lower() not in {"0", "false", "no"}
+
+
+def _fingerprints_path() -> Path:
+    from core import settings as settings_module
+
+    return settings_module.load().kuzu_db_path.parent / _FINGERPRINTS_FILE
+
+
+def _load_fingerprints() -> dict[str, str]:
+    try:
+        return dict(json.loads(_fingerprints_path().read_text(encoding="utf-8")))
+    except (OSError, ValueError, TypeError):
+        return {}
+
+
+def _save_fingerprint(step: str, value: str) -> None:
+    try:
+        stored = _load_fingerprints()
+        stored[step] = value
+        path = _fingerprints_path()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(stored, indent=1), encoding="utf-8")
+    except OSError as exc:
+        _log(f"fingerprint for {step} not recorded: {exc}")
+
+
+def _image_fingerprint() -> str:
+    """The shipped inputs: corpus artifacts, model artifacts, packs. Constant
+    for the life of an image — changes exactly when a build changes them."""
+    parts = []
+    for directory in (_DERIVED_DIR, _ROOT / "models", _ROOT / "packs"):
+        for path in sorted(directory.rglob("*")):
+            if path.is_file():
+                parts.append(f"{path.relative_to(_ROOT)}:{path.stat().st_size}")
+    return str(hash(tuple(parts)))
+
+
+#: The graph facets a step can declare as INPUTS. A step's fingerprint must
+#: cover what it READS and exclude what it WRITES, or the guard never sticks:
+#: the freeze writes Forecast nodes, so `frozen` in its own fingerprint would
+#: re-trigger it every boot forever.
+_GRAPH_FACETS = {
+    "events": "MATCH (e:Event) RETURN count(e) AS n",
+    "latest": "MATCH (e:Event) RETURN max(e.event_time) AS n",
+    "affected": "MATCH ()-[a:AFFECTED]->() RETURN count(a) AS n",
+    "estimates": "MATCH (s:AttributeEstimate) RETURN count(s) AS n",
+    "forecasts": "MATCH (f:Forecast) RETURN count(f) AS n",
+    "frozen": "MATCH (f:Forecast) RETURN max(f.generated_at) AS n",
+}
+
+
+def _graph_fingerprint(*facets: str) -> str:
+    """The named facets of the graph's content edge, cheap counts and stamps.
+    Computed fresh at each guarded step, because earlier steps move it."""
+    from core import settings as settings_module
+    from core.graph import kuzu_store
+
+    settings = settings_module.load()
+    if not settings.kuzu_db_path.exists():
+        return "no-graph"
+    try:
+        conn = kuzu_store.connect(settings.kuzu_db_path, read_only=True)
+        try:
+            parts = []
+            for label in facets:
+                rows = kuzu_store.query(conn, _GRAPH_FACETS[label])
+                parts.append(f"{label}={rows[0]['n'] if rows else None}")
+            return ";".join(parts)
+        finally:
+            kuzu_store.close(conn)
+    except Exception as exc:  # noqa: BLE001 - an unreadable graph is a fingerprint too
+        return f"unreadable:{exc}"
+
+
+def _panel_edge() -> str:
+    reachable, latest = _panel_latest_observation()
+    return f"panel={latest if reachable else 'unreachable'}"
+
+
+def _raw_listing() -> str:
+    raw = Path(os.getenv("GEOGRAPH_RAW_DIR", str(_ROOT / "data" / "raw")))
+    if not raw.exists():
+        return "no-raw"
+    return ",".join(
+        f"{p.name}:{p.stat().st_size}" for p in sorted(raw.glob("*")) if p.is_file()
+    )
+
+
+def _guarded(
+    step: str,
+    fingerprint_of: Callable[[], str],
+    runner: Callable[[], dict[str, Any] | None],
+    *,
+    complete: Callable[[dict[str, Any] | None], bool] | None = None,
+) -> dict[str, Any] | None:
+    """Skip `runner` when its recorded input fingerprint matches; record the
+    POST-run fingerprint after a complete run.
+
+    Post-run, because several steps move their own inputs' facets (the study
+    writes AFFECTED, the freeze writes Forecast) — a pre-run fingerprint for
+    those can never match again and the guard would never stick. A failed or
+    partial run records nothing, so the next boot retries.
+    """
+    if not _guards_enabled():
+        return runner()
+    if _load_fingerprints().get(step) == fingerprint_of():
+        _log(f"{step}: inputs unchanged — skipped (fingerprint match)")
+        return {"ok": True, "skipped": "inputs unchanged (fingerprint match)"}
+    result = runner()
+    is_complete = (
+        complete(result)
+        if complete is not None
+        else result is None or (bool(result.get("ok")) and "error" not in result)
+    )
+    if is_complete:
+        _save_fingerprint(step, fingerprint_of())
+    return result
 
 
 def _panel_first_observation() -> tuple[bool, str | None]:
@@ -953,6 +1087,29 @@ def _load_13f() -> dict[str, Any]:
     return {k: v for k, v in result.items() if k != "step"}
 
 
+def _load_13f_weekly() -> dict[str, Any]:
+    """The 13F fetch, at most weekly. Its input is LIVE EDGAR — the one boot
+    input that is off-box — but 13F filings are quarterly, so hitting SEC on
+    every deploy is politeness spent for nothing. The last successful fetch
+    date lives in the fingerprint store; a volume wipe forgets it, which is
+    the correct failure (the graph forgot the flows too)."""
+    import datetime as dt
+
+    if _guards_enabled():
+        last = _load_fingerprints().get("flows", "")
+        today = dt.date.today()
+        try:
+            if last and (today - dt.date.fromisoformat(last)).days < 7:
+                _log(f"13f flows: fetched {last} — skipped (filings are quarterly)")
+                return {"ok": True, "skipped": f"fetched {last}; EDGAR is quarterly"}
+        except ValueError:
+            pass
+    result = _load_13f()
+    if _guards_enabled() and result.get("ok") and not result.get("skipped"):
+        _save_fingerprint("flows", dt.date.today().isoformat())
+    return result
+
+
 def _run_network_metrics() -> dict[str, Any]:
     """NetworkMetric over the standard windows (Phase 2, build-spec §12).
 
@@ -1011,20 +1168,20 @@ def _freeze_forecasts() -> dict[str, Any]:
 def _run_backtest() -> dict[str, Any]:
     """The walk-forward paper backtest (Phase 5's ledger).
 
-    OFF BY DEFAULT SINCE 2026-08-13, the night the corpus landed — the same
-    downtime rule GDELT and the rescore already obey, arrived at the same way.
-    `walk_forward` recomputes the live estimator at every quarter end ("never
-    a special backtest-only estimator" — that principle is locked), which was
-    1.14s when the archive's dyad-coded rows numbered 55 and is ~425 quarters
-    x 1.31M rows now. The first corpus boot ground on it for the full 900s
-    ceiling while the site was dark. Until the walk maintains its counts
-    incrementally in one pass, a ledger nobody can see yet must not stand in
-    front of the health check. Opt in with GEOGRAPH_BACKTEST_ON_BOOT=1, or run
-    scripts/run_backtest.py beside the API — it reads the graph read-only and
-    writes only to Postgres, so serving never blocks on it.
+    ON BY DEFAULT AGAIN SINCE 2026-08-14: the walk was off from 2026-08-13
+    (the night the corpus landed) because recomputing the live estimator at
+    every quarter end cost a full pass over 1.31M rows per cutoff, and the
+    first corpus boot ground on it for its full 900s ceiling while the site
+    was dark. `forecasting.AsofArchive` removed that arithmetic — the archive
+    builds once and each of the ~425 cutoffs evaluates in ~1-2ms (the whole
+    three-region forecast half measures ~2s; the locked "never a
+    backtest-only estimator" principle holds, because the archive IS
+    `forecast_from_rows`'s body). What remains per boot is corpus parse +
+    panel reads + marking, well inside the ceiling. Opt out with
+    GEOGRAPH_BACKTEST_ON_BOOT=0.
     """
-    if os.getenv("GEOGRAPH_BACKTEST_ON_BOOT", "0").strip().lower() not in {"1", "true", "yes"}:
-        return {"ok": True, "skipped": "not a backtest boot (GEOGRAPH_BACKTEST_ON_BOOT)"}
+    if os.getenv("GEOGRAPH_BACKTEST_ON_BOOT", "1").strip().lower() in {"0", "false", "no"}:
+        return {"ok": True, "skipped": "disabled by GEOGRAPH_BACKTEST_ON_BOOT"}
     result = _run_step(
         "paper backtest",
         [sys.executable, str(_BACKTEST_SCRIPT)],
@@ -1176,19 +1333,73 @@ def _boot_status() -> dict[str, Any]:
 
     # Each later step is independently guarded: a failing panel must not stop
     # the study from reporting why it could not run, and neither may stop the
-    # API from coming up.
+    # API from coming up. The fingerprint wrappers make unchanged inputs cost
+    # milliseconds — each names exactly the facets its step READS.
+    import datetime as _dt
+
+    image = _image_fingerprint()
     steps: tuple[tuple[str, Callable[[], dict[str, Any] | None]], ...] = (
-        ("deep", _load_deep_tier),
+        ("deep", lambda: _guarded(
+            "deep", lambda: f"{_raw_listing()}|{image}", _load_deep_tier,
+        )),
         ("gdelt", lambda: _load_gdelt(names)),
         ("rescore", lambda: _rescore_if_new_events(names)),
-        ("flows", _load_13f),
+        ("flows", _load_13f_weekly),
         ("panel", _apply_panel_schema),
         ("prices", lambda: _load_panel_if_shallow(names)),
-        ("study", lambda: _run_study(names)),
-        ("metrics", _run_network_metrics),
-        ("forecasts", _freeze_forecasts),
-        ("scores", _score_forecasts),
-        ("backtest", _run_backtest),
+        ("study", lambda: _guarded(
+            "study",
+            lambda: (
+                f"{_graph_fingerprint('events', 'latest', 'affected')}"
+                f"|{_panel_edge()}|{image}"
+            ),
+            lambda: _run_study(names),
+            # Only a CLEAN pass records: a timed-out or budget-deferred study
+            # left a backlog, and a stored fingerprint would strand it.
+            complete=lambda r: (
+                r is not None and bool(r.get("ok"))
+                and all(
+                    p.get("ok") and not p.get("skipped")
+                    for p in r.get("packs", [])
+                )
+                and not r.get("skipped")
+            ),
+        )),
+        ("metrics", lambda: _guarded(
+            "metrics",
+            lambda: (
+                f"{_graph_fingerprint('events', 'latest', 'estimates')}"
+                f"|year={_dt.date.today().year}|{image}"
+            ),
+            _run_network_metrics,
+        )),
+        ("forecasts", lambda: _guarded(
+            "forecasts",
+            lambda: (
+                _graph_fingerprint(
+                    "events", "latest", "affected",
+                    "estimates", "forecasts", "frozen",
+                )
+                + f"|{image}"
+            ),
+            _freeze_forecasts,
+        )),
+        ("scores", lambda: _guarded(
+            "scores",
+            lambda: (
+                f"{_graph_fingerprint('events', 'latest', 'forecasts', 'frozen')}"
+                f"|{image}"
+            ),
+            _score_forecasts,
+        )),
+        ("backtest", lambda: _guarded(
+            "backtest",
+            lambda: (
+                f"{_graph_fingerprint('events', 'latest', 'affected')}"
+                f"|{_panel_edge()}|{image}"
+            ),
+            _run_backtest,
+        )),
     )
     for key, step in steps:
         try:
@@ -1201,6 +1412,26 @@ def _boot_status() -> dict[str, Any]:
 
 def main() -> None:
     argv = sys.argv[1:] or _DEFAULT_APP
+
+    # API-FIRST, THE DEFAULT SINCE 2026-08-14. The old order — every step,
+    # THEN exec the API — meant the site was dark for the whole boot (~15
+    # minutes on a study boot), because nothing listened on the port until
+    # the write steps released the Kuzu lock. Inverted: exec the API NOW; its
+    # lifespan sees GEOGRAPH_RUN_BOOT_IN_APP and runs `_boot_status()` on a
+    # background thread, holding NO graph connection until the last write
+    # child exits (Kuzu allows one writer OR readers, never both across
+    # processes). The corpus-first surfaces serve immediately; graph
+    # endpoints answer 503 naming the boot until it opens. Dark time drops
+    # from the boot's length to the corpus warm (~20s).
+    # GEOGRAPH_API_FIRST=0 restores the old serialised order.
+    api_first = os.getenv("GEOGRAPH_API_FIRST", "1").strip().lower() not in {
+        "0", "false", "no",
+    }
+    if api_first:
+        os.environ["GEOGRAPH_RUN_BOOT_IN_APP"] = "1"
+        _log(f"api-first: exec {' '.join(argv)} — boot runs behind the bound port")
+        os.execvp(argv[0], argv)
+
     try:
         status = _boot_status()
     except Exception as exc:  # noqa: BLE001 - the API still has to come up

@@ -203,15 +203,30 @@ export interface CaseStudy {
   status: 'measured' | 'not_yet_measured'
 }
 
+export interface RetrodictionAnchor {
+  as_of: string
+  flagged_years: number[]
+  hot_years: number[]
+  hits: number[]
+  hit_rate: number | null
+  base_rate: number | null
+  horizon_years_observed: number
+}
+
 export interface Retrodiction {
   as_of: string
   region_pack: string
   verdict?: string
+  /** Per-anchor record; hit_rate/base_rate below aggregate over all of them. */
+  anchors?: RetrodictionAnchor[]
+  anchors_evaluated?: number
   flagged_years: number[]
   hot_years?: number[]
   hits: number[]
   hit_rate: number | null
   base_rate: number | null
+  flagged_total?: number
+  hits_total?: number
   boundary_statement?: string
   method?: string
 }
@@ -250,6 +265,12 @@ export interface ForecastDetail extends ForecastSummary {
     evidence_span?: [string, string] | null
     as_of?: string
     method?: string
+    /** mode='near_term' — names for the focal dyad ids, which may be outside
+     *  the roster's top-40 slice (focal ranks by conflictuality, not
+     *  popularity). */
+    focal_dyads?: string[]
+    dyad_names?: Record<string, string>
+    dyad_counts?: Record<string, [number, number]>
     // mode='model' only — the learned trajectories and the artifact that
     // produced them.
     trajectories?: ModelTrajectory[]
@@ -313,8 +334,26 @@ export interface SequenceStep {
   action_b: string
   quad: string
   intensity_band: number
+  /** The kernel's probability of this band given the joint action — the walk
+   *  branches over bands now instead of collapsing rows to their mode. */
+  band_probability?: number
   band_spread: [number, number]
   market: StepMarket[]
+}
+
+/** Where a solve's opening state came from — measured or defaulted, the
+ *  reader sees which. */
+export interface GameOpening {
+  intensity_band: number
+  capability: { band: number; ratio: number | null; source: 'cinc' | 'default' }
+  beliefs: {
+    a: number
+    b: number
+    quarters_observed: number
+    source: 'bayes_filter' | 'default'
+  }
+  /** The ML→game bridge's audit block; null when untilted. */
+  tilt: { eta: number; scale: number; model: string; method: string } | null
 }
 
 export interface SequenceDyad {
@@ -464,6 +503,8 @@ export interface BacktestRow {
 export interface BacktestLedger {
   region: string
   rows: BacktestRow[]
+  /** When this history was computed — the reader's staleness check. */
+  computed_at?: string
   summary: {
     notional_usd: number
     quarters_traded: number
@@ -591,10 +632,22 @@ export interface GameDefaults {
   bands: number[]
   actions: string[]
   dyads: Array<{ dyad_id: string; dyad_name: string; active_quarters: number }>
+  /** The yield curve's answer to how long these crises last — bonds. */
+  duration?: {
+    events_with_a_curve_response: number
+    tenors_measured: string[]
+    dyads: number
+    usable_dyads: number
+    calibration: string | null
+    note: string | null
+    method: string
+  }
 }
 
-/** A re-solved equilibrium. `frozen` is always false and the boundary
- *  statement says why — this is an exploration, not a call anyone made. */
+/** A re-solved equilibrium. `baseline: true` means no lever was moved — the
+ *  fitted payoffs at the data-driven opening state, the same construction as
+ *  the frozen sequence forecast. Anything else is a counterfactual and the
+ *  boundary statement says so. `frozen` is always false either way. */
 export interface GameExplore {
   region: string
   dyad_id: string
@@ -604,6 +657,8 @@ export interface GameExplore {
   changed: Record<string, number>
   capability: number
   beliefs: { a: number; b: number }
+  opening: GameOpening
+  baseline: boolean
   marginal: Array<{
     period: number
     distribution: number[]

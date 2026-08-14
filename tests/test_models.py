@@ -334,6 +334,104 @@ def test_the_panel_endpoints_serve_quarters_and_a_series(graph_with_panel, monke
         assert "history" in missing.json()["detail"]
 
 
+def test_market_effects_come_from_the_actor_edges_not_of_dyad(
+    graph_with_panel, monkeypatch
+):
+    """Production shape, 2026-08-14: 278k AFFECTED edges beside the spine's 55
+    OF_DYAD edges — the transmission engine measures without consulting
+    OF_DYAD and the rescore that writes OF_DYAD is unreachable inside a boot
+    window. A hard OF_DYAD match in the precedent query served 'no measured
+    market effects' for nearly every dyad while the measurements sat
+    unreachable; membership must come from INITIATED_BY/DIRECTED_AT, whose
+    sorted pair IS the dyad id, in either direction."""
+    from fastapi.testclient import TestClient
+
+    from core.graph import kuzu_store
+
+    conn = kuzu_store.connect(graph_with_panel)
+    try:
+        kuzu_store.merge_nodes(conn, "Source", [
+            {"node_id": "source:test-wire", "name": "test wire", "kind": "feed"},
+        ])
+        kuzu_store.merge_nodes(conn, "Dyad", [
+            {"node_id": "dyad:cow-630--cow-645", "name": "Iran–Iraq (test)",
+             "ewma_baseline": -6.0,
+             "actor_a_id": "actor:cow-630", "actor_b_id": "actor:cow-645"},
+        ])
+        # The series half still needs coded quarters (the panel is OF_DYAD- or
+        # corpus-fed); the EFFECTS half must not.
+        series_events = [
+            {
+                "node_id": f"event:series-{q}", "name": f"series {q}",
+                "event_time": f"{1990 + q // 4}-{(q % 4) * 3 + 1:02d}-20",
+                "action_cameo_code": "190", "goldstein": -8.0,
+                "quad_class": "material_conflict", "region_pack": "mena",
+                "fidelity_tier": "deep_structured", "temporal_resolution": "day",
+                "source_scale": "cow_hostility", "escalation_direction": "escalating",
+                "escalation_magnitude": 9.0 if q % 6 == 0 else 1.0,
+                "escalation_baseline": -6.0,
+            }
+            for q in range(0, 24, 2)
+        ]
+        # Two wire events carrying actor edges and a measured effect, one per
+        # direction of the SAME dyad, and deliberately NO OF_DYAD edge.
+        wire_events = [
+            {
+                "node_id": f"event:wire-{initiator}", "name": f"wire {initiator}",
+                "event_time": "1996-05-10",
+                "action_cameo_code": "190", "goldstein": -9.0,
+                "quad_class": "material_conflict", "region_pack": "mena",
+                "fidelity_tier": "modern_coded", "temporal_resolution": "day",
+                "source_scale": "goldstein", "escalation_direction": "escalating",
+                "escalation_magnitude": 4.0, "escalation_baseline": -6.0,
+            }
+            for initiator in ("cow-630", "cow-645")
+        ]
+        kuzu_store.merge_nodes(conn, "Event", series_events + wire_events)
+        kuzu_store.merge_edges(conn, "OF_DYAD", [
+            {"src": e["node_id"], "dst": "dyad:cow-630--cow-645"}
+            for e in series_events
+        ])
+        kuzu_store.merge_edges(conn, "INITIATED_BY", [
+            {"src": "event:wire-cow-630", "dst": "actor:cow-630",
+             "source_id": "source:test-wire"},
+            {"src": "event:wire-cow-645", "dst": "actor:cow-645",
+             "source_id": "source:test-wire"},
+        ])
+        kuzu_store.merge_edges(conn, "DIRECTED_AT", [
+            {"src": "event:wire-cow-630", "dst": "actor:cow-645",
+             "source_id": "source:test-wire"},
+            {"src": "event:wire-cow-645", "dst": "actor:cow-630",
+             "source_id": "source:test-wire"},
+        ])
+        kuzu_store.merge_edges(conn, "AFFECTED", [
+            {"src": event, "dst": "market:brent", "window": "car_0_1",
+             "resolution": "day", "abnormal_return": value,
+             "method": "test fixture: constant-mean, daily",
+             "source_id": "source:test-wire"}
+            for event, value in (
+                ("event:wire-cow-630", 0.021), ("event:wire-cow-645", -0.008),
+            )
+        ])
+    finally:
+        kuzu_store.close(conn)
+
+    monkeypatch.setenv("KUZU_DB_PATH", str(graph_with_panel))
+    monkeypatch.delenv("DATABASE_URL", raising=False)
+    from core.api.app import create_app
+    from core.api.routers import dyads as dyads_router
+
+    dyads_router._CACHE.clear()
+    with TestClient(create_app()) as client:
+        body = client.get(
+            "/api/precedent?dyad=dyad:cow-630--cow-645&region=mena"
+        ).json()
+        assert body["markets_note"] is None, body
+        brent = next(m for m in body["markets"] if m["market_id"] == "market:brent")
+        assert brent["n"] == 2, "both directions of the dyad must contribute"
+        assert brent["min"] == -0.008 and brent["max"] == 0.021
+
+
 def test_precedent_reports_episodes_and_says_when_markets_are_unmeasured(
     graph_with_panel, monkeypatch
 ):

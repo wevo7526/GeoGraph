@@ -159,7 +159,11 @@ def _load_game_artifact(region_pack: str) -> dict[str, Any] | None:
 
 
 def _sequence_forecast(
-    db_path: Path, *, region_pack: str, generated_at: str
+    db_path: Path,
+    *,
+    region_pack: str,
+    generated_at: str,
+    model_inputs: dict[str, Any] | None = None,
 ) -> dict[str, str] | None:
     """The solved mode — or None, loudly, when it should not speak.
 
@@ -168,35 +172,43 @@ def _sequence_forecast(
     about the fallback, and shipping it beside three grounded forecasts in
     the same typography would be the overclaim docs/game-spec.md section 7
     exists to prevent.
+
+    `model_inputs` is the frozen model mode's payload — THE ML→GAME BRIDGE.
+    Where the gated model froze a trajectory for a dyad, that dyad's kernel
+    is tilted by the predicted drift (core/games/bridge.py) and the tilt is
+    audited on the dyad's block. Opening states come from data, not
+    defaults: capability off the actors' CINC estimates, beliefs from the
+    game's own Bayes rule over the dyad's observed recent actions
+    (core/games/opening.py).
     """
-    from core.games import duration, paths, pricing, solve, state, transition
+    from core.games import bridge, duration, opening, paths, pricing, solve, state, transition
     from core.models import panel as panel_module
 
     # The panel and the joint actions come corpus-first, matching what
     # `fit_game.py` fitted the payoffs over. The graph stays the only source
-    # for measured effects — and is opened read-only just for them.
-    if corpus.artifacts_for(region_pack):
-        panel_view, events = corpus.views(region_pack)
-        table = panel_module.build(panel_view, region_pack=region_pack)
-        conn = kuzu_store.connect(db_path, read_only=True)
-        try:
-            effects = pricing.measured_effects(conn, region_pack=region_pack)
-        finally:
-            kuzu_store.close(conn)
-    else:
-        conn = kuzu_store.connect(db_path, read_only=True)
-        try:
+    # for measured effects and CINC capability — opened read-only for both.
+    conn = kuzu_store.connect(db_path, read_only=True)
+    try:
+        effects = pricing.measured_effects(conn, region_pack=region_pack)
+        if corpus.artifacts_for(region_pack):
+            panel_view, events = corpus.views(region_pack)
+            table = panel_module.build(panel_view, region_pack=region_pack)
+        else:
             table = panel_module.build(
                 panel_module.dyad_event_rows(conn), region_pack=region_pack
             )
             events = transition.event_rows(conn)
-            effects = pricing.measured_effects(conn, region_pack=region_pack)
-        finally:
-            kuzu_store.close(conn)
 
-    if not table:
-        print(f"{region_pack}: sequence not frozen — no modelable dyad")
-        return None
+        if not table:
+            print(f"{region_pack}: sequence not frozen — no modelable dyad")
+            return None
+        summaries = panel_module.dyad_summary(table)[:_SEQUENCE_DYADS]
+        capability_by_dyad = {
+            s["dyad_id"]: opening.capability_state(conn, s["dyad_id"])
+            for s in summaries
+        }
+    finally:
+        kuzu_store.close(conn)
 
     joint = transition.joint_actions(events, quarter_of=panel_module.quarter_index)
     kernel, observed = transition.kernel(transition.count(table, joint))
@@ -221,10 +233,14 @@ def _sequence_forecast(
         stake=fit["payoffs"]["stake"],
         audience=fit["payoffs"]["audience"],
     )
-    equilibrium = solve.solve(kernel, payoffs, horizon=4)
+
+    trajectories = {
+        t["dyad_id"]: t["path"]
+        for t in (model_inputs or {}).get("trajectories", [])
+    }
+    model_identity = (model_inputs or {}).get("model")
 
     as_of = max(row["date"] for row in table)
-    summaries = panel_module.dyad_summary(table)[:_SEQUENCE_DYADS]
     frozen = []
     for summary in summaries:
         own = [r for r in table if r["dyad_id"] == summary["dyad_id"]]
@@ -233,9 +249,18 @@ def _sequence_forecast(
         scale = state.dyad_scale([float(r["intensity"]) for r in own])
         latest = max(own, key=lambda r: r["q"])
         band = state.intensity_band(float(latest["intensity"]), scale)
+        capability = capability_by_dyad.get(
+            summary["dyad_id"], {"band": 1, "ratio": None, "source": "default"}
+        )
+        beliefs = opening.filtered_beliefs(joint, summary["dyad_id"], payoffs)
+        eta = bridge.eta_from_trajectory(trajectories.get(summary["dyad_id"], []))
+        dyad_kernel = bridge.tilted_kernel(kernel, eta)
+        equilibrium = solve.solve(dyad_kernel, payoffs, horizon=4)
         result = paths.enumerate_paths(
-            equilibrium, kernel, intensity=band, capability=1,
-            belief_a=0.5, belief_b=0.5, payoffs=payoffs,
+            equilibrium, dyad_kernel, intensity=band,
+            capability=int(capability["band"]),
+            belief_a=float(beliefs["a"]), belief_b=float(beliefs["b"]),
+            payoffs=payoffs,
         )
         priced = pricing.price_paths(result, effects, as_of=as_of, scale=scale or 1.0)
         frozen.append({
@@ -243,6 +268,8 @@ def _sequence_forecast(
             "dyad_name": summary["dyad_name"],
             "active_quarters": summary["active_quarters"],
             "opening_band": band,
+            "opening": {"capability": capability, "beliefs": beliefs},
+            "tilt": bridge.audit(eta, model_identity),
             "marginal": paths.marginal_intensity(result, 4),
             **priced,
         })
@@ -294,7 +321,11 @@ def _sequence_forecast(
             "payoffs were fitted to observed action frequencies. Read the "
             "paths as a distribution — the retained probability says how much "
             "of it is shown — and every price beside them is a measured "
-            "abnormal return from comparable past events, never a model's."
+            "abnormal return from comparable past events, never a model's. "
+            "Opening states are read from data (CINC capability, beliefs "
+            "filtered from observed actions), and where the gated learned "
+            "model froze a trajectory for a dyad, its kernel is tilted by "
+            "that drift — bounded, and audited on the dyad's block."
         ),
     }
 
@@ -338,6 +369,8 @@ def freeze(db_path: Path, *, region_pack: str) -> list[dict[str, str]]:
                 "pressure": long_horizon["pressure"],
                 "windows": long_horizon["windows"],
                 "components": long_horizon["components"],
+                "pressure_span": long_horizon["pressure_span"],
+                "coverage": long_horizon["coverage"],
                 "method": long_horizon["method"],
             }),
             "boundary_statement": long_horizon["boundary_statement"],
@@ -354,9 +387,15 @@ def freeze(db_path: Path, *, region_pack: str) -> list[dict[str, str]]:
 
     # The solved mode, likewise optional: three grounded forecasts do not
     # depend on a game existing, converging, or having a measured kernel.
+    # It RECEIVES the model mode's frozen payload — the ML→game bridge — so
+    # a gated trajectory can tilt its dyad's kernel, with provenance.
     try:
         sequence_row = _sequence_forecast(
-            db_path, region_pack=region_pack, generated_at=generated_at
+            db_path, region_pack=region_pack, generated_at=generated_at,
+            model_inputs=(
+                json.loads(model_row["frozen_inputs_json"])
+                if model_row is not None else None
+            ),
         )
     except Exception as exc:  # noqa: BLE001 - a failed solve must not lose the rest
         print(f"{region_pack}: sequence not frozen — {exc}")

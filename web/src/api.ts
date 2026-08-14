@@ -28,15 +28,80 @@ import type {
   WhatIfResult,
 } from './types'
 
+/** A recorded API failure — kept so the surface can tell BROKEN from EMPTY.
+ *  Every helper still returns null on failure (callers render their empty
+ *  states), but the failure itself is no longer swallowed: pages subscribe to
+ *  render "the API did not answer" instead of "the archive holds nothing",
+ *  which were indistinguishable on 2026-08-14. */
+export interface ApiFailure {
+  path: string
+  status: number | null
+  detail: string
+  at: number
+}
+
+const failures = new Map<string, ApiFailure>()
+const failureListeners = new Set<() => void>()
+
+function notifyFailureListeners() {
+  for (const listener of failureListeners) listener()
+}
+
+/** Subscribe to the failure map; returns an unsubscribe. */
+export function onApiFailures(listener: () => void): () => void {
+  failureListeners.add(listener)
+  return () => failureListeners.delete(listener)
+}
+
+/** Failures worth a page-level banner: server errors and unreachability.
+ *  4xx answers are the API talking (a 404 series, a 409 sparse kernel) and
+ *  belong to the caller that asked, via lastFailureFor. */
+export function bannerFailures(): ApiFailure[] {
+  return [...failures.values()]
+    .filter((f) => f.status === null || f.status >= 500)
+    .sort((a, b) => b.at - a.at)
+}
+
+/** The most recent recorded failure whose path starts with the prefix. */
+export function lastFailureFor(prefix: string): ApiFailure | null {
+  let hit: ApiFailure | null = null
+  for (const failure of failures.values()) {
+    if (failure.path.startsWith(prefix) && (!hit || failure.at > hit.at)) hit = failure
+  }
+  return hit
+}
+
 // Null on any failure, deliberately: the explorer renders its built-in sample
 // when the API is absent (vite dev with no backend), and every caller shows
-// what is live versus placeholder rather than crashing.
+// what is live versus placeholder rather than crashing. The failure is
+// RECORDED before the null is returned — see ApiFailure above.
 async function get<T>(path: string): Promise<T | null> {
+  const bare = path.split('?')[0]
   try {
     const res = await fetch(path)
-    if (!res.ok) return null
+    if (!res.ok) {
+      const body = await res.json().catch(() => null)
+      failures.set(bare, {
+        path,
+        status: res.status,
+        detail:
+          (body && typeof body.detail === 'string' && body.detail) ||
+          `the API answered ${res.status}`,
+        at: Date.now(),
+      })
+      notifyFailureListeners()
+      return null
+    }
+    if (failures.delete(bare)) notifyFailureListeners()
     return (await res.json()) as T
   } catch {
+    failures.set(bare, {
+      path,
+      status: null,
+      detail: 'the API is unreachable',
+      at: Date.now(),
+    })
+    notifyFailureListeners()
     return null
   }
 }

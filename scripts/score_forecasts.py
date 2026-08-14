@@ -139,12 +139,17 @@ def main() -> None:
                 continue
             base["brier_score"] = calibration.score_forecast(scenarios, outcomes)
             print(f"{row['node_id']}: brier {base['brier_score']:.4f}")
-        else:
+        elif row["mode"] == "long_horizon":
+            # ONLY the long-horizon mode carries the structural retrodiction.
+            # The bare `else` here had been stamping it onto model and
+            # sequence nodes too — three modes wearing one method's record.
             attached = retro_by_region.get(str(row["region_pack"]))
             if attached is None:
                 continue
             base["retrodiction_json"] = attached
             print(f"{row['node_id']}: retrodiction attached")
+        else:
+            continue
         updates.append(base)
 
     if not updates:

@@ -1,18 +1,24 @@
 .git
 .venv
-__pycache__
-*.py[cod]
-*.egg-info
+# Anchored AND recursive: Docker's matcher does not recurse bare names, so a
+# bare `node_modules` missed web/node_modules — ~168MB of upload context per
+# build for nothing. Same for the Python caches.
+**/node_modules
+**/__pycache__
+**/*.py[cod]
+**/*.egg-info
 .pytest_cache
 .ruff_cache
 .mypy_cache
 data/
 # ...except the derived GDELT artifact the boot loads (Dockerfile COPYs it).
 !data/derived/
-node_modules
 web/dist
 web/.vite
 .env
 docs/
+tests/
+embtest/
+.claude/
 .idea
 .vscode

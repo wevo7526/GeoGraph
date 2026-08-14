@@ -141,24 +141,28 @@ def score(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
 def forecast_rows(pack_names: list[str] | None = None) -> list[dict[str, Any]]:
     """The corpus in the shape `reasoning.forecasting.dyad_event_rows` reads.
 
-    The one field the row views above do not carry is `baseline` — the dyad's
-    STANDING EWMA, which the graph stores on the Dyad node. Here it is the
-    tracker's final state after folding the dyad's whole history, which is the
-    same number computed the same way; the graph's copy is simply a snapshot
-    of it. One tracker pass over the already-scored rows recovers it.
+    `baseline` is PER EVENT and AS OF that event: the dyad's standing EWMA
+    immediately after folding the event in, recovered from the slots Head B
+    already left on the scored row (`escalation_baseline` is what the event
+    was measured against; one `update_baseline` step folds it). A dyad's
+    latest row at or before any cutoff therefore carries its standing
+    baseline AT that cutoff — which is what keeps the walk-forward backtest
+    honest — and the final row's value is exactly the number the graph
+    snapshots on the Dyad node. Stamping every row with the tracker's FINAL
+    state (the old shape) leaked the archive's end into every historical
+    cutoff.
     """
     rows: list[dict[str, Any]] = []
     for name in pack_names if pack_names is not None else installed():
         rows.extend(load(name))
     rows.sort(key=lambda r: (r["event_time"], r["node_id"]))
-    tracker = escalation.DyadTracker()
-    for row in rows:
-        tracker.observe(row["dyad_id"], float(row["goldstein"]))
     return [
         {
             "dyad_id": row["dyad_id"],
             "dyad_name": row["dyad_name"],
-            "baseline": tracker.baseline(row["dyad_id"]),
+            "baseline": escalation.update_baseline(
+                row["escalation_baseline"], float(row["goldstein"])
+            ),
             "event_id": row["node_id"],
             "event_time": row["event_time"],
             "direction": row["escalation_direction"],

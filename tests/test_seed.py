@@ -225,10 +225,12 @@ def test_the_seed_runs_in_a_child_process_so_the_lock_is_released(tmp_path, monk
 
 
 def test_boot_hands_the_status_to_the_app_through_the_environment(tmp_path, monkeypatch):
-    # boot.py execs the app, so the status has to survive an exec — an env var
-    # does, a Python object does not.
+    # The LEGACY serialised order (GEOGRAPH_API_FIRST=0): boot.py runs every
+    # step, then execs the app — so the status has to survive an exec, and an
+    # env var does where a Python object does not.
     monkeypatch.setenv("KUZU_DB_PATH", str(tmp_path / "env.kuzu"))
     monkeypatch.setenv("GEOGRAPH_SEED_ON_BOOT", "0")
+    monkeypatch.setenv("GEOGRAPH_API_FIRST", "0")
     # boot.py's own contract: it execs the command it is given, exactly as the
     # container invokes it. The exec'd command is a FILE rather than `-c ...`
     # because os.execvp re-quotes arguments on Windows and mangles an inline
@@ -242,6 +244,31 @@ def test_boot_hands_the_status_to_the_app_through_the_environment(tmp_path, monk
     assert proc.returncode == 0, proc.stderr
     payload = json.loads(proc.stdout.strip().splitlines()[-1])
     assert payload["seeded"] is False
+
+
+def test_api_first_boot_execs_the_app_immediately_with_the_handoff_flag(
+    tmp_path, monkeypatch
+):
+    # The DEFAULT order since 2026-08-14: bind first, boot behind the port.
+    # boot.py must exec the app BEFORE running any step, carrying the flag
+    # that tells the app's lifespan to run the boot on a background thread.
+    monkeypatch.setenv("KUZU_DB_PATH", str(tmp_path / "env.kuzu"))
+    monkeypatch.delenv("GEOGRAPH_API_FIRST", raising=False)
+    echo = tmp_path / "echo_flag.py"
+    echo.write_text(
+        "import os\n"
+        "print('flag=' + os.environ.get('GEOGRAPH_RUN_BOOT_IN_APP', ''))\n"
+        "print('status=' + os.environ.get('GEOGRAPH_BOOT_STATUS', 'unset'))\n",
+        encoding="utf-8",
+    )
+    proc = subprocess.run(
+        [sys.executable, str(_ROOT / "scripts" / "boot.py"), sys.executable, str(echo)],
+        capture_output=True, text=True,
+    )
+    assert proc.returncode == 0, proc.stderr
+    lines = proc.stdout.strip().splitlines()
+    assert "flag=1" in lines, "the app must be told to run the boot itself"
+    assert "status=unset" in lines, "no step may have run before the exec"
 
 
 def test_health_reads_the_boot_status(monkeypatch):

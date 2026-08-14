@@ -46,20 +46,47 @@ def _conn(request: Request) -> Any:
     return conn
 
 
+def _dyad_actors(dyad_id: str) -> tuple[str, str]:
+    """`dyad:cow-630--cow-666` → its two actor node ids, sorted — the exact
+    inverse of `escalation.dyad_id`, whose '--' separator is safe because no
+    actor's bare id contains one."""
+    bare = dyad_id.split(":", 1)[-1]
+    first, _, second = bare.partition("--")
+    return f"actor:{first}", f"actor:{second or first}"
+
+
 def _effects_for(conn: Any, dyad_id: str) -> list[dict[str, Any]]:
     """Measured market effects for this dyad's events. Empty is a real and
     common answer — the transmission engine records a SKIP where a market did
-    not exist at event time, and those never become an AFFECTED edge."""
-    return kuzu_store.query(
-        conn,
-        "MATCH (e:Event)-[:OF_DYAD]->(d:Dyad {node_id: $dyad}) "
+    not exist at event time, and those never become an AFFECTED edge.
+
+    MEMBERSHIP COMES FROM THE ACTOR EDGES, NOT OF_DYAD. The transmission
+    engine measures the whole graph without consulting OF_DYAD, while the
+    rescore that writes OF_DYAD is opt-in and unreachable inside a boot
+    window — so production held 278k AFFECTED edges beside the spine's 55
+    OF_DYAD edges, and a hard OF_DYAD match served "no measured market
+    effects" for nearly every dyad while the measurements sat unreachable.
+    Every event carries INITIATED_BY and DIRECTED_AT (that pair is the
+    provenance invariant), and `escalation.dyad_id` IS the sorted actor pair,
+    so anchoring on the two actors reconstructs membership exactly — the same
+    stance as games/pricing.py, where requiring the dyad edge is documented
+    as quietly shrinking the sample.
+    """
+    actor_a, actor_b = _dyad_actors(dyad_id)
+    pattern = (
+        "MATCH (x:Actor {node_id: $initiator})<-[:INITIATED_BY]-(e:Event)"
+        "-[:DIRECTED_AT]->(y:Actor {node_id: $target}) "
         "MATCH (e)-[a:AFFECTED]->(m:Market) "
         "RETURN e.node_id AS event_id, e.event_time AS event_time, "
         "m.node_id AS market_id, m.name AS market_name, "
-        "a.abnormal_return AS abnormal_return, a.window AS window, "
-        "a.resolution AS resolution",
-        {"dyad": dyad_id},
+        "a.abnormal_return AS abnormal_return, a.window AS window"
     )
+    rows = kuzu_store.query(conn, pattern, {"initiator": actor_a, "target": actor_b})
+    if actor_a != actor_b:
+        rows.extend(
+            kuzu_store.query(conn, pattern, {"initiator": actor_b, "target": actor_a})
+        )
+    return rows
 
 
 def _quantiles(values: list[float]) -> dict[str, float]:

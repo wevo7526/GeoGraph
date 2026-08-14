@@ -68,15 +68,21 @@ export const CONTROLS: Array<{
 ]
 
 export function Controls({
-  values, fitted, onChange, onReset, busy,
+  values, fitted, onChange, onReset, busy, dirty: dirtyOverride,
 }: {
   values: Record<string, number>
   fitted: Record<string, number>
   onChange: (key: string, value: number) => void
   onReset: () => void
   busy: boolean
+  /** Page-level dirtiness (payoffs AND belief/capability levers). Without it
+   *  the reset button hid whenever only a belief or capability lever moved —
+   *  a counterfactual with no visible way home. */
+  dirty?: boolean
 }) {
-  const dirty = CONTROLS.some((c) => Math.abs((values[c.key] ?? 0) - (fitted[c.key] ?? 0)) > 1e-9)
+  const dirty =
+    dirtyOverride ??
+    CONTROLS.some((c) => Math.abs((values[c.key] ?? 0) - (fitted[c.key] ?? 0)) > 1e-9)
   return (
     <div className="mt-3 pt-3 border-t" style={{ borderColor: 'var(--line)' }}>
       <div className="flex items-baseline justify-between gap-3">
@@ -138,6 +144,7 @@ export function Step({ step }: { step: SequenceStep }) {
         </span>
         <span className="mono" style={{ color: 'var(--muted)' }}>
           band {step.intensity_band}
+          {step.band_probability != null && ` (${Math.round(step.band_probability * 100)}%)`}
         </span>
       </div>
       {step.market.length > 0 && (

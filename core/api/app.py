@@ -84,32 +84,79 @@ def _boot_status() -> dict[str, Any] | None:
         return {"error": "GEOGRAPH_BOOT_STATUS is not readable JSON"}
 
 
+def _open_graph(app: FastAPI, settings: Any) -> None:
+    """Open the graph in write mode and apply the ontology's schema. Failure
+    is RECORDED, not raised — /api/health stays 200 and names the problem."""
+    try:
+        settings.kuzu_db_path.parent.mkdir(parents=True, exist_ok=True)
+        conn = kuzu_store.connect(settings.kuzu_db_path)
+        kuzu_store.apply_schema(conn)
+        app.state.graph = conn
+        app.state.graph_error = None
+    except Exception as exc:  # noqa: BLE001 - see docstring
+        app.state.graph = None
+        app.state.graph_error = str(exc)
+
+
+def _run_boot_behind_the_api(app: FastAPI, settings: Any) -> None:
+    """The API-first boot's background half (scripts/boot.py sets
+    GEOGRAPH_RUN_BOOT_IN_APP and execs this process immediately).
+
+    Runs every boot step — each a child process that takes and releases the
+    Kuzu write lock — while THIS process holds no graph connection at all
+    (Kuzu allows one writer or many readers across processes, never both).
+    Only when the last write child has exited does the API take the write
+    lock itself and start serving graph reads. Until then the corpus-first
+    surfaces work and graph endpoints answer 503 naming the boot.
+    """
+    import importlib.util
+
+    try:
+        boot_path = Path(__file__).resolve().parents[2] / "scripts" / "boot.py"
+        spec = importlib.util.spec_from_file_location("geograph_boot", boot_path)
+        assert spec and spec.loader
+        boot = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(boot)
+        status: dict[str, Any] = boot._boot_status()
+    except Exception as exc:  # noqa: BLE001 - the API must keep serving
+        status = {"seeded": False, "reason": f"background boot error: {exc}"}
+    app.state.boot = {"running": False, **status}
+    _open_graph(app, settings)
+
+
 def create_app() -> FastAPI:
     settings = settings_module.load()
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
-        # Creating-and-applying at startup is what makes a fresh clone serve:
-        # an empty graph with the right schema beats a 500. Failure is
-        # RECORDED, not raised — /api/health stays 200 and names the problem.
-        # The except is deliberately broad: ANY unhandled failure here would
-        # otherwise leave the app unable to answer its own health check, and a
-        # health check that 500s restart-loops a container that could have told
-        # us what was wrong.
-        try:
-            settings.kuzu_db_path.parent.mkdir(parents=True, exist_ok=True)
-            conn = kuzu_store.connect(settings.kuzu_db_path)
-            kuzu_store.apply_schema(conn)
-            app.state.graph = conn
-        except Exception as exc:  # noqa: BLE001 - see above
-            app.state.graph = None
-            app.state.graph_error = str(exc)
+        # API-FIRST BOOT: when scripts/boot.py exec'd us before running its
+        # steps, the steps run on a background thread BEHIND the bound port —
+        # this process must hold no graph connection while the write children
+        # work, so the graph opens when the thread finishes. Otherwise (a
+        # plain `python -m core.api.app`, or the legacy serialised boot) the
+        # graph opens here at startup, which is what makes a fresh clone
+        # serve: an empty graph with the right schema beats a 500.
+        if os.getenv("GEOGRAPH_RUN_BOOT_IN_APP", "").strip() == "1":
+            import threading
+
+            app.state.graph_error = (
+                "boot in progress — the graph opens when the boot's write "
+                "steps release the single-writer lock (watch /api/health)"
+            )
+            app.state.boot = {"running": True}
+            threading.Thread(
+                target=_run_boot_behind_the_api,
+                args=(app, settings),
+                daemon=True,
+                name="geograph-boot",
+            ).start()
+        else:
+            _open_graph(app, settings)
         # Warm the corpus's serving tables NOW, off the artifacts in the image,
         # so the parse cost (~20s for three lenses) lands in startup instead of
-        # on a user's first click at the dyad ledger. Same failure rule as the
-        # graph above: record, never raise — a corpus that cannot warm leaves
-        # the routers on their graph fallback, which is degraded and says so,
-        # not dead.
+        # on a user's first click at the dyad ledger. Record, never raise — a
+        # corpus that cannot warm leaves the routers on their graph fallback,
+        # which is degraded and says so, not dead.
         try:
             from core.wire import serving
 
@@ -138,7 +185,9 @@ def create_app() -> FastAPI:
             "graph": "unavailable" if app.state.graph is None else "open",
             "graphError": app.state.graph_error,
             "disabled": settings.missing_capabilities(),
-            "boot": _boot_status(),
+            # Live state when the boot runs behind this API (api-first),
+            # else whatever the serialised boot handed over in the env.
+            "boot": getattr(app.state, "boot", None) or _boot_status(),
         }
 
     for router in (graph.router, events.router, case_studies.router, network.router,

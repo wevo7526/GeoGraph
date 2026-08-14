@@ -2,8 +2,11 @@
 
 Each past quarter end, the archive is TRUNCATED to the events that existed
 then and the near-term forecast is recomputed through the same code path
-that freezes live calls (`forecasting.forecast_from_rows` with a cutoff —
-never a backtest-only estimator). The forecast's scenario likelihoods build
+that freezes live calls (`forecasting.AsofArchive.forecast` with a cutoff —
+the body behind `forecast_from_rows`, never a backtest-only estimator; the
+archive's arrays are built ONCE and evaluated per quarter, which is what
+makes ~425 corpus-scale cutoffs cost seconds instead of a boot budget per
+region). The forecast's scenario likelihoods build
 that quarter's book through the pack's own paper translation, the book is
 entered at the first panel close after the cutoff and marked at the NEXT
 quarter end, and the quarterly returns chain into an equity curve.
@@ -81,10 +84,11 @@ def walk_forward(
     skipped: list[dict[str, str]] = []
     equity = float(paper.NOTIONAL_USD)
 
+    archive = forecasting.AsofArchive.build(rows)
     for cutoff, mark_through in zip(candidates, candidates[1:], strict=False):
         try:
-            payload = forecasting.forecast_from_rows(
-                rows, _QUESTION,
+            payload = archive.forecast(
+                _QUESTION,
                 region_pack=region_pack,
                 horizon_years=horizon_years,
                 cutoff=cutoff,
@@ -98,6 +102,22 @@ def walk_forward(
                 "quarter_end": cutoff,
                 "reason": f"base rate rests on {episodes} episodes "
                           f"(< {MIN_EPISODES}) — too thin to trade",
+            })
+            continue
+        # At corpus density the pooled episode count clears 8 by 1980, so the
+        # bar that actually bites is PER-DYAD: when the estimator had to take
+        # its fallback (focal dyads holding fewer than the standard episode
+        # bar), every likelihood is mostly the pooled prior wearing a dyad's
+        # name — recorded, never traded.
+        focal_bar = int(payload["frozen_inputs"]["focal_episode_bar"])
+        if focal_bar < forecasting._MIN_FOCAL_EPISODES:
+            skipped.append({
+                "quarter_end": cutoff,
+                "reason": (
+                    f"focal dyads cleared only the fallback bar ({focal_bar} "
+                    f"episode vs {forecasting._MIN_FOCAL_EPISODES}) — the "
+                    "likelihoods would wear the pooled prior"
+                ),
             })
             continue
         try:
@@ -118,6 +138,26 @@ def walk_forward(
                 "quarter_end": cutoff,
                 "reason": "no panel closes in the quarter — no position "
                           "could have been entered",
+            })
+            continue
+        # A book with SOME legs unenterable is not the strategy either. The
+        # weights are a hedged structure; entering one side of it is an
+        # accident of panel coverage, and 1998–2007 quarters marking a single
+        # leg had been compounding into the headline curve as if the rule had
+        # traded. A partial book is a recorded skip that shows its legs.
+        missing_legs = [
+            position for position in marked["positions"]
+            if position["status"] == "skipped"
+        ]
+        if missing_legs:
+            skipped.append({
+                "quarter_end": cutoff,
+                "reason": (
+                    f"book partially enterable: "
+                    f"{len(marked['positions']) - len(missing_legs)} of "
+                    f"{len(marked['positions'])} legs have panel closes — a "
+                    "partial book is panel coverage, not the strategy"
+                ),
             })
             continue
         quarter_return = marked["pnl_usd"] / paper.NOTIONAL_USD
@@ -158,8 +198,9 @@ def walk_forward(
             "walk-forward: each quarter end, forecast from events <= cutoff "
             "only (same estimator as live freezes), build the pack's paper "
             f"book, enter first close after cutoff, mark at next quarter end; "
-            f"quarters with < {MIN_EPISODES} base-rate episodes or no panel "
-            "closes are recorded skips. "
+            f"quarters with < {MIN_EPISODES} base-rate episodes, focal dyads "
+            "below the standard episode bar, or any unenterable leg are "
+            "recorded skips — only fully-entered books compound. "
             + paper.method_for(escalation_book, reversion_book)
         ),
     }

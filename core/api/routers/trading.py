@@ -94,6 +94,10 @@ def backtest_ledger(region: str = "mena") -> dict[str, Any]:
     return {
         "region": region,
         "rows": rows,
+        # When this history was computed — the reader's staleness check. A
+        # ledger without a date on it is how a pre-corpus curve got mistaken
+        # for the current rule's record.
+        "computed_at": rows[-1]["computed_at"],
         "summary": {
             "notional_usd": paper.NOTIONAL_USD,
             "quarters_traded": len(rows),

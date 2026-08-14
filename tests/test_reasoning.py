@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import importlib.util
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -465,6 +466,209 @@ def test_near_term_is_deterministic_and_clock_free(db_path):
     second = forecasting.forecast(db_path, "q", region_pack="mena")
     assert first == second
     assert "generated_at" not in first  # the caller stamps at freeze time
+
+
+# ── the vectorized as-of archive ─────────────────────────────────────────────
+
+
+def _messy_archive() -> list[dict[str, Any]]:
+    """A synthetic archive holding every edge the arrays must survive: a
+    regime boundary (1971), year-only deep-tier dates, ungraded magnitudes,
+    event-time ties across dyads, an out-of-region dyad, and directions of
+    every kind. Deterministic — every number recountable by hand."""
+    rows: list[dict[str, Any]] = []
+    # A chronic rivalry: escalating quarterly across the regime boundary, with
+    # a drifting per-event baseline (as-of, the way the real row readers now
+    # emit it) and drifting magnitudes.
+    step = 0
+    for year in range(1965, 1996):
+        for month in (2, 5, 8, 11):
+            step += 1
+            rows.append({
+                "dyad_id": "dyad:chronic", "dyad_name": "Chronic–Rivalry",
+                "baseline": -3.0 - step * 0.05,
+                "event_id": f"event:chronic-{year}-{month:02d}",
+                "event_time": f"{year}-{month:02d}-15",
+                "direction": "escalating",
+                "magnitude": 1.0 + (step % 14),
+                "region_pack": "mena",
+            })
+    # Rare ruptures, each beyond the 3y horizon of the next.
+    rows.extend({
+        "dyad_id": "dyad:rare", "dyad_name": "Rare–Rupture", "baseline": -7.0,
+        "event_id": f"event:rare-{year}", "event_time": f"{year}-06-15",
+        "direction": "escalating", "magnitude": 18.0, "region_pack": "mena",
+    } for year in (1975, 1981, 1987, 1993))
+    # Deep-tier resolution: a year-only date, plus a tie on an exact stamp.
+    rows.append({
+        "dyad_id": "dyad:deep", "dyad_name": "Deep–Tier", "baseline": None,
+        "event_id": "event:deep-1969", "event_time": "1969",
+        "direction": "escalating", "magnitude": 12.0, "region_pack": "mena",
+    })
+    rows.append({
+        "dyad_id": "dyad:tie", "dyad_name": "Tie–Pair", "baseline": -9.9,
+        "event_id": "event:tie-a", "event_time": "1985-05-15",
+        "direction": "deescalating", "magnitude": 2.0, "region_pack": "mena",
+    })
+    # Ungraded and stable chatter that must not open episodes.
+    rows.extend({
+        "dyad_id": "dyad:chronic", "dyad_name": "Chronic–Rivalry", "baseline": -5.0,
+        "event_id": f"event:ungraded-{year}", "event_time": f"{year}-03-01",
+        "direction": "escalating", "magnitude": None, "region_pack": "mena",
+    } for year in (1980, 1990))
+    rows.append({
+        "dyad_id": "dyad:calm", "dyad_name": "Calm–Pair", "baseline": -1.0,
+        "event_id": "event:calm-1988", "event_time": "1988-07-04",
+        "direction": "stable", "magnitude": 0.2, "region_pack": "mena",
+    })
+    # Another region entirely: its episodes count toward the pool, but it can
+    # never be focal for mena.
+    rows.extend({
+        "dyad_id": "dyad:elsewhere", "dyad_name": "Else–Where", "baseline": -8.0,
+        "event_id": f"event:else-{year}", "event_time": f"{year}-09-20",
+        "direction": "escalating", "magnitude": 10.0, "region_pack": "china",
+    } for year in (1984, 1985, 1986, 1991))
+    return rows
+
+
+def _reference_state(
+    rows: list[dict[str, Any]],
+    *,
+    region_pack: str,
+    horizon_years: int = 3,
+    cutoff: str | None = None,
+) -> dict[str, Any]:
+    """The pre-vectorization arithmetic, recomputed through the module's own
+    reference helpers — what AsofArchive must reproduce exactly."""
+    from core.reasoning import forecasting, regimes
+
+    if cutoff is not None:
+        rows = [r for r in rows if str(r["event_time"]) <= cutoff]
+    assert rows, "reference caller must hand a non-empty prefix"
+    as_of = max(str(r["event_time"]) for r in rows)
+    threshold = forecasting._significance_threshold(rows, regime_anchor=as_of)
+    counts = forecasting._episode_counts(
+        rows, regime_anchor=as_of, horizon_years=horizon_years, threshold=threshold
+    )
+    contributing = [
+        str(r["event_time"]) for r in rows
+        if r["direction"] == "escalating"
+        and (
+            threshold <= 0.0
+            or (r.get("magnitude") is not None and float(r["magnitude"]) >= threshold)
+        )
+        and regimes.comparable(as_of, str(r["event_time"]))
+    ]
+    by_dyad: dict[str, list[dict[str, Any]]] = {}
+    for r in rows:
+        by_dyad.setdefault(str(r["dyad_id"]), []).append(r)
+    regional = [
+        (d, ev) for d, ev in by_dyad.items()
+        if any(e["region_pack"] == region_pack for e in ev)
+    ]
+    evidenced = [p for p in regional if counts.get(p[0], (0, 0))[1] >= 4]
+    focal_bar = 4
+    if not evidenced:
+        evidenced = [p for p in regional if counts.get(p[0], (0, 0))[1] >= 1]
+        focal_bar = 1
+    evidenced.sort(key=lambda p: (p[1][-1]["baseline"] or 0.0, p[0]))
+    continuations = sum(k for k, _ in counts.values())
+    episodes = sum(n for _, n in counts.values())
+    pooled = continuations / episodes if episodes else 0.5
+    strength = forecasting._prior_strength(counts, pooled)
+    return {
+        "as_of": as_of,
+        "threshold": round(threshold, 4),
+        "episodes": episodes,
+        "continuations": continuations,
+        "pooled": round(pooled, 6),
+        "evidence_span": (
+            [min(contributing), max(contributing)] if contributing else None
+        ),
+        "focal": [d for d, _ in evidenced[:3]],
+        "focal_bar": focal_bar,
+        "rates": {
+            d: round(forecasting._dyad_rate(counts, d, pooled, strength), 4)
+            for d, _ in evidenced[:3]
+        },
+        "dyad_counts": {
+            d: list(counts.get(d, (0, 0))) for d, _ in evidenced[:3]
+        },
+        "event_count": len(rows),
+    }
+
+
+def test_the_asof_archive_matches_the_reference_arithmetic():
+    from core.reasoning import forecasting
+
+    # The reference's "latest row per dyad" is literally last-in-input-order,
+    # so it is only meaningful on the (event_time, event_id) sort every real
+    # reader emits; the archive normalizes to that order itself, which the
+    # shuffled call proves.
+    rows = sorted(
+        _messy_archive(), key=lambda r: (str(r["event_time"]), r["event_id"])
+    )
+    # Cutoffs on both sides of the 1971 regime boundary, mid-archive, and the
+    # live (None) case; shuffled input order to prove the build's sort owns it.
+    shuffled = rows[::2] + rows[1::2]
+    for cutoff in (None, "1994-12-31", "1985-05-15", "1979-12-31", "1970-12-31"):
+        reference = _reference_state(rows, region_pack="mena", cutoff=cutoff)
+        payload = forecasting.forecast_from_rows(
+            shuffled, "q", region_pack="mena", cutoff=cutoff
+        )
+        frozen = payload["frozen_inputs"]
+        assert payload["as_of"] == reference["as_of"], cutoff
+        assert frozen["significance_threshold"] == reference["threshold"], cutoff
+        assert frozen["episodes"] == reference["episodes"], cutoff
+        assert frozen["continuations"] == reference["continuations"], cutoff
+        assert frozen["pooled_rate"] == reference["pooled"], cutoff
+        assert frozen["evidence_span"] == reference["evidence_span"], cutoff
+        assert frozen["focal_dyads"] == reference["focal"], cutoff
+        assert frozen["focal_episode_bar"] == reference["focal_bar"], cutoff
+        assert frozen["dyad_counts"] == reference["dyad_counts"], cutoff
+        assert frozen["event_count"] == reference["event_count"], cutoff
+        likelihoods = {
+            s["scenario_name"].split(":", 1)[1]: s["likelihood"]
+            for s in payload["scenarios"]
+            if s["scenario_name"].startswith("further_escalation")
+        }
+        assert likelihoods == reference["rates"], cutoff
+    with pytest.raises(ValueError, match="nothing to reason from"):
+        forecasting.forecast_from_rows(rows, "q", region_pack="mena", cutoff="1800-01-01")
+
+
+def test_the_walk_reads_the_baseline_as_of_the_cutoff_not_todays():
+    from core.reasoning import forecasting
+
+    # The dyad's baseline drifts from détente to rupture. A cutoff in the
+    # détente years must see the détente baseline — reading the archive-end
+    # value at every historical cutoff was oos-spec leak point 1.
+    rows = [
+        {
+            "dyad_id": "dyad:drift", "dyad_name": "Drift–Pair",
+            "baseline": -2.0 if year < 2000 else -9.5,
+            "event_id": f"event:drift-{year}", "event_time": f"{year}-03-15",
+            "direction": "escalating", "magnitude": 9.0, "region_pack": "mena",
+        }
+        for year in range(1990, 2010)
+    ]
+    early = forecasting.forecast_from_rows(rows, "q", region_pack="mena", cutoff="1995-12-31")
+    late = forecasting.forecast_from_rows(rows, "q", region_pack="mena")
+    assert "baseline -2.0" in early["scenarios"][0]["rationale"]
+    assert "baseline -9.5" in late["scenarios"][0]["rationale"]
+
+
+def test_the_backtest_and_the_freeze_share_one_estimator_body():
+    from core.reasoning import forecasting
+
+    # The locked rule, held by construction: an archive built once and
+    # evaluated at a cutoff answers exactly what forecast_from_rows answers.
+    rows = _messy_archive()
+    archive = forecasting.AsofArchive.build(rows)
+    for cutoff in (None, "1985-05-15"):
+        assert archive.forecast(
+            "q", region_pack="mena", cutoff=cutoff
+        ) == forecasting.forecast_from_rows(rows, "q", region_pack="mena", cutoff=cutoff)
 
 
 # ── freezing (build-spec §17: frozen at generation, scorable later) ──────────

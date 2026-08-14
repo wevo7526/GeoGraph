@@ -45,16 +45,18 @@ _HIGH = 0.8
 #: Coded events a trailing window must hold before its share/intensity counts
 #: as a MEASUREMENT of that window rather than an anecdote about it.
 #:
-#: This floor is not fussiness. The archive's density is wildly uneven — the
-#: GDELT wire runs 1979–2005 and puts thousands of coded events in a five-year
-#: window, while the years after it hold only the curated spine, six or eight
-#: events. Percentile-ranking a six-event window against a five-thousand-event
-#: window ranks sampling noise against a measurement, and it did exactly the
-#: damage you would predict: mean |goldstein| over the two curated conflicts of
-#: 2023–2025 pinned conflict_intensity at 1.0, its all-time high, which read
-#: off the chart as the most dangerous moment in 120 years. A window under the
-#: floor yields NO value for that year — dropped and counted (`coverage`),
-#: never smoothed over.
+#: This floor is not fussiness. The archive's density is wildly uneven —
+#: coverage, not history, drives every count. (The SHAPE has changed since
+#: this guard landed: the modern harvest now runs the corpus through 2026 and
+#: the sparse tail is the deep past rather than the recent years, but the
+#: hazard is the same either way.) Percentile-ranking a six-event window
+#: against a five-thousand-event window ranks sampling noise against a
+#: measurement, and it did exactly the damage you would predict: mean
+#: |goldstein| over the two curated conflicts of 2023–2025 pinned
+#: conflict_intensity at 1.0, its all-time high, which read off the chart as
+#: the most dangerous moment in 120 years. A window under the floor yields NO
+#: value for that year — dropped and counted (`coverage`), never smoothed
+#: over.
 _MIN_WINDOW_SAMPLE = 30
 
 
@@ -84,8 +86,20 @@ def _percentile_ranks(series: dict[int, float]) -> dict[int, float]:
     return out
 
 
-def pressure_components(db_path: Path, *, as_of: str | None = None) -> dict[str, Any]:
-    """The slow variables, per year, from the graph — truncated at `as_of`.
+def _roster(region_pack: str | None) -> set[str] | None:
+    """The pack's actor ids, or None for the whole archive."""
+    if region_pack is None:
+        return None
+    from core import packs
+
+    return {str(actor["id"]) for actor in packs.load(region_pack).actors}
+
+
+def pressure_components(
+    db_path: Path, *, as_of: str | None = None, region_pack: str | None = None
+) -> dict[str, Any]:
+    """The slow variables, per year, from the graph — truncated at `as_of`
+    and, when `region_pack` is given, RESTRICTED TO THAT LENS.
 
     - concentration: Singer's CON over CINC (capability concentration).
     - transition_proximity: challenger/leader CINC ratio — the Organski
@@ -94,97 +108,177 @@ def pressure_components(db_path: Path, *, as_of: str | None = None) -> dict[str,
       escalating.
     - conflict_intensity: mean |goldstein| of material-conflict events in the
       trailing window, on the Goldstein scale's own [0, 10].
+
+    THE REGION FILTER IS NOT COSMETIC. Without it every pack's long-horizon
+    forecast was the same four series computed over the whole archive, frozen
+    three times and labelled mena / china / eurasia — three nodes asserting
+    one number about three different worlds, and a retrodiction whose "hot
+    years" were identical across regions by construction. Restricted, each
+    component means what its name says for that lens: concentration is
+    capability concentration AMONG THE ACTORS THE PACK ROSTERS (a regional
+    balance, not the system's), and the event pair is that lens's own wire.
     """
-    conn = kuzu_store.connect(db_path, read_only=True)
-    try:
-        estimates = kuzu_store.query(
-            conn,
-            "MATCH (:Actor)-[:HAS_ESTIMATE]->(s:AttributeEstimate) "
-            "WHERE s.attribute = 'clout' "
-            "RETURN s.as_of AS as_of, s.value_mean AS value ORDER BY s.as_of",
-        )
-        events = kuzu_store.query(
-            conn,
-            "MATCH (e:Event) RETURN e.node_id AS node_id, "
-            "e.event_time AS event_time, "
-            "e.goldstein AS goldstein, e.quad_class AS quad_class, "
-            "e.escalation_direction AS direction ORDER BY e.event_time",
-        )
-    finally:
-        kuzu_store.close(conn)
+    return PressureArchive.load(db_path, region_pack=region_pack).components(as_of=as_of)
 
-    # THE UNION OF BOTH STORES, BY EVENT ID — not either one alone. The
-    # composite spans 120 years and its two halves live apart: the deep tier
-    # (1905→) exists only in the graph, the modern wire ships as corpus
-    # artifacts and may or may not have been merged into the graph this
-    # deploy. Reading only the graph collapses the modern components to the
-    # spine the moment a rebuilt volume skips the wire — the exact uneven-
-    # density trap this module's guards exist for. The parser gives wire
-    # events identical ids in both stores, so the id is the dedup key.
-    seen = {str(row["node_id"]) for row in events}
-    from core.wire import corpus as wire_corpus
 
-    for name in wire_corpus.installed():
-        for row in wire_corpus.load(name):
-            if row["node_id"] in seen:
-                continue
-            events.append({
-                "node_id": row["node_id"],
-                "event_time": row["event_time"],
-                "goldstein": row["goldstein"],
-                "quad_class": row["quad_class"],
-                "direction": row["escalation_direction"],
-            })
-    events.sort(key=lambda r: str(r["event_time"]))
+class PressureArchive:
+    """The structural inputs read ONCE, evaluable at any `as_of`.
 
-    cutoff = as_of or "9999"
-    clout_by_year: dict[int, list[float]] = {}
-    for row in estimates:
-        stamp = str(row["as_of"] or "")
-        if not stamp or stamp > cutoff or row["value"] is None:
-            continue
-        clout_by_year.setdefault(int(stamp[:4]), []).append(float(row["value"]))
+    Same reason `reasoning.forecasting.AsofArchive` exists: an honest
+    retrodiction asks the method to stand at many past dates, and re-reading
+    a 1.3M-event corpus per date is what kept the retrodiction to a single
+    anchor — the one that happened to flag nothing, which is why the frozen
+    verdict was an empty list in every region. Loading is the expensive half
+    and it does not depend on the cutoff, so it is paid once.
+    """
 
-    concentration: dict[int, float] = {}
-    proximity: dict[int, float] = {}
-    for year, values in sorted(clout_by_year.items()):
-        ordered = sorted(values, reverse=True)
-        concentration[year] = _concentration(ordered)
-        if len(ordered) >= 2 and ordered[0] > 0:
-            proximity[year] = ordered[1] / ordered[0]
+    def __init__(
+        self,
+        *,
+        estimates: list[dict[str, Any]],
+        events: list[tuple[int, dict[str, Any]]],
+        region_pack: str | None,
+    ) -> None:
+        self.estimates = estimates
+        self.events = events
+        self.region_pack = region_pack
 
-    dated = [
-        (int(str(e["event_time"])[:4]), e)
-        for e in events
-        if str(e["event_time"]) <= cutoff
-    ]
-    escalation_share: dict[int, float] = {}
-    intensity: dict[int, float] = {}
-    if dated:
-        first, last = dated[0][0], dated[-1][0]
-        for year in range(first, last + 1):
-            window = [e for y, e in dated if year - _EVENT_WINDOW_YEARS < y <= year]
-            if not window:
-                continue
-            coded = [e for e in window if e["direction"]]
-            if len(coded) >= _MIN_WINDOW_SAMPLE:
-                escalation_share[year] = sum(
-                    1 for e in coded if e["direction"] == "escalating"
-                ) / len(coded)
-            conflicts = [
-                abs(float(e["goldstein"]))
-                for e in window
-                if e["quad_class"] == "material_conflict" and e["goldstein"] is not None
+    @classmethod
+    def load(cls, db_path: Path, *, region_pack: str | None = None) -> PressureArchive:
+        roster = _roster(region_pack)
+        conn = kuzu_store.connect(db_path, read_only=True)
+        try:
+            estimates = kuzu_store.query(
+                conn,
+                "MATCH (a:Actor)-[:HAS_ESTIMATE]->(s:AttributeEstimate) "
+                "WHERE s.attribute = 'clout' "
+                "RETURN a.node_id AS actor_id, s.as_of AS as_of, "
+                "s.value_mean AS value ORDER BY s.as_of",
+            )
+            events = kuzu_store.query(
+                conn,
+                "MATCH (e:Event) RETURN e.node_id AS node_id, "
+                "e.event_time AS event_time, "
+                "e.goldstein AS goldstein, e.quad_class AS quad_class, "
+                "e.region_pack AS region_pack, "
+                "e.escalation_direction AS direction ORDER BY e.event_time",
+            )
+        finally:
+            kuzu_store.close(conn)
+
+        if region_pack is not None:
+            events = [e for e in events if str(e["region_pack"]) == region_pack]
+            estimates = [
+                e for e in estimates
+                if roster is None or str(e["actor_id"]) in roster
             ]
-            if len(conflicts) >= _MIN_WINDOW_SAMPLE:
-                intensity[year] = sum(conflicts) / len(conflicts) / 10.0
 
-    return {
-        "concentration": concentration,
-        "transition_proximity": proximity,
-        "escalation_share": escalation_share,
-        "conflict_intensity": intensity,
-    }
+        # THE UNION OF BOTH STORES, BY EVENT ID — not either one alone. The
+        # composite spans 120 years and its two halves live apart: the deep
+        # tier (1905→) exists only in the graph, the modern wire ships as
+        # corpus artifacts and may or may not have been merged into the graph
+        # this deploy. Reading only the graph collapses the modern components
+        # to the spine the moment a rebuilt volume skips the wire — the exact
+        # uneven-density trap this module's guards exist for. The parser gives
+        # wire events identical ids in both stores, so the id is the dedup key.
+        seen = {str(row["node_id"]) for row in events}
+        from core.wire import corpus as wire_corpus
+
+        installed = wire_corpus.installed()
+        lenses = (
+            [region_pack] if region_pack is not None and region_pack in installed
+            else [] if region_pack is not None
+            else installed
+        )
+        for name in lenses:
+            for row in wire_corpus.load(name):
+                if row["node_id"] in seen:
+                    continue
+                events.append({
+                    "node_id": row["node_id"],
+                    "event_time": row["event_time"],
+                    "goldstein": row["goldstein"],
+                    "quad_class": row["quad_class"],
+                    "region_pack": row["region_pack"],
+                    "direction": row["escalation_direction"],
+                })
+        events.sort(key=lambda r: str(r["event_time"]))
+        return cls(
+            estimates=estimates,
+            events=[(int(str(e["event_time"])[:4]), e) for e in events],
+            region_pack=region_pack,
+        )
+
+    def components(self, *, as_of: str | None = None) -> dict[str, Any]:
+        """The four series, truncated at `as_of`."""
+        cutoff = as_of or "9999"
+        clout_by_year: dict[int, list[float]] = {}
+        for row in self.estimates:
+            stamp = str(row["as_of"] or "")
+            if not stamp or stamp > cutoff or row["value"] is None:
+                continue
+            clout_by_year.setdefault(int(stamp[:4]), []).append(float(row["value"]))
+
+        concentration: dict[int, float] = {}
+        proximity: dict[int, float] = {}
+        for year, values in sorted(clout_by_year.items()):
+            ordered = sorted(values, reverse=True)
+            concentration[year] = _concentration(ordered)
+            if len(ordered) >= 2 and ordered[0] > 0:
+                proximity[year] = ordered[1] / ordered[0]
+
+        dated = [pair for pair in self.events if str(pair[1]["event_time"]) <= cutoff]
+        escalation_share: dict[int, float] = {}
+        intensity: dict[int, float] = {}
+        if dated:
+            first, last = dated[0][0], dated[-1][0]
+            by_year: dict[int, list[dict[str, Any]]] = {}
+            for year, event in dated:
+                by_year.setdefault(year, []).append(event)
+            for year in range(first, last + 1):
+                window = [
+                    e
+                    for y in range(year - _EVENT_WINDOW_YEARS + 1, year + 1)
+                    for e in by_year.get(y, ())
+                ]
+                if not window:
+                    continue
+                coded = [e for e in window if e["direction"]]
+                if len(coded) >= _MIN_WINDOW_SAMPLE:
+                    escalation_share[year] = sum(
+                        1 for e in coded if e["direction"] == "escalating"
+                    ) / len(coded)
+                conflicts = [
+                    abs(float(e["goldstein"]))
+                    for e in window
+                    if e["quad_class"] == "material_conflict" and e["goldstein"] is not None
+                ]
+                if len(conflicts) >= _MIN_WINDOW_SAMPLE:
+                    intensity[year] = sum(conflicts) / len(conflicts) / 10.0
+
+        return {
+            "concentration": concentration,
+            "transition_proximity": proximity,
+            "escalation_share": escalation_share,
+            "conflict_intensity": intensity,
+        }
+
+    def forecast(
+        self,
+        *,
+        region_pack: str,
+        horizon_years: int = 20,
+        as_of: str | None = None,
+    ) -> dict[str, Any]:
+        """One long-horizon payload at one cutoff — the body behind
+        `structural_forecast`, so a retrodiction and a live freeze are the
+        same computation."""
+        return _forecast_from_components(
+            self.components(as_of=as_of),
+            region_pack=region_pack,
+            horizon_years=horizon_years,
+            as_of=as_of,
+        )
 
 
 def structural_forecast(
@@ -202,7 +296,19 @@ def structural_forecast(
     payload; nothing here reads a clock, which is what keeps a retrodiction
     identical to what a real run would have produced on that date.
     """
-    components = pressure_components(db_path, as_of=as_of)
+    return PressureArchive.load(db_path, region_pack=region_pack).forecast(
+        region_pack=region_pack, horizon_years=horizon_years, as_of=as_of
+    )
+
+
+def _forecast_from_components(
+    components: dict[str, Any],
+    *,
+    region_pack: str,
+    horizon_years: int = 20,
+    as_of: str | None = None,
+) -> dict[str, Any]:
+    """The payload body, over already-computed component series."""
     ranked = {name: _percentile_ranks(series) for name, series in components.items()}
 
     # THE COMPOSITE IS ONLY COMPARABLE ACROSS YEARS IF IT IS THE SAME COMPOSITE.

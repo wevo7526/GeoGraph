@@ -159,7 +159,16 @@ export default function TradingPage({
       <p className="mono text-[10px] mt-1" style={{ color: 'var(--muted)' }}>
         forecast recomputed each quarter end from the events that existed then ·
         entered at the first close after cutoff, marked at the next quarter end ·
-        thin and unfillable quarters are recorded skips
+        thin, pooled-prior and partially-enterable quarters are recorded skips —
+        only fully-entered books compound
+        {ledger?.computed_at && (
+          <>
+            {' · computed '}
+            <span style={{ color: 'var(--text)' }}>
+              {ledger.computed_at.slice(0, 10)}
+            </span>
+          </>
+        )}
       </p>
 
       {ledger === undefined ? (

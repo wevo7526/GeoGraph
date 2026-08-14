@@ -129,6 +129,56 @@ behind the single-writer lock, which is why 2026-08-13 was a four-hour outage;
   exact EWMA aggregate reading `DEFAULT_ALPHA`/`STABLE_BAND` off
   `escalation.py`) for SQL consumers; serving does not depend on it.
 
+## The 2026-08-14 rebuild (as-of walk, ML→game bridge, API-first boot)
+
+- **`forecasting.AsofArchive` IS `forecast_from_rows`'s body**: columnar
+  arrays built once, evaluated at any cutoff in ~1-2ms. That is what made the
+  walk-forward backtest boot-viable again (426 corpus-scale cutoffs in <1s per
+  region vs a 900s ceiling it used to burn without finishing) while keeping
+  the locked "never a backtest-only estimator" rule — the rule locks the code
+  path, not statelessness. The backtest boot step is DEFAULT ON again; only
+  fully-entered books compound (partial books are recorded skips), and the
+  row contract's `baseline` is now PER EVENT and AS OF that event (reading
+  the Dyad node's standing scalar at historical cutoffs was oos-spec leak 1).
+- **The ML→game bridge exists** (`core/games/bridge.py`): the frozen model
+  mode's per-dyad trajectory tilts that dyad's transition kernel
+  (exponential tilt, bounded by `TILT_SCALE`, η from predicted drift over
+  the model's own residual spread), audited on every solve it touched with
+  the artifact's name@hash. Opening states are DATA, not defaults
+  (`core/games/opening.py`): capability off the actors' CINC estimates,
+  beliefs filtered from the dyad's observed actions through the game's own
+  Bayes rule. `/games/explore` with no overrides is now THE BASELINE
+  (`baseline: true` — the frozen sequence forecast's construction); the
+  counterfactual label appears only when a lever actually moved.
+- **Path enumeration keeps the kernel's stochasticity** (`games/paths.py`):
+  each step branches over the bands the row puts real mass on, and the
+  marginal fan accumulates across ALL branches before the top-N cut. Taking
+  each row's modal band had made every period's marginal identical — the fan
+  was not a fan.
+- **`structural.py` is region-filtered** (roster + `region_pack`), so the
+  three lenses stop freezing one archive-wide number under three labels, and
+  `calibration.retrodict` stands at MANY anchors (`PressureArchive` makes
+  them ~free) — the single-anchor retrodiction had flagged nothing anywhere
+  and verified nothing, in every region.
+- **The boot is API-FIRST** (`GEOGRAPH_API_FIRST`, default on): boot.py execs
+  the API immediately; the steps run on a background thread behind the bound
+  port while the API holds NO graph connection (Kuzu: one writer or many
+  readers, never both across processes); the graph opens when the last write
+  child exits. Dark time per deploy is the corpus warm (~20s), not the boot.
+  Steps carry INPUT FINGERPRINTS on the volume
+  (`.boot-fingerprints.json`): metrics/forecasts/scores/deep-tier/backtest
+  skip in ms when nothing they read changed (fingerprints are stored
+  POST-run, because several steps move their own inputs' facets), the study
+  records only a CLEAN pass (a deferred backlog must not strand), and 13F is
+  at most weekly (EDGAR is quarterly). `GEOGRAPH_SKIP_GUARDS=0` disables.
+- **Effects reads reconstruct dyad membership from the ACTOR EDGES**
+  (`precedent._effects_for`): every event carries INITIATED_BY/DIRECTED_AT
+  (the provenance invariant) and `escalation.dyad_id` IS the sorted pair, so
+  the reasoning page's market panel no longer requires OF_DYAD — production
+  holds 278k+ AFFECTED edges beside the spine's 55 OF_DYAD edges, and the
+  hard join served "no measured effects" for nearly every dyad while the
+  measurements sat unreachable.
+
 ## Kuzu behaviours that FAIL SILENTLY (inherited from MarketGraph — same engine)
 
 | Do not write | Why | Instead |
@@ -193,9 +243,12 @@ hops apart.
   from the model's own predictions (§4). Estimate updates are NEW
   AttributeEstimate nodes (`method='sensor_update'`), not overwrites.
 - **UNEVEN DENSITY IS THE ARCHIVE'S DEFINING HAZARD, and two estimators were
-  silently wrecked by it.** 98% of the events sit in 1979–2005 (the loaded
-  GDELT wire); the years on either side hold only a curated spine, and the
-  last twenty years hold 155 events in total. Consequences now enforced:
+  silently wrecked by it.** The SHAPE has changed — the modern harvest landed
+  2026-08-13, so the corpus now runs through 2026 and mena measures ~77%
+  post-2005 (the old "98% in 1979–2005, 155 events in the last twenty years"
+  era is over) — but the LESSON has not: density is coverage, not history,
+  and it now tilts toward the recent years instead of away from them. Check
+  the sample behind every count. Consequences enforced:
   - `structural.py` drops any trailing window under `_MIN_WINDOW_SAMPLE` (30
     coded events) and computes the composite ONLY for years holding every
     component. Percentile-ranking a six-event window against a five-thousand-

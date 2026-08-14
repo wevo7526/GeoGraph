@@ -24,11 +24,15 @@ from typing import Any
 
 from fastapi import APIRouter, HTTPException, Query, Request
 
+from core.games import bridge as bridge_module
+from core.games import duration as duration_module
+from core.games import opening as opening_module
 from core.games import paths as paths_module
 from core.games import pricing as pricing_module
 from core.games import solve as solve_module
 from core.games import state as state_module
 from core.games import transition as transition_module
+from core.graph import kuzu_store
 from core.models import panel as panel_module
 from core.wire import serving
 
@@ -43,8 +47,12 @@ _CACHE: dict[str, dict[str, Any]] = {}
 
 def _context(request: Request, region: str) -> dict[str, Any]:
     conn = request.app.state.graph
-    if region in _CACHE:
-        return _CACHE[region]
+    cached = _CACHE.get(region)
+    # A context built while the graph was closed (api-first boot in progress)
+    # has no measured effects and no model tilt; it must not outlive the
+    # boot. Rebuild the first time the graph is open.
+    if cached is not None and (cached["graph_was_open"] or conn is None):
+        return cached
 
     # THE CORPUS FIRST for the panel and the joint actions — the same order
     # `fit_game.py` reads, so the game a user explores here is solved over the
@@ -74,9 +82,33 @@ def _context(request: Request, region: str) -> dict[str, Any]:
     kernel, observed = transition_module.kernel(
         transition_module.count(table, joint)
     )
+
+    # The frozen model mode's trajectories — the ML→game bridge's input. Read
+    # once per region: a gated learned drift tilts its dyad's kernel, with the
+    # audit on the response. No graph or no frozen model → no tilt, exactly.
+    model_trajectories: dict[str, list[dict[str, Any]]] = {}
+    model_identity: dict[str, Any] | None = None
+    if conn is not None:
+        frozen_model = kuzu_store.query(
+            conn,
+            "MATCH (f:Forecast) WHERE f.mode = 'model' AND f.region_pack = $region "
+            "RETURN f.frozen_inputs_json AS frozen "
+            "ORDER BY f.generated_at DESC, f.node_id LIMIT 1",
+            {"region": region},
+        )
+        if frozen_model and frozen_model[0]["frozen"]:
+            import json
+
+            inputs = json.loads(str(frozen_model[0]["frozen"]))
+            model_trajectories = {
+                t["dyad_id"]: t["path"] for t in inputs.get("trajectories", [])
+            }
+            model_identity = inputs.get("model")
+
     context = {
         "table": table,
         "kernel": kernel,
+        "joint": joint,
         "coverage": transition_module.coverage(observed),
         # Measured market effects live in the graph alone. An open graph adds
         # them; without one the game still solves, priced over no effects
@@ -85,6 +117,9 @@ def _context(request: Request, region: str) -> dict[str, Any]:
             pricing_module.measured_effects(conn, region_pack=region)
             if conn is not None else {}
         ),
+        "model_trajectories": model_trajectories,
+        "model_identity": model_identity,
+        "graph_was_open": conn is not None,
         "as_of": max(row["date"] for row in table),
     }
     _CACHE[region] = context
@@ -127,6 +162,18 @@ def defaults(request: Request, region: str = "mena") -> dict[str, Any]:
             {k: d[k] for k in ("dyad_id", "dyad_name", "active_quarters")}
             for d in panel_module.dyad_summary(context["table"])[:20]
         ],
+        # The yield curve's answer to "how long do these crises last" —
+        # measured tenors (front/belly/long) per event, honest about its own
+        # absence. Existed since the duration module landed and was served
+        # NOWHERE the games surface could reach; bonds are part of the ask.
+        "duration": duration_module.report(
+            context["effects"],
+            {
+                str(e["event_id"]): str(e.get("dyad_id", ""))
+                for e in context["effects"]
+                if isinstance(e, dict) and e.get("event_id")
+            },
+        ),
     }
 
 
@@ -140,17 +187,22 @@ def explore(
     cost_irresolute: float | None = Query(None, ge=0.05, le=6.0),
     stake: float | None = Query(None, ge=0.1, le=3.0),
     audience: float | None = Query(None, ge=0.0, le=2.0),
-    capability: int = Query(1, ge=0, le=2),
-    belief_a: float = Query(0.5, ge=0.0, le=1.0),
-    belief_b: float = Query(0.5, ge=0.0, le=1.0),
+    capability: int | None = Query(None, ge=0, le=2),
+    belief_a: float | None = Query(None, ge=0.0, le=1.0),
+    belief_b: float | None = Query(None, ge=0.0, le=1.0),
 ) -> dict[str, Any]:
-    """Re-solve for this dyad with any parameter overridden. NOT A FORECAST.
+    """Re-solve for this dyad with any parameter overridden.
 
-    Every parameter defaults to the region's fitted value, so a call with no
-    overrides reproduces the frozen forecast's equilibrium — which is what
-    makes a comparison meaningful. Bounds match the fit's own clips, so a
-    caller cannot explore a region of the parameter space the estimator was
-    never allowed to reach.
+    A call with NO overrides is THE BASELINE: the fitted payoffs at the
+    dyad's data-driven opening state (CINC capability, beliefs filtered from
+    its observed actions, the gated model's kernel tilt where one is frozen)
+    — the same construction as the frozen sequence forecast, and the
+    response says `baseline: true`. Any override makes it a counterfactual
+    and the response says that instead; the old behaviour stamped the
+    counterfactual label on everything, untouched fitted defaults included,
+    so the page could never show the model's own call. Bounds match the
+    fit's own clips, so a caller cannot explore a region of the parameter
+    space the estimator was never allowed to reach.
     """
     context = _context(request, region)
     if context["coverage"]["share_measured"] < 0.5:
@@ -180,6 +232,27 @@ def explore(
         stake=stake if stake is not None else fitted["stake"],
         audience=audience if audience is not None else fitted["audience"],
     )
+    # The opening state, from data. Beliefs are filtered with the FITTED
+    # payoffs, deliberately: the baseline's opening state must stay pinned
+    # while the cost sliders move, or the reference point drifts under the
+    # lever and no comparison means anything.
+    fitted_payoffs = solve_module.Payoffs(**fitted)
+    data_capability = opening_module.capability_state(
+        request.app.state.graph, dyad
+    )
+    data_beliefs = opening_module.filtered_beliefs(
+        context["joint"], dyad, fitted_payoffs
+    )
+    effective_capability = (
+        capability if capability is not None else int(data_capability["band"])
+    )
+    effective_belief_a = (
+        belief_a if belief_a is not None else float(data_beliefs["a"])
+    )
+    effective_belief_b = (
+        belief_b if belief_b is not None else float(data_beliefs["b"])
+    )
+
     changed = {
         name: value
         for name, value in (
@@ -189,15 +262,29 @@ def explore(
         )
         if value is not None and abs(value - fitted[name]) > 1e-9
     }
+    if capability is not None and capability != int(data_capability["band"]):
+        changed["capability"] = capability
+    if belief_a is not None and abs(belief_a - float(data_beliefs["a"])) > 1e-9:
+        changed["belief_a"] = belief_a
+    if belief_b is not None and abs(belief_b - float(data_beliefs["b"])) > 1e-9:
+        changed["belief_b"] = belief_b
+    baseline = not changed
 
     scale = state_module.dyad_scale([float(r["intensity"]) for r in own])
     latest = max(own, key=lambda r: r["q"])
     band = state_module.intensity_band(float(latest["intensity"]), scale)
 
-    equilibrium = solve_module.solve(context["kernel"], payoffs, horizon=4)
+    # The ML→game bridge: a gated frozen trajectory tilts this dyad's kernel.
+    eta = bridge_module.eta_from_trajectory(
+        context["model_trajectories"].get(dyad, [])
+    )
+    kernel = bridge_module.tilted_kernel(context["kernel"], eta)
+    tilt = bridge_module.audit(eta, context["model_identity"])
+
+    equilibrium = solve_module.solve(kernel, payoffs, horizon=4)
     result = paths_module.enumerate_paths(
-        equilibrium, context["kernel"], intensity=band, capability=capability,
-        belief_a=belief_a, belief_b=belief_b, payoffs=payoffs,
+        equilibrium, kernel, intensity=band, capability=effective_capability,
+        belief_a=effective_belief_a, belief_b=effective_belief_b, payoffs=payoffs,
     )
     priced = pricing_module.price_paths(
         result, context["effects"], as_of=context["as_of"], scale=scale or 1.0
@@ -216,26 +303,49 @@ def explore(
             "audience": payoffs.audience,
         },
         "changed": changed,
-        "capability": capability,
-        "beliefs": {"a": belief_a, "b": belief_b},
+        "capability": effective_capability,
+        "beliefs": {"a": effective_belief_a, "b": effective_belief_b},
+        # Where the opening state CAME FROM — measured or defaulted, the
+        # reader sees which, and the page pins its baseline to these.
+        "opening": {
+            "intensity_band": band,
+            "capability": data_capability,
+            "beliefs": data_beliefs,
+            "tilt": tilt,
+        },
         "marginal": paths_module.marginal_intensity(priced, 4),
         "escalation_propensity": {
             state_module.TYPES[t]: [
-                round(float(equilibrium["policy"][0, b, capability, t][escalate]), 4)
+                round(
+                    float(
+                        equilibrium["policy"][0, b, effective_capability, t][escalate]
+                    ),
+                    4,
+                )
                 for b in range(len(state_module.INTENSITY_EDGES))
             ]
             for t in range(len(state_module.TYPES))
         },
         **priced,
         "kernel": context["coverage"],
-        # THE LABEL, on every response. A counterfactual is not scored, not
-        # frozen, and not comparable to a call anyone committed to.
         "frozen": False,
+        "baseline": baseline,
         "boundary_statement": (
-            "A COUNTERFACTUAL, not a forecast. Re-solved on request with the "
-            "payoffs shown; nothing here is persisted, scored or comparable to "
-            "the frozen sequence forecast. The transition kernel is counted "
-            "from the archive and is not adjustable — what escalation has led "
-            "to historically is evidence, not a setting."
+            (
+                "THE BASELINE: the fitted payoffs at this dyad's data-driven "
+                "opening state — the same construction as the frozen sequence "
+                "forecast. Move a lever to explore a counterfactual; the "
+                "transition kernel is counted from the archive and is not "
+                "adjustable."
+            )
+            if baseline
+            else (
+                "A COUNTERFACTUAL, not a forecast. Re-solved on request with "
+                "the payoffs shown; nothing here is persisted, scored or "
+                "comparable to the frozen sequence forecast. The transition "
+                "kernel is counted from the archive and is not adjustable — "
+                "what escalation has led to historically is evidence, not a "
+                "setting."
+            )
         ),
     }

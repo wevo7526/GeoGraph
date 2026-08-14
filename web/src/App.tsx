@@ -1,4 +1,5 @@
 import { Suspense, lazy, useEffect, useState } from 'react'
+import ApiHealthBanner from './components/ApiHealthBanner'
 import Landing from './components/Landing'
 import TopBar from './components/TopBar'
 
@@ -83,6 +84,7 @@ export default function App() {
   return (
     <div className="app-frame">
       <TopBar route={route} region={region} onRegion={chooseRegion} onNavigate={navigate} />
+      <ApiHealthBanner />
       <div className={scrollPage ? 'app-page app-page--scroll' : 'app-page'}>
         <Suspense fallback={<Loading />}>{page}</Suspense>
       </div>
