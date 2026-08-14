@@ -72,6 +72,13 @@ COPY scripts/ scripts/
 # loads a hundred thousand events in a couple of minutes instead of parsing
 # sixty-one million lines on every fresh volume.
 COPY data/derived/ data/derived/
+# The TRAINED ARTIFACTS, and they were missing until 2026-08-14 — which is why
+# the boot logged "no model artifact at /app/models/intensity.json" and froze
+# two forecast modes instead of three on every deploy since the learned layer
+# landed. Training is offline (scripts/train_forecaster.py, scripts/fit_game.py)
+# and the hashed JSON is committed precisely so the image can carry it; not
+# copying it meant the whole learned layer shipped as dead code.
+COPY models/ models/
 
 COPY --from=web /web/dist ./web/dist
 
