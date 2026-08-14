@@ -88,7 +88,7 @@ _GDELT_TIMEOUT_SECONDS = 2400
 #: out of budget leaves the remaining lens short, which is REPORTED (the
 #: count check below) rather than silently accepted, and the API still comes
 #: up — a served archive that names its gap beats a dead container.
-_GDELT_BUDGET_SECONDS = int(os.getenv("GEOGRAPH_GDELT_BUDGET", "7200"))
+_GDELT_BUDGET_SECONDS = int(os.getenv("GEOGRAPH_GDELT_BUDGET", "5400"))
 
 #: The archive-wide rescore's own ceiling, separate and much larger because it
 #: is the one step here that CANNOT be resumed. Head B folds escalation per
@@ -118,11 +118,11 @@ _RESCORE_TIMEOUT_SECONDS = int(os.getenv("GEOGRAPH_RESCORE_TIMEOUT", "7800"))
 #:     + metrics 90 + forecasts 90 + score 25 + backtest 150
 #:
 #: With the window at 10800s (railway.json) everything except GDELT accounts
-#: for ~1,975s, so this can take 7200 and still leave ~1,600s of margin. That
-#: matters because the budget decides HOW MANY DEPLOYS the backfill needs: at
-#: the ~110 events/sec measured on Railway, an hour loads ~400k events and two
-#: hours loads ~790k, so the 1.5M archive converges in two boots rather than
-#: four.
+#: for ~4,200s once the study's own budget is counted properly, so this takes
+#: 5400 and the worst case lands near 9,600 with ~1,200s of margin. Measured
+#: on the 2026-08-13 boot: eurasia's remaining artifacts took ~1,750s and
+#: mena's ~4,800s, so this is sized to finish a lens per boot rather than to
+#: swallow the whole archive at once.
 #:
 #: The first boots still run out of budget and stop partway, on purpose — that
 #: is the resumable design working: the loader skips ids already present, the
@@ -131,10 +131,19 @@ _RESCORE_TIMEOUT_SECONDS = int(os.getenv("GEOGRAPH_RESCORE_TIMEOUT", "7800"))
 #: the window and killing a container that was working, which is what both
 #: failed deploys did.
 
-#: The full-archive study's ceiling. With the measured-events watermark only
-#: NEW events pay compute, so a normal boot uses seconds of this — the
-#: ceiling exists for the first boot after a large backfill.
-_STUDY_TIMEOUT_SECONDS = 1500
+#: The full-archive study's ceiling PER PACK, and its budget ACROSS packs.
+#: With the measured-events watermark only NEW events pay compute, so a normal
+#: boot uses seconds of both — the ceilings exist for the first boots after a
+#: large backfill, when there are a million unmeasured events.
+#:
+#: The budget is the lesson of 2026-08-13, when a deploy died at 209
+#: health-check attempts. The per-pack ceiling was 1500s and the window
+#: arithmetic counted 1500s total; three regions can spend 4,500s, and china
+#: alone burned its full share before eurasia and mena had started. Any step
+#: whose cost multiplies with the number of regions needs a budget, or adding
+#: a fourth lens silently breaks the boot.
+_STUDY_TIMEOUT_SECONDS = 1200
+_STUDY_BUDGET_SECONDS = int(os.getenv("GEOGRAPH_STUDY_BUDGET", "3600"))
 
 #: How far before the spine's EARLIEST event the panel must reach: the
 #: estimation window (120 sessions) plus its gap and the measurement windows,
@@ -305,15 +314,35 @@ def _run_study(pack_names: list[str]) -> dict[str, Any] | None:
     if _panel_is_empty() is not False:
         _log("panel has no observations — nothing for the engine to measure")
         return {"ok": True, "skipped": "panel empty"}
-    results = [
-        _run_step(
-            f"event study {name}",
-            [sys.executable, str(_STUDY_SCRIPT), name, "--all"],
-            timeout=_STUDY_TIMEOUT_SECONDS,
-            echo=False,
-        )
-        for name in pack_names
-    ]
+    # A SHARED BUDGET, not a ceiling paid per pack — the same lesson GDELT's
+    # own budget comment already records, which this step did not get. With a
+    # per-pack timeout of 1500s three regions can spend 4,500s, and the boot
+    # arithmetic that sized the healthcheck window counted 1,500. The deploy
+    # of 2026-08-13 died at 209 attempts because of exactly that gap: china
+    # alone burned its full 1500s and eurasia and mena were still to come.
+    #
+    # Running out is safe and expected: the engine works off a measured-events
+    # watermark, so a truncated pass costs nothing and the next boot resumes
+    # where it stopped. What is NOT safe is a step whose cost multiplies with
+    # the number of regions inside a fixed window.
+    results = []
+    budget = float(_STUDY_BUDGET_SECONDS)
+    for name in pack_names:
+        if budget <= 0:
+            _log(f"event study {name}: out of budget — deferred to the next boot")
+            results.append({"pack": name, "ok": True, "skipped": "study budget spent"})
+            continue
+        started = time.monotonic()
+        results.append({
+            "pack": name,
+            **_run_step(
+                f"event study {name}",
+                [sys.executable, str(_STUDY_SCRIPT), name, "--all"],
+                timeout=int(min(_STUDY_TIMEOUT_SECONDS, budget)),
+                echo=False,
+            ),
+        })
+        budget -= time.monotonic() - started
     return {"ok": all(r["ok"] for r in results), "packs": results}
 
 

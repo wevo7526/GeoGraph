@@ -231,16 +231,34 @@ def test_an_interrupted_rescore_is_retried_rather_than_skipped_forever(monkeypat
 
 
 def test_every_boot_shape_fits_the_healthcheck_window():
-    # Two deploys died at 138 health-check attempts because the worst case was
-    # 5,575s against a 5400s window. The ceilings and the window are one
-    # arithmetic problem, so they are checked together.
+    # THREE deploys died on this arithmetic — 138 attempts, then 209. The
+    # second time the mistake was counting the study once when its ceiling is
+    # paid PER PACK, so three regions spent 4,500s against a budget of 1,500.
+    # Ceilings and window are one problem and are checked as one.
     import json
 
     window = json.loads((_ROOT / "railway.json").read_text(encoding="utf-8"))
     window = window["deploy"]["healthcheckTimeout"]
-    other = 20 + 90 + 10 + boot._STUDY_TIMEOUT_SECONDS + 90 + 90 + 25 + 150
-    assert other + boot._GDELT_BUDGET_SECONDS < window, "a loading boot cannot bind"
-    assert other + boot._RESCORE_TIMEOUT_SECONDS < window, "a rescore boot cannot bind"
+    fixed = 60 + 90 + 10 + 120 + 120 + 30 + 200   # seeds, deep, 13f, metrics,
+    #                                               forecasts, score, backtest
+    loading = fixed + boot._GDELT_BUDGET_SECONDS + boot._STUDY_BUDGET_SECONDS
+    rescoring = fixed + boot._RESCORE_TIMEOUT_SECONDS + boot._STUDY_BUDGET_SECONDS
+    assert loading < window, f"a loading boot needs {loading}s of {window}s"
+    assert rescoring < window, f"a rescore boot needs {rescoring}s of {window}s"
+
+
+def test_every_per_pack_step_has_a_budget_across_packs():
+    # The rule the 209-attempt failure bought: a ceiling paid per region
+    # multiplies with the number of regions, so adding a fourth lens would
+    # silently break a boot that fits with three. Every such step carries a
+    # SHARED budget, and the budget is what the window arithmetic counts.
+    source = (_ROOT / "scripts" / "boot.py").read_text(encoding="utf-8")
+    for step, budget in (("_load_gdelt", "_GDELT_BUDGET_SECONDS"),
+                         ("_run_study", "_STUDY_BUDGET_SECONDS")):
+        body = source[source.index(f"def {step}("):]
+        body = body[: body.index(chr(10) + "def ", 1)]
+        assert budget in body, f"{step} iterates packs without a shared budget"
+        assert "budget <= 0" in body, f"{step} does not stop when its budget is spent"
 
 
 def test_the_deep_tier_defers_its_rescore_to_the_boot():
