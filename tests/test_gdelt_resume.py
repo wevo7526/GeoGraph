@@ -205,6 +205,7 @@ def test_the_rescore_skips_when_every_event_is_scored(monkeypatch):
     # THE STEP THAT KEEPS A ROUTINE DEPLOY FAST. A frontend or model push adds
     # no events, so Head B has nothing outstanding — and the rescore is hours
     # on a large archive and cannot be resumed.
+    monkeypatch.setenv("GEOGRAPH_RESCORE_ON_BOOT", "1")
     monkeypatch.setattr(boot, "_unscored_events", lambda: 0)
     result = boot._rescore_if_new_events(["mena"])
     assert result["ok"] and "every event is scored" in result["skipped"]
@@ -216,6 +217,11 @@ def test_an_interrupted_rescore_is_retried_rather_than_skipped_forever(monkeypat
     # rescore killed by its timeout would never run again, and every
     # backfilled event would stay permanently unscored. Asking the condition
     # directly retries until it converges.
+    monkeypatch.setenv("GEOGRAPH_RESCORE_ON_BOOT", "1")
+    # Opting in is not enough on its own: the rescore needs _RESCORE_MIN_SECONDS
+    # to be worth starting, which no longer fits the default 1800s window. A
+    # rescoring boot raises the window too, and this test is that boot.
+    monkeypatch.setattr(boot, "_WINDOW_SECONDS", 14400)
     monkeypatch.setattr(boot, "_unscored_events", lambda: 350_000)
     seen: dict[str, bool] = {}
 
@@ -325,6 +331,7 @@ def test_markers_do_not_survive_the_graph_they_describe(tmp_path, monkeypatch):
     # A marker is a claim ABOUT a graph. If the volume was rebuilt the graph is
     # empty and the claim is false, and trusting it would skip a load that has
     # to happen — the same silent-shortfall failure in a new costume.
+    monkeypatch.setenv("GEOGRAPH_GDELT_ON_BOOT", "1")
     monkeypatch.setattr(boot, "_loaded_dir", lambda: tmp_path / "marks")
     monkeypatch.setattr(boot, "_DERIVED_DIR", tmp_path)
     monkeypatch.setattr(boot, "_graph_gdelt_count", lambda name: 0)
@@ -347,6 +354,8 @@ def test_markers_do_not_survive_the_graph_they_describe(tmp_path, monkeypatch):
 def test_the_rescore_waits_on_artifacts_not_on_a_count(tmp_path, monkeypatch):
     # The other half of the same bug: the rescore's completeness gate used the
     # same unreachable comparison, so it deferred on every boot forever.
+    monkeypatch.setenv("GEOGRAPH_RESCORE_ON_BOOT", "1")
+    monkeypatch.setattr(boot, "_WINDOW_SECONDS", 14400)
     monkeypatch.setattr(boot, "_loaded_dir", lambda: tmp_path / "marks")
     monkeypatch.setattr(boot, "_DERIVED_DIR", tmp_path)
     monkeypatch.setattr(boot, "_unscored_events", lambda: 350_000)
@@ -408,6 +417,91 @@ def test_the_graph_reset_removes_the_database_and_its_markers(tmp_path, monkeypa
     assert not db.exists(), "the graph must be gone"
     assert not (tmp_path / "geograph.kuzu.wal").exists(), "the WAL must go too"
     assert not marker.exists(), "markers describe a graph that no longer exists"
+
+
+def test_the_wire_load_is_off_by_default(monkeypatch):
+    # THE FOUR-HOUR BOOT OF 2026-08-13. Merging 1.33M wire events into a
+    # single-writer store happens with the API unable to bind, so it is not
+    # slow startup, it is downtime. Loading is opt-in; serving is not.
+    monkeypatch.delenv("GEOGRAPH_GDELT_ON_BOOT", raising=False)
+    result = boot._load_gdelt(["mena"])
+    assert result["ok"] and "GEOGRAPH_GDELT_ON_BOOT" in result["skipped"]
+
+
+def test_the_archive_rescore_is_off_by_default(monkeypatch):
+    # Same rule, stronger case: this one cannot be resumed, so it can neither
+    # be metered nor safely cut short. A step that is all-or-nothing at the
+    # scale of hours must never stand between a container and its health check.
+    monkeypatch.delenv("GEOGRAPH_RESCORE_ON_BOOT", raising=False)
+    result = boot._rescore_if_new_events(["mena"])
+    assert result["ok"] and "GEOGRAPH_RESCORE_ON_BOOT" in result["skipped"]
+
+
+def test_opting_into_the_rescore_still_declines_inside_the_serving_window(monkeypatch):
+    # The two settings are COUPLED, and the coupling should be discovered here
+    # rather than in production. _RESCORE_MIN_SECONDS is larger than the whole
+    # 1800s serving window, so opting in without also raising the window
+    # declines and SAYS SO — it never half-runs a pass that cannot be resumed.
+    monkeypatch.setenv("GEOGRAPH_RESCORE_ON_BOOT", "1")
+    monkeypatch.setattr(boot, "_unscored_events", lambda: 350_000)
+    monkeypatch.setattr(boot, "_DERIVED_DIR", _ROOT / "nonexistent")
+    monkeypatch.setattr(boot, "_run_step", _must_not_run)
+    result = boot._rescore_if_new_events(["mena"])
+    assert result["ok"] and result["skipped"] == "not enough window"
+
+
+def _must_not_run(*_args: object, **_kwargs: object) -> dict[str, object]:
+    raise AssertionError("an un-resumable step must not start without its window")
+
+
+def test_the_study_takes_a_bounded_slice_not_the_remainder(monkeypatch):
+    # It used to take every second the window had left, which optimises for
+    # progress per boot. The watermark makes progress fungible across boots and
+    # downtime is not, so the budget — not the remainder — is what binds.
+    monkeypatch.setattr(boot, "_panel_is_empty", lambda: False)
+    monkeypatch.setattr(boot, "_STUDY_BUDGET_SECONDS", 150)
+    monkeypatch.setattr(boot, "_STUDY_TIMEOUT_SECONDS", 300)
+    handed: list[int] = []
+
+    def record(label, _cmd, timeout=None, **_kwargs):
+        handed.append(timeout)
+        return {"ok": True, "step": label}
+
+    monkeypatch.setattr(boot, "_run_step", record)
+    boot._run_study(["mena", "china", "eurasia"])
+    assert handed, "the study must still run"
+    assert max(handed) <= 150, "the total budget must bind before the per-pack ceiling"
+
+
+def test_the_graph_reset_fires_once_per_value(tmp_path, monkeypatch):
+    # THE STICKY-VARIABLE BUG. An env var survives every restart, so "set it for
+    # one deploy and unset it after" is a note, not a safeguard — and with
+    # restartPolicyMaxRetries an unrelated crash re-wipes a rebuilt archive.
+    # The boot now records what it acted on, and a value it has seen is inert.
+    db = tmp_path / "geograph.kuzu"
+    db.mkdir()
+    (db / "data.kz").write_bytes(b"x" * 4096)
+
+    class _Settings:
+        kuzu_db_path = db
+
+    monkeypatch.setenv("GEOGRAPH_RESET_GRAPH", "1")
+    monkeypatch.setattr(boot, "_loaded_dir", lambda: tmp_path / "marks")
+    monkeypatch.setattr(boot, "_pack_names", lambda: ["mena"])
+
+    import core.settings as settings_module
+    monkeypatch.setattr(settings_module, "load", lambda: _Settings())
+
+    first = boot._reset_graph_if_asked()
+    assert first is not None and first["ok"], "the first request must be honoured"
+    assert not db.exists(), "the graph must be gone"
+
+    # The variable is STILL SET, exactly as it was left on 2026-08-13.
+    db.mkdir()
+    (db / "data.kz").write_bytes(b"z" * 4096)
+    second = boot._reset_graph_if_asked()
+    assert second is not None and second["skipped"] == "already honoured"
+    assert db.exists(), "a value already acted on must never delete a second time"
 
 
 def test_the_deep_tier_defers_its_rescore_to_the_boot():

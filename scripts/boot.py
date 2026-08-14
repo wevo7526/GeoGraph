@@ -19,20 +19,35 @@ restart loop tells you far less than a running API that reports what broke.
 So every failure is recorded into GEOGRAPH_BOOT_STATUS, which the health
 endpoint surfaces, and the API starts regardless.
 
+WHAT THE BOOT IS ALLOWED TO COST. Every step here runs while the site is DARK,
+because Kuzu's single writer means the API cannot bind until seeding lets go of
+the lock. So the boot's budget is downtime, and the rule that follows is: a
+step belongs at startup only if the API is WRONG without it. Seeding qualifies —
+an unseeded graph serves nothing. Loading 1.33M wire events does not: the
+archive is equally true an hour later, and on 2026-08-13 it cost a four-hour
+outage to learn that. Bulk loading and the archive-wide rescore are therefore
+opt-in, and the study is metered rather than run to completion.
+
   GEOGRAPH_SEED_ON_BOOT=0     skip seeding (a batch job needs the write lock)
   GEOGRAPH_SEED_PACKS=mena    which packs to seed; default is every pack that
                               satisfies the contract, so packs/china seeds
                               itself the day it becomes complete
   GEOGRAPH_LOAD_PANEL=0       never fetch prices at boot
   GEOGRAPH_STUDY_ON_BOOT=0    never run the transmission engine at boot
+  GEOGRAPH_STUDY_BUDGET=600   seconds the study may spend ACROSS packs
   GEOGRAPH_BACKTEST_ON_BOOT=0 never run the walk-forward paper backtest
+  GEOGRAPH_GDELT_ON_BOOT=1    opt IN to loading the wire (hours; off by default)
+  GEOGRAPH_RESCORE_ON_BOOT=1  opt IN to the archive-wide rescore (hours, and
+                              un-resumable; off by default)
+  GEOGRAPH_RESET_GRAPH=1      delete and rebuild the graph, ONCE per value
+  GEOGRAPH_BOOT_WINDOW=1800   must equal railway.json's healthcheckTimeout
 
 The price fetch is CONDITIONAL on the panel being empty, because it is the one
 step that reaches the network and it does not need repeating: Postgres survives
 a redeploy, so a loaded panel stays loaded. The event study is not conditional
 — it is pure computation over the panel, and the graph it writes into lives on
-a volume that may have been rebuilt, so it runs every boot and re-derives the
-same numbers.
+a volume that may have been rebuilt, so it runs every boot and re-derives what
+its budget affords, resuming from a watermark on the next.
 """
 
 from __future__ import annotations
@@ -61,6 +76,12 @@ _SCORE_SCRIPT = _ROOT / "scripts" / "score_forecasts.py"
 _DERIVED_DIR = _ROOT / "data" / "derived"
 _DEEP_TIER_SCRIPT = _ROOT / "scripts" / "load_deep_tier.py"
 _LOAD_13F_SCRIPT = _ROOT / "scripts" / "load_13f.py"
+
+#: Filename of the reset ledger, written beside the graph on the VOLUME — the
+#: only place that outlives a container and so the only place that can answer
+#: "have I already done this?". A sibling of the database, not a child, so
+#: deleting the database does not delete the record that it was deleted.
+_RESET_LEDGER = ".graph-reset-honoured"
 
 #: What to exec when no command is given. Railway can override by setting a
 #: start command; the default is the app.
@@ -151,7 +172,19 @@ _RESCORE_MIN_SECONDS = 1800
 #: alone burned its full share before eurasia and mena had started. Any step
 #: whose cost multiplies with the number of regions needs a budget, or adding
 #: a fourth lens silently breaks the boot.
-_STUDY_TIMEOUT_SECONDS = 1200
+_STUDY_TIMEOUT_SECONDS = int(os.getenv("GEOGRAPH_STUDY_PACK_CEILING", "300"))
+
+#: …and the TOTAL the study may spend across every pack, which is what actually
+#: bounds the boot. The per-pack ceiling alone does not: three packs at 1200s
+#: is 3600s of downtime, and `event study china: TIMED OUT after 1200s` in the
+#: 2026-08-13 logs is the step reliably taking every second it was offered.
+#:
+#: Small on purpose. The engine works off a measured-events watermark, so a
+#: truncated pass costs NOTHING — it resumes exactly where it stopped on the
+#: next boot. That makes the study the one expensive step that can be metered
+#: rather than finished, and metering it is what turns a four-hour boot into a
+#: six-minute one. It converges across boots instead of inside one.
+_STUDY_BUDGET_SECONDS = int(os.getenv("GEOGRAPH_STUDY_BUDGET", "600"))
 
 #: WHEN THIS BOOT STARTED. Every budget below is derived from this and the
 #: window, rather than fixed in advance, and that is the point.
@@ -174,17 +207,37 @@ _BOOT_STARTED = time.monotonic()
 #: The healthcheck window this boot must finish inside. Must agree with
 #: railway.json's `healthcheckTimeout` — `test_boot_window_matches_railway_json`
 #: is what keeps the two from drifting apart.
-_WINDOW_SECONDS = int(os.getenv("GEOGRAPH_BOOT_WINDOW", "14400"))
+#:
+#: 1800, DOWN FROM 14400, and the reduction is the point rather than a tuning.
+#: A four-hour window was the honest size for a boot that LOADED THE ARCHIVE
+#: before binding: 5400s of GDELT merging at ~145 events/sec, then an
+#: un-resumable rescore that wanted another two hours. Both are now deliberate
+#: jobs (`GEOGRAPH_GDELT_ON_BOOT`, `GEOGRAPH_RESCORE_ON_BOOT`, default off), so
+#: what remains before the API binds is seeding, a cached deep tier, the 13F
+#: flows and a BOUNDED study — minutes, not hours.
+#:
+#: Sizing a window is choosing which failure you want. Too short kills a
+#: container that was working (2026-08-12). Too long is not free either, and
+#: that is the lesson of 2026-08-13: a four-hour ceiling let a boot spend four
+#: hours, so the site was down for four hours while a step that did not have to
+#: run at startup ran at startup. The window is a ceiling on PATIENCE, and
+#: patience for work the boot should not be doing is just downtime.
+_WINDOW_SECONDS = int(os.getenv("GEOGRAPH_BOOT_WINDOW", "1800"))
 
 #: What the steps AFTER the study need: metrics, forecasts, scores, backtest.
 #: Measured at ~320s across the 2026-08-13 boots; 600 leaves margin for a
 #: larger archive. This is the ONLY estimate left in the budget arithmetic.
 _TAIL_RESERVE_SECONDS = 600
 
-#: Never begin the study with less than this — a 90-second study measures a
-#: handful of events and spends its startup cost for nothing. Below this the
-#: step declines and says so, which is honest and costs the same.
-_STUDY_MIN_SECONDS = 600
+#: Never begin the study with less than this — a study shorter than its own
+#: startup cost measures a handful of events for nothing. Below this the step
+#: declines and says so, which is honest and costs the same.
+#:
+#: 120, down from 600, because the study is now METERED rather than run to
+#: completion: with a 600s total budget a 600s floor would make "enough window
+#: to bother" and "the whole budget" the same number, so any step that ran
+#: slightly long ahead of it would silently skip the study entirely.
+_STUDY_MIN_SECONDS = 120
 
 #: How far before the spine's EARLIEST event the panel must reach: the
 #: estimation window (120 sessions) plus its gap and the measurement windows,
@@ -378,13 +431,18 @@ def _run_study(pack_names: list[str]) -> dict[str, Any] | None:
     # where it stopped. What is NOT safe is a step whose cost multiplies with
     # the number of regions inside a fixed window.
     #
-    # THE STUDY IS LAST AMONG THE EXPENSIVE STEPS, so it takes every second the
-    # window has left rather than a fixed slice. It is the right step to hand
-    # the remainder to: it is the most resumable thing the boot does — a
-    # watermark, per event — so an extra forty minutes here is forty minutes of
-    # permanent progress, and stopping mid-pass costs nothing.
+    # THE STUDY TAKES A FIXED SLICE, NOT THE REMAINDER — reversed on
+    # 2026-08-13, and the reversal is the whole reason the boot is minutes now.
+    #
+    # Handing it "every second the window has left" is correct arithmetic and
+    # the wrong objective: it optimises for progress per boot when what a
+    # deployment owes its users is a bound on TIME TO SERVE. Because the engine
+    # resumes from a per-event watermark, progress is fungible across boots and
+    # downtime is not — an extra forty minutes here is forty minutes of
+    # permanent progress AND forty minutes of a dark site, and only one of those
+    # is recoverable. So it takes its slice, and the rest converges next boot.
     results = []
-    budget = _remaining(_TAIL_RESERVE_SECONDS)
+    budget = min(float(_STUDY_BUDGET_SECONDS), _remaining(_TAIL_RESERVE_SECONDS))
     if budget < _STUDY_MIN_SECONDS:
         _log(f"event study: {int(budget)}s left in the window — too little to "
              f"be worth starting, deferred")
@@ -571,8 +629,21 @@ def _load_gdelt(pack_names: list[str]) -> dict[str, Any]:
     count makes an incomplete load visible and self-healing: the loader skips
     ids already present, so a resumed load costs only what is left.
     """
-    if os.getenv("GEOGRAPH_GDELT_ON_BOOT", "1").strip().lower() in {"0", "false", "no"}:
-        return {"ok": True, "skipped": "disabled by GEOGRAPH_GDELT_ON_BOOT"}
+    # OFF BY DEFAULT SINCE 2026-08-13 — this step is why boots took hours.
+    #
+    # Merging the wire into Kuzu runs at ~145 events/sec and SLOWS as the graph
+    # grows (china loaded 340,445 into an empty graph at 353/sec; eurasia's
+    # identical years then cost 4-6x each). At 1.33M events that is hours of
+    # pre-API work, and because Kuzu is single-writer it is hours with the site
+    # DARK. The archive is not urgent; serving is.
+    #
+    # Nothing is lost by deferring it: the artifacts ship in the image, the
+    # loader skips ids already present, and the markers make every load
+    # resumable. Turn it on deliberately (`GEOGRAPH_GDELT_ON_BOOT=1`) for a
+    # deploy whose job IS loading, and leave it off for every deploy whose job
+    # is shipping code.
+    if os.getenv("GEOGRAPH_GDELT_ON_BOOT", "0").strip().lower() not in {"1", "true", "yes"}:
+        return {"ok": True, "skipped": "not a loading boot (GEOGRAPH_GDELT_ON_BOOT)"}
     results = []
     # Its own ceiling OR what the window can spare, whichever is smaller. The
     # ceiling still matters: GDELT runs FIRST among the expensive steps, so
@@ -715,6 +786,22 @@ def _rescore_if_new_events(pack_names: list[str]) -> dict[str, Any]:
     deploy adds no events, the count is identical, and this returns in
     milliseconds. Only a boot that loaded something pays, and it pays once.
     """
+    # OFF BY DEFAULT SINCE 2026-08-13, for a stronger reason than GDELT's.
+    #
+    # This is the one step here that CANNOT be resumed — it folds escalation per
+    # dyad across every era in a single pass, so an interrupted run leaves
+    # nothing behind. That makes it the worst possible thing to put in front of
+    # a health check: it needs hours, it cannot be metered, and being cut short
+    # wastes the whole pass. A boot cannot both bound its time to serve and host
+    # a step that is all-or-nothing at that scale.
+    #
+    # It belongs in a job that can take as long as it needs. Run it deliberately
+    # with GEOGRAPH_RESCORE_ON_BOOT=1 on a deploy whose job is convergence, or
+    # out-of-band against the corpus. The trigger below is still "are there
+    # unscored events", so whenever it does run it retries until it succeeds.
+    if os.getenv("GEOGRAPH_RESCORE_ON_BOOT", "0").strip().lower() not in {"1", "true", "yes"}:
+        return {"ok": True, "skipped": "not a rescoring boot (GEOGRAPH_RESCORE_ON_BOOT)"}
+
     # TRIGGERED BY THE CONDITION ITSELF, not by a proxy for it. An earlier
     # version compared the event count before and after loading, which is
     # wrong in the case that matters: if the rescore times out, the NEXT boot
@@ -882,20 +969,44 @@ def _reset_graph_if_asked() -> dict[str, Any] | None:
     whole archive — so the file grew with each deploy while the data did not.
     A rebuilt graph is the compaction step the engine does not offer.
 
-    Deliberately awkward: it must be set for the ONE deploy that rebuilds and
-    unset afterwards, or every future boot throws the archive away and reloads
-    it. The log says so, twice, because a destructive default that is quiet is
-    how an archive dies.
+    ONE-SHOT, AND ENFORCED RATHER THAN REQUESTED. The variable used to mean
+    "reset on every boot you are set for", with a log line asking twice to
+    unset it afterwards. That is not a safeguard, it is a note — and on
+    2026-08-13 it was not enough. An env var is STICKY: setting it survives
+    every restart, and `restartPolicyMaxRetries: 3` means a container that
+    fails for an unrelated reason comes back and wipes the archive again. The
+    variable also cannot be set "for the next deploy": setting it IS a deploy,
+    which fired it against an image that had not yet shipped the code to honour
+    it — one wasted deploy before the real one.
+
+    So the boot now records which value it has already acted on, in a file
+    beside the graph, and a value it has seen before is INERT. Leaving the
+    variable set forever is now harmless; reset again by giving it a different
+    truthy value (`yes` after `1`) or deleting the ledger. The destructive
+    action stays opt-in and loud, and it additionally became repeat-proof.
     """
-    if os.getenv("GEOGRAPH_RESET_GRAPH", "").strip().lower() not in {"1", "true", "yes"}:
+    requested = os.getenv("GEOGRAPH_RESET_GRAPH", "").strip()
+    if requested.lower() not in {"1", "true", "yes"}:
         return None
 
     from core import settings as settings_module
 
     path = settings_module.load().kuzu_db_path
+    ledger = path.with_name(_RESET_LEDGER)
+    try:
+        honoured = ledger.read_text(encoding="utf-8").strip()
+    except OSError:
+        # Unreadable or absent. Absent is the normal first-run case; unreadable
+        # must not become a permanent lock on a recovery path a human asked
+        # for, so both mean "not yet honoured".
+        honoured = ""
+    if honoured == requested:
+        _log(f"GEOGRAPH_RESET_GRAPH={requested} already honoured — graph kept")
+        return {"ok": True, "skipped": "already honoured", "token": requested}
+
     _log("=" * 68)
     _log("GEOGRAPH_RESET_GRAPH is set — DELETING the graph and rebuilding it")
-    _log("UNSET IT after this deploy, or every boot reloads from zero")
+    _log("this fires ONCE for this value; the graph is a cache, not an original")
     _log("=" * 68)
 
     removed: list[dict[str, Any]] = []
@@ -921,8 +1032,23 @@ def _reset_graph_if_asked() -> dict[str, Any] | None:
     for name in _pack_names():
         _clear_markers(name)
     _log("markers cleared — every artifact will reload")
+
+    # Record it BEFORE returning, and unconditionally — including when there
+    # was nothing to delete. The ledger's claim is "this value has been acted
+    # on", not "this value freed bytes"; a reset that found an empty volume has
+    # still been acted on, and retrying it every boot is the exact loop this
+    # exists to stop. A failure to write is logged and not raised: the rebuild
+    # already happened, and a boot that dies here would be a worse outcome than
+    # one that might reset twice.
+    try:
+        ledger.write_text(requested, encoding="utf-8")
+    except OSError as exc:
+        _log(f"WARNING: could not record the reset ledger ({exc}) — "
+             f"unset GEOGRAPH_RESET_GRAPH by hand so this does not repeat")
+
     freed = sum(int(r["bytes"]) for r in removed)
-    return {"ok": True, "removed": removed, "freed_gb": round(freed / 1e9, 2)}
+    return {"ok": True, "removed": removed, "freed_gb": round(freed / 1e9, 2),
+            "token": requested}
 
 
 def _boot_status() -> dict[str, Any]:
