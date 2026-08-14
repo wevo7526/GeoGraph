@@ -264,6 +264,10 @@ export default function GamesPage({ region }: { region: string; onNavigate: (r: 
               </p>
             </div>
           </div>
+        ) : solved === null ? (
+          <p className="mono text-xs" style={{ color: 'var(--alert)' }}>
+            the solve did not answer — the API may still be booting; move a lever to retry
+          </p>
         ) : (
           <p className="mono text-xs" style={{ color: 'var(--muted)' }}>solving…</p>
         )}
@@ -276,6 +280,10 @@ export default function GamesPage({ region }: { region: string; onNavigate: (r: 
       >
         {solved ? (
           <BandFan marginal={solved.marginal} bands={defaults.bands.length} />
+        ) : solved === null ? (
+          <p className="mono text-xs" style={{ color: 'var(--alert)' }}>
+            the solve did not answer — the API may still be booting; move a lever to retry
+          </p>
         ) : (
           <p className="mono text-xs" style={{ color: 'var(--muted)' }}>solving…</p>
         )}
@@ -306,6 +314,10 @@ export default function GamesPage({ region }: { region: string; onNavigate: (r: 
               </div>
             ))}
           </div>
+        ) : solved === null ? (
+          <p className="mono text-xs" style={{ color: 'var(--alert)' }}>
+            the solve did not answer — the API may still be booting; move a lever to retry
+          </p>
         ) : (
           <p className="mono text-xs" style={{ color: 'var(--muted)' }}>solving…</p>
         )}
@@ -334,7 +346,7 @@ export default function GamesPage({ region }: { region: string; onNavigate: (r: 
             <input
               type="range" min={0} max={1} step={0.05} value={beliefA}
               onChange={(e) => setBeliefA(Number(e.target.value))}
-              className="flex-1" disabled={solving}
+              className="flex-1 lever"
             />
             <span className="mono w-12 text-right" style={{ color: Math.abs(beliefA - 0.5) > 1e-9 ? 'var(--alert)' : 'var(--muted)' }}>
               {beliefA.toFixed(2)}
@@ -347,7 +359,6 @@ export default function GamesPage({ region }: { region: string; onNavigate: (r: 
               onChange={(e) => setCapability(Number(e.target.value))}
               className="mono text-xs px-1 py-0.5"
               style={{ background: 'var(--paper)', color: 'var(--ink)', border: '1px solid var(--line)' }}
-              disabled={solving}
             >
               <option value={0}>0 — challenger weaker</option>
               <option value={1}>1 — balanced</option>

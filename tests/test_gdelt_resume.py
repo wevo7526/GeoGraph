@@ -459,6 +459,41 @@ def _must_not_run(*_args: object, **_kwargs: object) -> dict[str, object]:
     raise AssertionError("an un-resumable step must not start without its window")
 
 
+def test_a_deep_but_stale_panel_refreshes_its_recent_window(monkeypatch):
+    # DEPTH IS ONLY HALF THE GUARD. On 2026-08-14 the panel reached 1871 so
+    # the boot skipped loading forever, while its newest close stayed frozen
+    # at the last full fetch — and the forward paper book, entering after that
+    # date, had nothing to mark: every position skipped, the page read $0.
+    # Freshness serves the BOOK the way depth serves the SPINE.
+    import datetime as dt
+
+    monkeypatch.setattr(boot, "_panel_first_observation", lambda: (True, "1871-01-01"))
+    monkeypatch.setattr(boot, "_spine_needs_from", lambda names: "1937-06-14")
+    stale = (dt.date.today() - dt.timedelta(days=10)).isoformat()
+    monkeypatch.setattr(boot, "_panel_latest_observation", lambda: (True, stale))
+
+    ran: list[list[str]] = []
+
+    def record(label, cmd, timeout=None, **_kwargs):
+        ran.append(cmd)
+        return {"ok": True, "step": label}
+
+    monkeypatch.setattr(boot, "_run_step", record)
+    result = boot._load_panel_if_shallow(["mena"])
+    assert result is not None and result["ok"]
+    assert ran, "a stale panel must refresh"
+    assert "--start" in ran[0], "the refresh is windowed, not a full-history reload"
+
+    # And a CURRENT panel must not refetch — a refresh that fires every boot
+    # for no reason is the noise this guard's slack exists to prevent.
+    fresh = (dt.date.today() - dt.timedelta(days=1)).isoformat()
+    monkeypatch.setattr(boot, "_panel_latest_observation", lambda: (True, fresh))
+    ran.clear()
+    result = boot._load_panel_if_shallow(["mena"])
+    assert result is not None and "current to" in str(result.get("skipped"))
+    assert not ran
+
+
 def test_the_paper_backtest_is_off_by_default(monkeypatch):
     # The corpus made walk_forward infeasible at boot (~425 quarters x 1.31M
     # rows through the live estimator — the locked no-backtest-only-path

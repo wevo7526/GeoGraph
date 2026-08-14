@@ -99,16 +99,22 @@ export function Controls({
           return (
             <label key={c.key} className="flex items-center gap-2 text-[11px]">
               <span className="w-40 shrink-0" style={{ color: 'var(--muted)' }}>{c.label}</span>
+              {/* NEVER disabled while solving — the debounced latest-wins
+                  effect makes an in-flight solve safe to supersede, and a
+                  slider that locks for the round-trip on every pixel reads
+                  as broken. `busy` only dims the readout. */}
               <input
                 type="range"
                 min={c.min} max={c.max} step={c.step} value={value}
                 onChange={(e) => onChange(c.key, Number(e.target.value))}
-                className="flex-1"
-                disabled={busy}
+                className="flex-1 lever"
               />
               <span
                 className="mono w-12 text-right"
-                style={{ color: moved ? 'var(--alert)' : 'var(--muted)' }}
+                style={{
+                  color: moved ? 'var(--alert)' : 'var(--muted)',
+                  opacity: busy ? 0.5 : 1,
+                }}
               >
                 {value.toFixed(2)}
               </span>

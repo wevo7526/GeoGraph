@@ -253,6 +253,13 @@ _TAIL_RESERVE_SECONDS = 600
 #: slightly long ahead of it would silently skip the study entirely.
 _STUDY_MIN_SECONDS = 120
 
+#: How old the panel's NEWEST close may be before a boot refreshes it. Two
+#: trading days of slack: weekends produce legitimate 2-3 day gaps, and a
+#: refresh that fires on every Monday for no reason is noise. Beyond this the
+#: forward paper book cannot mark — its entry date trails the newest close —
+#: which is a page reading $0, not a style question.
+_PANEL_STALE_DAYS = 4
+
 #: How far before the spine's EARLIEST event the panel must reach: the
 #: estimation window (120 sessions) plus its gap and the measurement windows,
 #: with slack for weekends and holidays. Matches run_event_study._LOOKBACK_DAYS.
@@ -363,6 +370,26 @@ def _panel_is_empty() -> bool | None:
     return first is None
 
 
+def _panel_latest_observation() -> tuple[bool, str | None]:
+    """The panel's NEWEST close — the freshness half of the guard."""
+    from core import settings as settings_module
+    from core.panel import pg_store
+
+    settings = settings_module.load()
+    try:
+        conn = pg_store.connect(settings)
+    except pg_store.PanelUnavailable:
+        return False, None
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT max(obs_date) FROM market_observations")
+            row = cur.fetchone()
+        last = row[0] if row else None
+        return True, last.isoformat() if last is not None else None
+    finally:
+        conn.close()
+
+
 def _spine_needs_from(pack_names: list[str]) -> str | None:
     """The panel depth the SPINE requires: the earliest marquee event across
     the packs, minus the estimation lookback. None if no pack loads."""
@@ -402,6 +429,39 @@ def _load_panel_if_shallow(pack_names: list[str]) -> dict[str, Any] | None:
         return None
     needed = _spine_needs_from(pack_names)
     if first is not None and (needed is None or first <= needed):
+        # DEEP ENOUGH IS ONLY HALF THE GUARD. The other failure is STALENESS,
+        # and it took the paper book down on 2026-08-14: the panel reached
+        # 1871 so this branch skipped loading on every boot, while its newest
+        # close stayed frozen at the last full load — and a forward book
+        # entered after that date had nothing to mark against, so every
+        # position was a recorded skip and the page read $0. Depth serves the
+        # SPINE; freshness serves the BOOK. A stale panel triggers a windowed
+        # fetch from just before its own edge — seconds of yfinance, upserted,
+        # not the full-history reload the depth branch pays for.
+        import datetime as dt
+
+        _, latest = _panel_latest_observation()
+        stale_days = (
+            (dt.date.today() - dt.date.fromisoformat(latest)).days
+            if latest else None
+        )
+        if latest is not None and stale_days is not None and stale_days <= _PANEL_STALE_DAYS:
+            _log(f"panel reaches {first} and is current to {latest} — nothing to load")
+            return {"ok": True, "skipped": f"panel reaches {first}, current to {latest}"}
+        if latest is not None:
+            _log(f"panel is deep but STALE — newest close {latest} "
+                 f"({stale_days}d old); refreshing the recent window")
+            start = (dt.date.fromisoformat(latest) - dt.timedelta(days=7)).isoformat()
+            results = [
+                _run_step(
+                    f"refresh panel {name} (from {start})",
+                    [sys.executable, str(_LOAD_PANEL_SCRIPT), name, "--start", start],
+                    timeout=_LOAD_TIMEOUT_SECONDS,
+                )
+                for name in pack_names
+            ]
+            return {"ok": all(r["ok"] for r in results),
+                    "refreshed_from": start, "packs": results}
         _log(f"panel reaches {first} — deep enough for the spine ({needed})")
         return {"ok": True, "skipped": f"panel reaches {first}"}
     if first is not None:

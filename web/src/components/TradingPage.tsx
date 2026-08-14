@@ -249,12 +249,25 @@ export default function TradingPage({
             </p>
           ) : (
             <>
-              <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 mt-5 max-w-xl">
-                <StatTile label="Paper P&L" value={fmtUsd(forward.book.pnl_usd)}
-                  sub={`on ${fmtUsd(forward.book.notional_usd)} notional`} />
-                <StatTile label="Return" value={fmtPct(forward.book.return_on_notional, 2)} />
-                <StatTile label="Deployed" value={fmtUsd(forward.book.deployed_usd)} />
-              </div>
+              {/* A book with NOTHING entered is not a book at $0 — tiles
+                  reading "$0 P&L" over all-skipped positions describe a flat
+                  book, which is false. Say what actually happened (usually:
+                  the panel holds no closes after the entry date yet) and let
+                  the table carry the per-ticker reasons. */}
+              {forward.book.positions.every((p) => p.status !== 'marked') ? (
+                <p className="mt-5 text-sm max-w-xl" style={{ color: 'var(--alert)' }}>
+                  Nothing entered yet — {forward.book.positions[0]?.reason ?? 'no position could be opened'}.
+                  {' '}The book opens at the first close after the frozen call; it marks
+                  itself as soon as the panel holds one.
+                </p>
+              ) : (
+                <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 mt-5 max-w-xl">
+                  <StatTile label="Paper P&L" value={fmtUsd(forward.book.pnl_usd)}
+                    sub={`on ${fmtUsd(forward.book.notional_usd)} notional`} />
+                  <StatTile label="Return" value={fmtPct(forward.book.return_on_notional, 2)} />
+                  <StatTile label="Deployed" value={fmtUsd(forward.book.deployed_usd)} />
+                </div>
+              )}
               <div className="overflow-x-auto mt-4 border max-w-3xl" style={{ borderColor: 'var(--line)' }}>
                 <table className="w-full mono text-xs">
                   <thead>

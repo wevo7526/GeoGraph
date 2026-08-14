@@ -306,3 +306,45 @@ input[type='range'].timeline:focus-visible {
   outline: 1px solid var(--accent);
   outline-offset: 6px;
 }
+
+/* The game's levers — same visual language as the timeline, on the paper
+ * ground. Without this the counterfactual sliders rendered as bare browser
+ * defaults, which on parchment read as inert marks rather than controls:
+ * "the levers do not allow changes" was the thumb being invisible. */
+input[type='range'].lever {
+  -webkit-appearance: none;
+  appearance: none;
+  height: 16px;
+  margin: 0;
+  background: transparent;
+  cursor: pointer;
+}
+input[type='range'].lever::-webkit-slider-runnable-track {
+  height: 2px;
+  background: var(--line);
+}
+input[type='range'].lever::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  margin-top: -5px;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: var(--accent);
+  border: 2px solid var(--paper);
+}
+input[type='range'].lever::-moz-range-track {
+  height: 2px;
+  background: var(--line);
+}
+input[type='range'].lever::-moz-range-thumb {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--accent);
+  border: 2px solid var(--paper);
+}
+input[type='range'].lever:focus-visible {
+  outline: 1px solid var(--accent);
+  outline-offset: 4px;
+}
