@@ -35,6 +35,7 @@ export default function TopBar({
   const pages: Array<[string, string]> = [
     ['/explore', 'Explorer'],
     ['/reasoning', 'Reasoning'],
+    ['/games', 'The game'],
     ['/trading', 'Trading'],
     ['/cases', 'Case studies'],
   ]

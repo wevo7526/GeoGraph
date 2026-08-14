@@ -7,6 +7,7 @@ import TopBar from './components/TopBar'
 const CaseStudyView = lazy(() => import('./components/CaseStudyView'))
 const Explorer = lazy(() => import('./components/Explorer'))
 const ReasoningPage = lazy(() => import('./components/ReasoningPage'))
+const GamesPage = lazy(() => import('./components/GamesPage'))
 const TradingPage = lazy(() => import('./components/TradingPage'))
 const CasesPage = lazy(() => import('./components/CasesPage'))
 
@@ -65,6 +66,9 @@ export default function App() {
     scrollPage = true
   } else if (route.startsWith('/cases')) {
     page = <CasesPage region={region} onNavigate={navigate} />
+    scrollPage = true
+  } else if (route.startsWith('/games')) {
+    page = <GamesPage region={region} onNavigate={navigate} />
     scrollPage = true
   } else if (route.startsWith('/reasoning')) {
     page = <ReasoningPage region={region} onNavigate={navigate} />
