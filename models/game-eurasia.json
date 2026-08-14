@@ -1,30 +1,29 @@
 {
-  "region": "mena",
+  "region": "eurasia",
   "payoffs": {
-    "discount": 0.5,
+    "discount": 0.99,
     "cost_resolute": 0.05,
-    "cost_irresolute": 1.4214,
-    "stake": 3.0,
-    "audience": 0.6398
+    "cost_irresolute": 1.1846,
+    "stake": 1.7154,
+    "audience": 0.5403
   },
-  "distance": 0.560581,
-  "converged": false,
-  "evaluations": 150,
+  "distance": 0.517062,
+  "converged": true,
+  "evaluations": 129,
   "seed": 20260813,
   "at_bounds": [
     "discount",
-    "cost_resolute",
-    "stake"
+    "cost_resolute"
   ],
   "kernel": {
     "cells": 54,
     "measured": 54,
     "fallback": 0,
     "share_measured": 1.0,
-    "observations": 13765,
+    "observations": 21176,
     "min_cell_observations": 12
   },
-  "panel_rows": 33322,
+  "panel_rows": 61841,
   "bands": [
     0.0,
     0.5,

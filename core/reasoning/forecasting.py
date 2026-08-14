@@ -67,6 +67,35 @@ def dyad_event_rows(conn: Any) -> list[dict[str, Any]]:
     )
 
 
+def all_dyad_event_rows(db_path: Any) -> list[dict[str, Any]]:
+    """THE UNION OF BOTH STORES, BY EVENT ID — the read behind the freeze, the
+    walk-forward backtest and the scorer, so the three can never disagree
+    about what the archive holds.
+
+    The graph's dyad-coded rows are the curated spine plus whatever wire a
+    past deploy merged AND rescored — on a rebuilt volume that is 55 events,
+    and base rates counted off 55 events wear the same typography as ones
+    counted off a million. The wire ships as corpus artifacts in every image,
+    so it is always available to union in; the id is the dedup key because
+    the parser mints identical ids in both stores.
+    """
+    conn = kuzu_store.connect(db_path, read_only=True)
+    try:
+        rows = dyad_event_rows(conn)
+    finally:
+        kuzu_store.close(conn)
+
+    from core.wire import corpus as wire_corpus
+
+    if wire_corpus.installed():
+        seen = {str(row["event_id"]) for row in rows}
+        rows.extend(
+            row for row in wire_corpus.forecast_rows() if row["event_id"] not in seen
+        )
+        rows.sort(key=lambda r: (str(r["event_time"]), str(r["event_id"])))
+    return rows
+
+
 def quarter(date: str) -> tuple[int, int]:
     """(year, quarter) of an ISO date at any archive resolution — shared by
     the base-rate counter here and the calibration scorer, so a forecast and
@@ -201,13 +230,9 @@ def forecast(
     """A near-term Forecast payload: mode='near_term', scenario pairs with
     base-rate likelihoods, frozen inputs. The caller stamps generated_at and
     persists — nothing here reads a clock."""
-    conn = kuzu_store.connect(db_path, read_only=True)
-    try:
-        rows = dyad_event_rows(conn)
-    finally:
-        kuzu_store.close(conn)
+    rows = all_dyad_event_rows(db_path)
     if not rows:
-        raise ValueError("the graph holds no dyad-coded events — seed first")
+        raise ValueError("no dyad-coded events in either store — seed first")
     return forecast_from_rows(
         rows, question, region_pack=region_pack, horizon_years=horizon_years
     )

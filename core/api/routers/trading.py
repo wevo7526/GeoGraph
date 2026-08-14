@@ -165,6 +165,12 @@ def forward_view(request: Request, region: str = "mena") -> dict[str, Any]:
         book["method"] = paper.method_for(books["escalation"], books["reversion"])
     except pg_store.PanelUnavailable as exc:
         book_unavailable = str(exc)
+    except Exception as exc:  # noqa: BLE001 - the docstring is the contract
+        # "Without it the book is null with the reason attached — never an
+        # invented fill." A driver error marking the book is the panel being
+        # unavailable in a costume; a 500 here took the whole trading page
+        # down on 2026-08-13 when the pressure half was fine.
+        book_unavailable = f"panel error while marking: {exc}"
 
     pressure: dict[str, Any] | None = None
     if long_horizon is not None:

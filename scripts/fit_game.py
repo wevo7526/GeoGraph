@@ -38,6 +38,7 @@ from core.games import state as state_module  # noqa: E402
 from core.graph import kuzu_store  # noqa: E402
 from core.models import panel as panel_module  # noqa: E402
 from core.models import registry  # noqa: E402
+from core.wire import corpus  # noqa: E402
 
 #: A kernel under this share of measured cells cannot carry an equilibrium
 #: worth fitting — the same bar the freeze applies before it will speak.
@@ -45,14 +46,28 @@ MIN_KERNEL_COVERAGE = 0.5
 
 
 def fit_region(db_path: Path, region: str, *, evaluations: int) -> dict[str, Any] | None:
-    conn = kuzu_store.connect(db_path, read_only=True)
-    try:
-        table = panel_module.build(
-            panel_module.dyad_event_rows(conn), region_pack=region
-        )
-        events = transition.event_rows(conn)
-    finally:
-        kuzu_store.close(conn)
+    # THE CORPUS FIRST, THE GRAPH AS FALLBACK. Fitting is offline and its
+    # output is committed, so it must be a pure function of the repository —
+    # the artifacts are in git and the parser, the crosswalks and Head B are
+    # all deterministic, which makes the fit reproducible by anyone holding
+    # this commit. Reading the graph instead made it a function of whatever
+    # happened to be loaded on the machine, and loading it first cost ~45
+    # minutes per pack against 5 seconds here.
+    #
+    # The graph path is kept for a lens with no shipped artifact, where the
+    # graph genuinely is the only source.
+    if corpus.artifacts_for(region):
+        panel_view, events = corpus.views(region)
+        table = panel_module.build(panel_view, region_pack=region)
+    else:
+        conn = kuzu_store.connect(db_path, read_only=True)
+        try:
+            table = panel_module.build(
+                panel_module.dyad_event_rows(conn), region_pack=region
+            )
+            events = transition.event_rows(conn)
+        finally:
+            kuzu_store.close(conn)
 
     if not table:
         print(f"{region}: no modelable dyad")
@@ -120,8 +135,12 @@ def main() -> int:
     args = parser.parse_args()
 
     db_path = Path(args.db) if args.db else settings_module.load().kuzu_db_path
-    if not Path(db_path).exists():
-        print(f"no graph at {db_path}")
+    # A graph is only required for a lens with NO shipped corpus. Demanding one
+    # unconditionally would put a 45-minute load in front of a fit that reads
+    # the artifacts in five seconds — and would make a committed artifact
+    # depend on the state of one machine's volume.
+    if not corpus.installed() and not Path(db_path).exists():
+        print(f"no corpus artifacts and no graph at {db_path}")
         return 1
 
     regions = [args.region] if args.region else packs.available()

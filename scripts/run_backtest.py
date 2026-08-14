@@ -20,7 +20,6 @@ from typing import Any
 
 from core import packs
 from core import settings as settings_module
-from core.graph import kuzu_store
 from core.panel import pg_store
 from core.reasoning import backtest, forecasting
 
@@ -34,11 +33,9 @@ def run(pack_name: str) -> dict[str, Any] | None:
         return None
 
     settings = settings_module.load()
-    conn = kuzu_store.connect(settings.kuzu_db_path, read_only=True)
-    try:
-        rows = forecasting.dyad_event_rows(conn)
-    finally:
-        kuzu_store.close(conn)
+    # Both stores, one read — the same union the freeze reasons from, so the
+    # backtest walks the archive the forecasts were computed over.
+    rows = forecasting.all_dyad_event_rows(settings.kuzu_db_path)
 
     tickers = sorted(set(books["escalation"]) | set(books["reversion"]))
     panel = pg_store.connect(settings)

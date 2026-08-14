@@ -1,13 +1,13 @@
 {
-  "region": "mena",
+  "region": "china",
   "payoffs": {
     "discount": 0.5,
     "cost_resolute": 0.05,
-    "cost_irresolute": 1.4214,
+    "cost_irresolute": 1.5258,
     "stake": 3.0,
-    "audience": 0.6398
+    "audience": 0.6065
   },
-  "distance": 0.560581,
+  "distance": 0.549321,
   "converged": false,
   "evaluations": 150,
   "seed": 20260813,
@@ -18,13 +18,13 @@
   ],
   "kernel": {
     "cells": 54,
-    "measured": 54,
-    "fallback": 0,
-    "share_measured": 1.0,
-    "observations": 13765,
+    "measured": 48,
+    "fallback": 6,
+    "share_measured": 0.8889,
+    "observations": 5600,
     "min_cell_observations": 12
   },
-  "panel_rows": 33322,
+  "panel_rows": 12060,
   "bands": [
     0.0,
     0.5,

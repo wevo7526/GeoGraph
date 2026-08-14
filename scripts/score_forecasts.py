@@ -76,9 +76,11 @@ def main() -> None:
         sys.exit(f"no graph at {settings.kuzu_db_path} — seed first")
 
     # ── read phase: the archive's edge and every frozen call ─────────────────
+    # Both stores, one read — the union the freeze reasoned from, so a
+    # forecast is scored against the same archive that produced it.
+    rows = forecasting.all_dyad_event_rows(settings.kuzu_db_path)
     conn = kuzu_store.connect(settings.kuzu_db_path, read_only=True)
     try:
-        rows = forecasting.dyad_event_rows(conn)
         forecast_rows = kuzu_store.query(
             conn,
             "MATCH (f:Forecast) RETURN f.node_id AS node_id, f.mode AS mode, "

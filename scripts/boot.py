@@ -40,7 +40,7 @@ opt-in, and the study is metered rather than run to completion.
   GEOGRAPH_RESCORE_ON_BOOT=1  opt IN to the archive-wide rescore (hours, and
                               un-resumable; off by default)
   GEOGRAPH_RESET_GRAPH=1      delete and rebuild the graph, ONCE per value
-  GEOGRAPH_BOOT_WINDOW=1800   must equal railway.json's healthcheckTimeout
+  GEOGRAPH_BOOT_WINDOW=2700   must equal railway.json's healthcheckTimeout
 
 The price fetch is CONDITIONAL on the panel being empty, because it is the one
 step that reaches the network and it does not need repeating: Postgres survives
@@ -135,10 +135,14 @@ _RESCORE_TIMEOUT_SECONDS = int(os.getenv("GEOGRAPH_RESCORE_TIMEOUT", "7800"))
 
 #: Below this the rescore declines rather than starts. It cannot be resumed,
 #: so a pass that gets cut off produces nothing at all — and unlike the study,
-#: "some progress" is not one of its outcomes. Measured at ~262 events/sec on
-#: 456,711 events; 1800s is enough to be worth the attempt on a lens-sized
-#: archive and short enough that declining is rare.
-_RESCORE_MIN_SECONDS = 1800
+#: "some progress" is not one of its outcomes. Sized against the CURRENT
+#: archive, not a lens: ~1.33M events at the measured ~262 events/sec is
+#: ~5,100s, so anything under an hour is a pass that starts doomed. The old
+#: 1800s floor dated from a 456k single-lens archive; against today's it
+#: guaranteed exactly the wasted pass it exists to prevent. A serving boot's
+#: default window cannot clear this — which is correct: rescoring is a job for
+#: a boot whose window was raised for it.
+_RESCORE_MIN_SECONDS = 3600
 
 #: SIZED AGAINST THE HEALTHCHECK WINDOW, and the arithmetic is the whole story.
 #: Two deploys failed on 2026-08-13 — health checks giving up after 138
@@ -208,7 +212,7 @@ _BOOT_STARTED = time.monotonic()
 #: railway.json's `healthcheckTimeout` — `test_boot_window_matches_railway_json`
 #: is what keeps the two from drifting apart.
 #:
-#: 1800, DOWN FROM 14400, and the reduction is the point rather than a tuning.
+#: 2700, DOWN FROM 14400, and the reduction is the point rather than a tuning.
 #: A four-hour window was the honest size for a boot that LOADED THE ARCHIVE
 #: before binding: 5400s of GDELT merging at ~145 events/sec, then an
 #: un-resumable rescore that wanted another two hours. Both are now deliberate
@@ -222,7 +226,15 @@ _BOOT_STARTED = time.monotonic()
 #: hours, so the site was down for four hours while a step that did not have to
 #: run at startup ran at startup. The window is a ceiling on PATIENCE, and
 #: patience for work the boot should not be doing is just downtime.
-_WINDOW_SECONDS = int(os.getenv("GEOGRAPH_BOOT_WINDOW", "1800"))
+#:
+#: 2700, not the realistic ~1,100s a boot actually spends, because the window
+#: must cover the CEILINGS, not the averages: study 600 + forecasts 600 +
+#: metrics/scores/backtest ceilings sum near 2,000 in the worst case, and a
+#: window the worst case can graze kills a container that was working — the
+#: 2026-08-12 failure, 30 seconds over. The margin costs nothing: a healthy
+#: boot binds when it binds, and the window only decides how long a genuinely
+#: broken one takes to be declared broken.
+_WINDOW_SECONDS = int(os.getenv("GEOGRAPH_BOOT_WINDOW", "2700"))
 
 #: What the steps AFTER the study need: metrics, forecasts, scores, backtest.
 #: Measured at ~320s across the 2026-08-13 boots; 600 leaves margin for a
@@ -450,8 +462,15 @@ def _run_study(pack_names: list[str]) -> dict[str, Any] | None:
     _log(f"event study: {int(budget)}s of window remaining, "
          f"{int(_STUDY_TIMEOUT_SECONDS)}s ceiling per pack")
     for name in pack_names:
-        if budget <= 0:
-            _log(f"event study {name}: out of budget — deferred to the next boot")
+        # A FLOOR, not `budget > 0`. With a shared budget the last pack routinely
+        # inherits the rounding — china took 300s and eurasia 299s of 600, which
+        # handed mena a ONE SECOND slice. It ran, hit its timeout instantly, and
+        # `_run_step` correctly called that a failure, so a boot that did exactly
+        # what it was told reported `study: ok=False`. A slice too small to
+        # measure anything is a deferral; saying so keeps the status honest.
+        if budget < _STUDY_MIN_SECONDS:
+            _log(f"event study {name}: {int(budget)}s left of the study budget — "
+                 f"deferred to the next boot")
             results.append({"pack": name, "ok": True, "skipped": "study budget spent"})
             continue
         started = time.monotonic()
@@ -917,7 +936,11 @@ def _freeze_forecasts() -> dict[str, Any]:
     result = _run_step(
         "freeze forecasts",
         [sys.executable, str(_FORECASTS_SCRIPT)],
-        timeout=_SEED_TIMEOUT_SECONDS,
+        # Its own ceiling, not the seed's 300s: since the wire moved to the
+        # corpus the freeze parses ~1.33M events (once, cached in-process) and
+        # unions them with the graph per region — measured at ~37s per region
+        # locally, so 600 covers three regions on slower hardware with room.
+        timeout=600,
         echo=False,
     )
     return {k: v for k, v in result.items() if k != "step"}

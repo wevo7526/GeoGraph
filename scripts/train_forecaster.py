@@ -30,6 +30,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from core import settings as settings_module  # noqa: E402
 from core.models import features as feature_module  # noqa: E402
 from core.models import intensity, panel, registry  # noqa: E402
+from core.wire import corpus  # noqa: E402
 
 #: Walk-forward cuts. Spread across the wire era so a single unusual stretch
 #: cannot carry the verdict.
@@ -85,12 +86,20 @@ def main() -> int:
     )
     args = parser.parse_args()
 
-    db_path = Path(args.db) if args.db else settings_module.load().kuzu_db_path
-    if not Path(db_path).exists():
-        print(f"no graph at {db_path} — seed and load one first")
-        return 1
-
-    rows = panel.load_rows(Path(db_path))
+    # THE CORPUS FIRST, for the same reason the game fitter prefers it: this
+    # writes a committed artifact, so the fit has to be a pure function of the
+    # repository rather than of whatever happens to be loaded on this machine.
+    # The artifacts are in git and every step from them to a feature row is
+    # deterministic, so the hash in models/intensity.json is reproducible.
+    if corpus.installed():
+        rows = corpus.all_panel_rows()
+    else:
+        db_path = Path(args.db) if args.db else settings_module.load().kuzu_db_path
+        if not Path(db_path).exists():
+            print(f"no corpus artifacts and no graph at {db_path} — "
+                  "seed and load one first")
+            return 1
+        rows = panel.load_rows(Path(db_path))
     table = panel.build(rows)
     if not table:
         print("the panel is empty — no dyad has enough occupied quarters")

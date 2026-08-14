@@ -30,6 +30,7 @@ from core.games import solve as solve_module
 from core.games import state as state_module
 from core.games import transition as transition_module
 from core.models import panel as panel_module
+from core.wire import serving
 
 router = APIRouter(tags=["games"])
 
@@ -42,22 +43,34 @@ _CACHE: dict[str, dict[str, Any]] = {}
 
 def _context(request: Request, region: str) -> dict[str, Any]:
     conn = request.app.state.graph
-    if conn is None:
-        raise HTTPException(
-            status_code=503, detail=request.app.state.graph_error or "graph unavailable"
-        )
     if region in _CACHE:
         return _CACHE[region]
 
-    table = panel_module.build(panel_module.dyad_event_rows(conn), region_pack=region)
+    # THE CORPUS FIRST for the panel and the joint actions — the same order
+    # `fit_game.py` reads, so the game a user explores here is solved over the
+    # same table its committed payoffs were fitted to. The graph keeps two
+    # jobs it is the only source for: the fallback when no artifact ships, and
+    # the AFFECTED effects below, which the transmission engine writes there
+    # and nothing else may.
+    table = serving.table(region)
+    joint = serving.joint_actions()
+    if table is None or joint is None:
+        if conn is None:
+            raise HTTPException(
+                status_code=503,
+                detail=request.app.state.graph_error or "graph unavailable",
+            )
+        table = panel_module.build(
+            panel_module.dyad_event_rows(conn), region_pack=region
+        )
+        joint = transition_module.joint_actions(
+            transition_module.event_rows(conn), quarter_of=panel_module.quarter_index
+        )
     if not table:
         raise HTTPException(
             status_code=404,
             detail=f"no modelable dyad in {region} — nothing to solve over",
         )
-    joint = transition_module.joint_actions(
-        transition_module.event_rows(conn), quarter_of=panel_module.quarter_index
-    )
     kernel, observed = transition_module.kernel(
         transition_module.count(table, joint)
     )
@@ -65,7 +78,13 @@ def _context(request: Request, region: str) -> dict[str, Any]:
         "table": table,
         "kernel": kernel,
         "coverage": transition_module.coverage(observed),
-        "effects": pricing_module.measured_effects(conn, region_pack=region),
+        # Measured market effects live in the graph alone. An open graph adds
+        # them; without one the game still solves, priced over no effects
+        # rather than refusing the page.
+        "effects": (
+            pricing_module.measured_effects(conn, region_pack=region)
+            if conn is not None else {}
+        ),
         "as_of": max(row["date"] for row in table),
     }
     _CACHE[region] = context

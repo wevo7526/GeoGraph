@@ -24,6 +24,7 @@ from typing import Any
 from core import settings as settings_module
 from core.graph import kuzu_store
 from core.reasoning import forecasting, structural
+from core.wire import corpus
 
 _NEAR_QUESTION = "Which focal dyads escalate again within the horizon?"
 _LONG_QUESTION = "Where does systemic pressure run over the coming decades?"
@@ -58,7 +59,14 @@ def _model_forecast(
         print(f"{region_pack}: model not frozen — gate failed: {artifact.get('gate_reason')}")
         return None
 
-    table = panel.build(panel.load_rows(db_path), region_pack=region_pack)
+    # CORPUS FIRST — the same source the artifact was TRAINED on, which is the
+    # stronger reason than speed here: a forward pass over a different panel
+    # than the fit's is a quiet train/serve skew. The graph path remains for a
+    # build without artifacts.
+    if corpus.installed():
+        table = panel.build(corpus.all_panel_rows(), region_pack=region_pack)
+    else:
+        table = panel.build(panel.load_rows(db_path), region_pack=region_pack)
     if not table:
         print(f"{region_pack}: model not frozen — no dyad has enough occupied quarters")
         return None
@@ -164,15 +172,27 @@ def _sequence_forecast(
     from core.games import duration, paths, pricing, solve, state, transition
     from core.models import panel as panel_module
 
-    conn = kuzu_store.connect(db_path, read_only=True)
-    try:
-        table = panel_module.build(
-            panel_module.dyad_event_rows(conn), region_pack=region_pack
-        )
-        events = transition.event_rows(conn)
-        effects = pricing.measured_effects(conn, region_pack=region_pack)
-    finally:
-        kuzu_store.close(conn)
+    # The panel and the joint actions come corpus-first, matching what
+    # `fit_game.py` fitted the payoffs over. The graph stays the only source
+    # for measured effects — and is opened read-only just for them.
+    if corpus.artifacts_for(region_pack):
+        panel_view, events = corpus.views(region_pack)
+        table = panel_module.build(panel_view, region_pack=region_pack)
+        conn = kuzu_store.connect(db_path, read_only=True)
+        try:
+            effects = pricing.measured_effects(conn, region_pack=region_pack)
+        finally:
+            kuzu_store.close(conn)
+    else:
+        conn = kuzu_store.connect(db_path, read_only=True)
+        try:
+            table = panel_module.build(
+                panel_module.dyad_event_rows(conn), region_pack=region_pack
+            )
+            events = transition.event_rows(conn)
+            effects = pricing.measured_effects(conn, region_pack=region_pack)
+        finally:
+            kuzu_store.close(conn)
 
     if not table:
         print(f"{region_pack}: sequence not frozen — no modelable dyad")

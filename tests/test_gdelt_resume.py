@@ -260,11 +260,16 @@ def test_budgets_are_read_off_the_clock_not_predicted():
         body = body[: body.index(chr(10) + "def ", 1)]
         assert "_remaining(" in body, f"{step} budgets without reading the clock"
     # And the two that iterate packs must still stop when the shared pool is
-    # spent, or a fourth lens breaks a boot that fits with three.
-    for step in ("_load_gdelt", "_run_study"):
+    # spent, or a fourth lens breaks a boot that fits with three. The study's
+    # guard is a FLOOR rather than `<= 0`: with a shared budget the last pack
+    # inherits the rounding, and a one-second slice ran, timed out, and
+    # reported the whole step failed. Both forms are a stop; neither is a
+    # prediction of what earlier steps cost.
+    for step, guard in (("_load_gdelt", "budget <= 0"),
+                        ("_run_study", "budget < _STUDY_MIN_SECONDS")):
         body = source[source.index(f"def {step}("):]
         body = body[: body.index(chr(10) + "def ", 1)]
-        assert "budget <= 0" in body, f"{step} does not stop when its budget is spent"
+        assert guard in body, f"{step} does not stop when its budget is spent"
 
 
 def test_remaining_never_promises_more_window_than_exists():

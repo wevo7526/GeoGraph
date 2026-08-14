@@ -90,6 +90,45 @@ carries `inception_date` and an era-keyed native frequency. Consequences:
 - Numbers cross panel → graph in exactly one direction, through
   `core/transmission/effects.write_effects`. Nothing else writes AFFECTED.
 
+## The wire corpus is NOT the graph (2026-08-13, cited deviation from §5/§18)
+
+The 1.33M-event GDELT wire lives in `core/wire/` as a CORPUS — a pure
+function of the artifacts in `data/derived/` (git) through the shared parser
+(`ingestion/gdelt.parse_lines`), `escalation.dyad_id` and Head B — because
+every bulk reader of it (`models/panel`, `reasoning/forecasting`,
+`games/transition`, the dyad/games/precedent routers) is a GROUP BY dyad
+ORDER BY time, not a traversal. Merging it into Kuzu ran at ~145 events/sec
+behind the single-writer lock, which is why 2026-08-13 was a four-hour outage;
+`corpus.load` parses and scores a pack in ~5s. Rules that keep this honest:
+
+- **Same ontology.** `pg_schema.py` derives the Postgres wire table from the
+  SAME LinkML Event class `kuzu_schema.py` derives the node table from;
+  `test_the_wire_table_is_derived_from_the_ontology` refuses drift. Provenance
+  there is a real FK (`source_id NOT NULL REFERENCES wire_source`) — stronger
+  than `validate_edge`, not weaker.
+- **Consumers read corpus-first, graph-fallback** — and the two forecast
+  readers (`structural`, `forecasting.all_dyad_event_rows`) read the UNION of
+  both stores by event id, because the deep tier lives only in the graph and
+  the wire only in the corpus. Eitheror is the 55-event trap: a rebuilt
+  volume held 817k events but only the spine's 55 OF_DYAD edges, and every
+  dyad page served empty while forecasts froze off nearly nothing.
+- **Process-lifetime caches are CORRECT here** (`corpus._loaded`,
+  `wire/serving`): the corpus is immutable for the life of a process — its
+  source ships in the image. `serving.warm()` runs at app startup (~20s) so
+  the parse cost never lands on a user's click.
+- **Offline fits read the corpus, never a live store** (`fit_game.py`,
+  `train_forecaster.py`): a committed artifact must be reproducible from the
+  commit alone. All three regions carry `models/game-<region>.json` and the
+  intensity gate passes trained on the pooled corpus (still scored WITHIN
+  dyad).
+- **The graph keeps what is genuinely graph-shaped**: actors, regimes,
+  RELATES_TO, the curated spine, AFFECTED (still written ONLY by
+  `write_effects`), NetworkMetric, Forecast nodes, and measured effects reads.
+  The explorer is untouched.
+- `scripts/load_wire.py` materialises the corpus into Postgres (COPY + an
+  exact EWMA aggregate reading `DEFAULT_ALPHA`/`STABLE_BAND` off
+  `escalation.py`) for SQL consumers; serving does not depend on it.
+
 ## Kuzu behaviours that FAIL SILENTLY (inherited from MarketGraph — same engine)
 
 | Do not write | Why | Instead |

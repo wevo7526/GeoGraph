@@ -105,12 +105,37 @@ def pressure_components(db_path: Path, *, as_of: str | None = None) -> dict[str,
         )
         events = kuzu_store.query(
             conn,
-            "MATCH (e:Event) RETURN e.event_time AS event_time, "
+            "MATCH (e:Event) RETURN e.node_id AS node_id, "
+            "e.event_time AS event_time, "
             "e.goldstein AS goldstein, e.quad_class AS quad_class, "
             "e.escalation_direction AS direction ORDER BY e.event_time",
         )
     finally:
         kuzu_store.close(conn)
+
+    # THE UNION OF BOTH STORES, BY EVENT ID — not either one alone. The
+    # composite spans 120 years and its two halves live apart: the deep tier
+    # (1905→) exists only in the graph, the modern wire ships as corpus
+    # artifacts and may or may not have been merged into the graph this
+    # deploy. Reading only the graph collapses the modern components to the
+    # spine the moment a rebuilt volume skips the wire — the exact uneven-
+    # density trap this module's guards exist for. The parser gives wire
+    # events identical ids in both stores, so the id is the dedup key.
+    seen = {str(row["node_id"]) for row in events}
+    from core.wire import corpus as wire_corpus
+
+    for name in wire_corpus.installed():
+        for row in wire_corpus.load(name):
+            if row["node_id"] in seen:
+                continue
+            events.append({
+                "node_id": row["node_id"],
+                "event_time": row["event_time"],
+                "goldstein": row["goldstein"],
+                "quad_class": row["quad_class"],
+                "direction": row["escalation_direction"],
+            })
+    events.sort(key=lambda r: str(r["event_time"]))
 
     cutoff = as_of or "9999"
     clout_by_year: dict[int, list[float]] = {}

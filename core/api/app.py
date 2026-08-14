@@ -104,6 +104,18 @@ def create_app() -> FastAPI:
         except Exception as exc:  # noqa: BLE001 - see above
             app.state.graph = None
             app.state.graph_error = str(exc)
+        # Warm the corpus's serving tables NOW, off the artifacts in the image,
+        # so the parse cost (~20s for three lenses) lands in startup instead of
+        # on a user's first click at the dyad ledger. Same failure rule as the
+        # graph above: record, never raise — a corpus that cannot warm leaves
+        # the routers on their graph fallback, which is degraded and says so,
+        # not dead.
+        try:
+            from core.wire import serving
+
+            serving.warm()
+        except Exception as exc:  # noqa: BLE001 - see above
+            app.state.graph_error = app.state.graph_error or f"corpus: {exc}"
         try:
             yield
         finally:

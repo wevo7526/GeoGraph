@@ -25,6 +25,7 @@ from fastapi import APIRouter, HTTPException, Query, Request
 from core.graph import kuzu_store
 from core.models import panel as panel_module
 from core.reasoning import regimes
+from core.wire import serving
 
 router = APIRouter(tags=["precedent"])
 
@@ -86,8 +87,14 @@ def precedent(
     as_of: str | None = Query(None, description="ISO date; defaults to the dyad's last quarter"),
 ) -> dict[str, Any]:
     """This dyad's comparable past episodes, and what followed each."""
-    conn = _conn(request)
-    table = panel_module.build(panel_module.dyad_event_rows(conn), region_pack=region)
+    # The series comes CORPUS FIRST, like every other bulk read of the wire;
+    # the graph stays required for the measured effects below, which only the
+    # transmission engine writes and only into the graph.
+    table = serving.table(region)
+    if table is None:
+        table = panel_module.build(
+            panel_module.dyad_event_rows(_conn(request)), region_pack=region
+        )
     rows = panel_module.series_for(table, dyad)
     if not rows:
         raise HTTPException(
@@ -140,7 +147,7 @@ def precedent(
         if values:
             fan.append({"offset": k, "n": len(values), **_quantiles(values)})
 
-    effects = _effects_for(conn, dyad)
+    effects = _effects_for(_conn(request), dyad)
     by_market: dict[str, dict[str, Any]] = {}
     for effect in effects:
         if effect["abnormal_return"] is None:

@@ -22,15 +22,28 @@ from typing import Any
 from fastapi import APIRouter, HTTPException, Query, Request
 
 from core.models import panel as panel_module
+from core.wire import serving
 
 router = APIRouter(tags=["panel"])
 
-#: Process-lifetime cache. The graph is single-writer and the API holds the
-#: lock, so within one process the underlying events cannot change.
+#: Process-lifetime cache for the GRAPH fallback path. The graph is
+#: single-writer and the API holds the lock, so within one process the
+#: underlying events cannot change.
 _CACHE: dict[str, list[dict[str, Any]]] = {}
 
 
 def _panel(request: Request, region: str | None) -> list[dict[str, Any]]:
+    # THE CORPUS FIRST. The wire lives in the image's artifacts, parsed and
+    # scored once per process by `serving.warm` — so the panel no longer
+    # depends on the graph holding a loaded, rescored archive. The graph path
+    # below is the fallback for a build without artifacts, not a peer: on
+    # 2026-08-13 a rebuilt volume held 817k events but only the spine's 55
+    # OF_DYAD edges (the rescore writes those, and it had not run), and this
+    # page served an empty ledger while claiming the archive was watched.
+    table = serving.table(region)
+    if table is not None:
+        return table
+
     conn = request.app.state.graph
     if conn is None:
         raise HTTPException(
