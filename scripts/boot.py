@@ -35,7 +35,9 @@ opt-in, and the study is metered rather than run to completion.
   GEOGRAPH_LOAD_PANEL=0       never fetch prices at boot
   GEOGRAPH_STUDY_ON_BOOT=0    never run the transmission engine at boot
   GEOGRAPH_STUDY_BUDGET=600   seconds the study may spend ACROSS packs
-  GEOGRAPH_BACKTEST_ON_BOOT=0 never run the walk-forward paper backtest
+  GEOGRAPH_BACKTEST_ON_BOOT=1 opt IN to the walk-forward paper backtest
+                              (infeasible at corpus scale until the walk is
+                              incremental; off by default)
   GEOGRAPH_GDELT_ON_BOOT=1    opt IN to loading the wire (hours; off by default)
   GEOGRAPH_RESCORE_ON_BOOT=1  opt IN to the archive-wide rescore (hours, and
                               un-resumable; off by default)
@@ -947,12 +949,22 @@ def _freeze_forecasts() -> dict[str, Any]:
 
 
 def _run_backtest() -> dict[str, Any]:
-    """The walk-forward paper backtest (Phase 5's ledger). Reads the graph
-    read-only and writes only to Postgres, so it can run beside the API; it
-    re-runs every boot because the ledger is a function of (archive, panel,
-    books) and any of the three may have moved."""
-    if os.getenv("GEOGRAPH_BACKTEST_ON_BOOT", "1").strip().lower() in {"0", "false", "no"}:
-        return {"ok": True, "skipped": "disabled by GEOGRAPH_BACKTEST_ON_BOOT"}
+    """The walk-forward paper backtest (Phase 5's ledger).
+
+    OFF BY DEFAULT SINCE 2026-08-13, the night the corpus landed — the same
+    downtime rule GDELT and the rescore already obey, arrived at the same way.
+    `walk_forward` recomputes the live estimator at every quarter end ("never
+    a special backtest-only estimator" — that principle is locked), which was
+    1.14s when the archive's dyad-coded rows numbered 55 and is ~425 quarters
+    x 1.31M rows now. The first corpus boot ground on it for the full 900s
+    ceiling while the site was dark. Until the walk maintains its counts
+    incrementally in one pass, a ledger nobody can see yet must not stand in
+    front of the health check. Opt in with GEOGRAPH_BACKTEST_ON_BOOT=1, or run
+    scripts/run_backtest.py beside the API — it reads the graph read-only and
+    writes only to Postgres, so serving never blocks on it.
+    """
+    if os.getenv("GEOGRAPH_BACKTEST_ON_BOOT", "0").strip().lower() not in {"1", "true", "yes"}:
+        return {"ok": True, "skipped": "not a backtest boot (GEOGRAPH_BACKTEST_ON_BOOT)"}
     result = _run_step(
         "paper backtest",
         [sys.executable, str(_BACKTEST_SCRIPT)],

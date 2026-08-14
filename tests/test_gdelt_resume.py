@@ -459,6 +459,17 @@ def _must_not_run(*_args: object, **_kwargs: object) -> dict[str, object]:
     raise AssertionError("an un-resumable step must not start without its window")
 
 
+def test_the_paper_backtest_is_off_by_default(monkeypatch):
+    # The corpus made walk_forward infeasible at boot (~425 quarters x 1.31M
+    # rows through the live estimator — the locked no-backtest-only-path
+    # principle), and the first corpus boot ground on it for its full 900s
+    # ceiling while the site was dark. Same rule as GDELT and the rescore: a
+    # step that cannot finish inside a boot does not belong in one.
+    monkeypatch.delenv("GEOGRAPH_BACKTEST_ON_BOOT", raising=False)
+    result = boot._run_backtest()
+    assert result["ok"] and "GEOGRAPH_BACKTEST_ON_BOOT" in result["skipped"]
+
+
 def test_the_study_takes_a_bounded_slice_not_the_remainder(monkeypatch):
     # It used to take every second the window had left, which optimises for
     # progress per boot. The watermark makes progress fungible across boots and
