@@ -34,6 +34,7 @@ export default function ReasoningPage({ region }: { region: string; onNavigate: 
   const [precedent, setPrecedent] = useState<Precedent | null | undefined>(undefined)
   const [model, setModel] = useState<ForecastDetail | null | undefined>(undefined)
   const [sequence, setSequence] = useState<ForecastDetail | null | undefined>(undefined)
+  const [nearTerm, setNearTerm] = useState<ForecastDetail | null | undefined>(undefined)
   const [gameDefaults, setGameDefaults] = useState<GameDefaults | null>(null)
   const [knobs, setKnobs] = useState<Record<string, number>>({})
   const [counterfactual, setCounterfactual] = useState<GameExplore | null>(null)
@@ -68,11 +69,13 @@ export default function ReasoningPage({ region }: { region: string; onNavigate: 
     let live = true
     setModel(undefined)
     setSequence(undefined)
+    setNearTerm(undefined)
     getForecasts(region).then((r) => {
       const rows = r?.rows ?? []
       for (const [mode, set] of [
         ['model', setModel],
         ['sequence', setSequence],
+        ['near_term', setNearTerm],
       ] as const) {
         const row = rows.find((f) => f.mode === mode)
         if (!row) {
@@ -161,6 +164,73 @@ export default function ReasoningPage({ region }: { region: string; onNavigate: 
   return (
     <div className="max-w-4xl mx-auto px-6 py-10">
       <p className="kicker">Reasoning · {regionLabel.toUpperCase()}</p>
+
+      {/* THE LEDE: the frozen call, before the evidence. The page used to
+          open on a dyad chart with no statement of what the system actually
+          concluded — the near-term forecast existed as an API node and never
+          appeared here, so the page read as charts about nothing. The call
+          leads; the five panels below are its evidence chain. */}
+      {nearTerm && (
+        <div className="mt-5 pb-4 border-b" style={{ borderColor: 'var(--rule-strong)' }}>
+          <div className="flex flex-wrap items-baseline gap-x-6 gap-y-1">
+            <span className="text-2xl">
+              Escalation{' '}
+              <span className="mono" style={{ color: 'var(--alert)' }}>
+                {(() => {
+                  const p = nearTerm.scenarios.find(
+                    (s) => s.scenario_name.startsWith('further_escalation'),
+                  )?.likelihood
+                  return p != null ? `${(p * 100).toFixed(1)}%` : '—'
+                })()}
+              </span>
+            </span>
+            <span className="mono text-[11px]" style={{ color: 'var(--muted)' }}>
+              frozen {nearTerm.generated_at?.slice(0, 10)} · as of{' '}
+              {nearTerm.frozen_inputs?.as_of ?? '—'} · horizon{' '}
+              {nearTerm.horizon_end?.slice(0, 4) ?? '—'}
+              {nearTerm.frozen_inputs?.episodes != null &&
+                ` · ${nearTerm.frozen_inputs.episodes.toLocaleString()} episodes counted`}
+              {nearTerm.frozen_inputs?.evidence_span &&
+                ` · evidence ${nearTerm.frozen_inputs.evidence_span[0].slice(0, 4)}–${nearTerm.frozen_inputs.evidence_span[1].slice(0, 4)}`}
+            </span>
+          </div>
+          <div className="mt-2 space-y-0.5">
+            {nearTerm.scenarios
+              .filter((s) => s.scenario_name.startsWith('further_escalation'))
+              .slice(0, 3)
+              .map((s) => {
+                const dyadName = s.scenario_name.split(':').slice(1).join(':')
+                return (
+                  <p key={s.scenario_name} className="text-xs flex items-baseline gap-2">
+                    <span className="mono w-12" style={{ color: 'var(--alert)' }}>
+                      {s.likelihood != null ? `${(s.likelihood * 100).toFixed(0)}%` : '—'}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const hit = (dyads ?? []).find((d) => d.dyad_id === dyadName)
+                        if (hit) setSelected(hit.dyad_id)
+                      }}
+                      className="mono text-xs"
+                      style={{
+                        background: 'none', border: 'none', padding: 0,
+                        cursor: 'pointer', color: 'var(--ink)',
+                        textDecoration: 'underline dotted',
+                      }}
+                    >
+                      {(dyads ?? []).find((d) => d.dyad_id === dyadName)?.dyad_name ?? dyadName}
+                    </button>
+                    <span style={{ color: 'var(--muted)' }}>escalates again within 3y</span>
+                  </p>
+                )
+              })}
+          </div>
+          <p className="mono text-[10px] mt-2" style={{ color: 'var(--muted)' }}>
+            likelihoods ARE base rates counted from the archive — recountable, then
+            Brier-scored against what happens · {nearTerm.question}
+          </p>
+        </div>
+      )}
 
       <div className="mt-4 flex flex-wrap items-baseline gap-3">
         <label className="kicker">dyad</label>
