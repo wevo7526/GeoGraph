@@ -19,37 +19,51 @@ restart loop tells you far less than a running API that reports what broke.
 So every failure is recorded into GEOGRAPH_BOOT_STATUS, which the health
 endpoint surfaces, and the API starts regardless.
 
-WHAT THE BOOT IS ALLOWED TO COST. Every step here runs while the site is DARK,
-because Kuzu's single writer means the API cannot bind until seeding lets go of
-the lock. So the boot's budget is downtime, and the rule that follows is: a
-step belongs at startup only if the API is WRONG without it. Seeding qualifies —
-an unseeded graph serves nothing. Loading 1.33M wire events does not: the
-archive is equally true an hour later, and on 2026-08-13 it cost a four-hour
-outage to learn that. Bulk loading and the archive-wide rescore are therefore
-opt-in, and the study is metered rather than run to completion.
+WHAT THE BOOT IS ALLOWED TO COST. In API-first mode (the default) the health
+check passes in ~20s — the API execs immediately and these steps run on a
+BACKGROUND THREAD behind the bound port. But the graph endpoints stay dark
+until that thread finishes, because Kuzu is one writer OR many readers across
+processes: the API opens its connection only once the last write-child exits
+(core/api/app.py::_run_boot_behind_the_api). So the boot's real budget is still
+DOWNTIME — of the GRAPH half of the API — and the rule that follows is
+unchanged: a step belongs before graph-open only if the API is WRONG without
+it. Seeding qualifies (an unseeded graph serves nothing). Measuring the archive
+does not: AFFECTED, NetworkMetric, Forecast nodes and the walk-forward ledger
+are a deterministic function of inputs that all outlive the container (packs
+and corpus in the image, panel in Postgres), so they persist on the volume and
+a routine deploy serves every one it had a moment ago while adding none.
 
-  GEOGRAPH_SEED_ON_BOOT=0     skip seeding (a batch job needs the write lock)
-  GEOGRAPH_SEED_PACKS=mena    which packs to seed; default is every pack that
-                              satisfies the contract, so packs/china seeds
-                              itself the day it becomes complete
-  GEOGRAPH_LOAD_PANEL=0       never fetch prices at boot
-  GEOGRAPH_STUDY_ON_BOOT=0    never run the transmission engine at boot
-  GEOGRAPH_STUDY_BUDGET=600   seconds the study may spend ACROSS packs
-  GEOGRAPH_BACKTEST_ON_BOOT=0 skip the walk-forward paper backtest (on by
-                              default since AsofArchive made ~425 cutoffs
-                              cost ~2s through the locked estimator path)
-  GEOGRAPH_GDELT_ON_BOOT=1    opt IN to loading the wire (hours; off by default)
-  GEOGRAPH_RESCORE_ON_BOOT=1  opt IN to the archive-wide rescore (hours, and
-                              un-resumable; off by default)
-  GEOGRAPH_RESET_GRAPH=1      delete and rebuild the graph, ONCE per value
-  GEOGRAPH_BOOT_WINDOW=2700   must equal railway.json's healthcheckTimeout
+The measuring steps are therefore OPT-IN. The study earned this the hard way:
+it never converged inside its budget, so it burned ~600s of graph-dark time on
+EVERY deploy re-measuring what was already on the volume (see _run_study). Turn
+them on together for a deploy whose job is measuring; leave them off for one
+whose job is shipping code, and the graph opens seconds after the seed.
 
-The price fetch is CONDITIONAL on the panel being empty, because it is the one
-step that reaches the network and it does not need repeating: Postgres survives
-a redeploy, so a loaded panel stays loaded. The event study is not conditional
-— it is pure computation over the panel, and the graph it writes into lives on
-a volume that may have been rebuilt, so it runs every boot and re-derives what
-its budget affords, resuming from a watermark on the next.
+  GEOGRAPH_SEED_ON_BOOT=0      skip seeding (a batch job needs the write lock)
+  GEOGRAPH_SEED_PACKS=mena     which packs to seed; default is every pack that
+                               satisfies the contract, so packs/china seeds
+                               itself the day it becomes complete
+  GEOGRAPH_LOAD_PANEL=0        never fetch prices at boot
+  GEOGRAPH_STUDY_ON_BOOT=1     opt IN to the transmission engine (off by
+                               default: it held the graph dark ~600s/deploy)
+  GEOGRAPH_STUDY_BUDGET=600    seconds the study may spend ACROSS packs
+  GEOGRAPH_FORECASTS_ON_BOOT=1 opt IN to re-freezing the Forecast nodes (off by
+                               default; the last freeze persists on the volume)
+  GEOGRAPH_BACKTEST_ON_BOOT=1  opt IN to the walk-forward paper backtest (off by
+                               default; the ledger persists in Postgres)
+  GEOGRAPH_GDELT_ON_BOOT=1     opt IN to loading the wire (hours; off by default)
+  GEOGRAPH_RESCORE_ON_BOOT=1   opt IN to the archive-wide rescore (hours, and
+                               un-resumable; off by default)
+  GEOGRAPH_RESET_GRAPH=1       delete and rebuild the graph, ONCE per value
+  GEOGRAPH_BOOT_WINDOW=2700    bounds the background steps; equals railway.json's
+                               healthcheckTimeout (the ceiling on a measuring
+                               boot's thread, not on the health check itself)
+
+The price fetch is CONDITIONAL on the panel being empty or stale, because it is
+the one step that reaches the network and does not need repeating: Postgres
+survives a redeploy, so a loaded panel stays loaded. The measuring steps, when
+opted in, re-derive into a graph that may have been rebuilt, resuming from a
+watermark across boots.
 """
 
 from __future__ import annotations
@@ -614,16 +628,36 @@ def _load_panel_if_shallow(pack_names: list[str]) -> dict[str, Any] | None:
 def _run_study(pack_names: list[str]) -> dict[str, Any] | None:
     """The transmission engine over the WHOLE spine (Phase 1, build-spec §18).
 
-    Runs every boot, unconditionally: it is pure computation over the panel,
-    and the graph it writes into lives on a volume that may have been rebuilt.
-    Re-deriving the same numbers is the cheapest way to keep the two stores
-    consistent — and the engine being deterministic is what makes that safe.
     --all measures every marquee event; a market with no data at an event's
     date is a recorded skip, not an error, so the deep spine costs nothing
     but honesty.
+
+    OFF BY DEFAULT SINCE 2026-08-14 — because THIS is the step that held the
+    site's graph endpoints dark for ~16 minutes on every deploy, and the same
+    lesson GDELT and the rescore already learned applies to it exactly.
+
+    The API-first boot (core/api/app.py) opens the API's Kuzu connection ONLY
+    after the last write-child exits — Kuzu is one writer OR many readers,
+    never both across processes — so every write step here runs while the API
+    holds no graph connection and every graph endpoint answers 503. The study
+    is a write-child, and it never CONVERGED inside its budget: china and
+    eurasia each timed out at ~300s and mena was deferred, so it burned its
+    full 600s on every boot without finishing, never recorded a clean
+    fingerprint to skip on, and re-ran in full the next boot — 600s of graph
+    downtime, forever, for measurements that were already persisted on the
+    volume. "A step that cannot finish inside a boot does not belong in one"
+    (aa585d1, for GDELT and the rescore). It is now that same opt-in job.
+
+    Deferring it is safe for the same reason deferring GDELT is: the graph is a
+    cache of a deterministic function, the panel it reads lives in Postgres,
+    and AFFECTED already written stays on the volume — so a routine deploy
+    serves every measurement it had a second ago and simply adds none. Run it
+    with GEOGRAPH_STUDY_ON_BOOT=1 on a deploy whose job IS measuring (the
+    healthcheck already passed in ~20s; the background thread can take as long
+    as its budget), or out-of-band via scripts/run_event_study.py.
     """
-    if os.getenv("GEOGRAPH_STUDY_ON_BOOT", "1").strip().lower() in {"0", "false", "no"}:
-        return {"ok": True, "skipped": "disabled by GEOGRAPH_STUDY_ON_BOOT"}
+    if os.getenv("GEOGRAPH_STUDY_ON_BOOT", "0").strip().lower() not in {"1", "true", "yes"}:
+        return {"ok": True, "skipped": "not a measuring boot (GEOGRAPH_STUDY_ON_BOOT)"}
     if _panel_is_empty() is not False:
         _log("panel has no observations — nothing for the engine to measure")
         return {"ok": True, "skipped": "panel empty"}
@@ -1150,8 +1184,15 @@ def _apply_panel_schema() -> dict[str, Any] | None:
 def _freeze_forecasts() -> dict[str, Any]:
     """Freeze both forecast modes (Phase 5). Deterministic payloads, one
     clock stamp at persistence — see scripts/run_forecasts.py."""
-    if os.getenv("GEOGRAPH_FORECASTS_ON_BOOT", "1").strip().lower() in {"0", "false", "no"}:
-        return {"ok": True, "skipped": "disabled by GEOGRAPH_FORECASTS_ON_BOOT"}
+    # OPT-IN SINCE 2026-08-14, for the same reason the study is: the freeze is a
+    # write-child, so it runs before the API opens the graph and adds to the
+    # graph-dark window on every deploy (~135s measured). The frozen Forecast
+    # nodes persist on the volume, so /api/forecasts serves the last freeze; a
+    # routine deploy refreshes nothing and dark-serves nothing. Refresh with
+    # GEOGRAPH_FORECASTS_ON_BOOT=1 on a measuring deploy (pair it with the study,
+    # whose new AFFECTED the forecasts read), or run scripts/run_forecasts.py.
+    if os.getenv("GEOGRAPH_FORECASTS_ON_BOOT", "0").strip().lower() not in {"1", "true", "yes"}:
+        return {"ok": True, "skipped": "not a measuring boot (GEOGRAPH_FORECASTS_ON_BOOT)"}
     result = _run_step(
         "freeze forecasts",
         [sys.executable, str(_FORECASTS_SCRIPT)],
@@ -1180,8 +1221,16 @@ def _run_backtest() -> dict[str, Any]:
     panel reads + marking, well inside the ceiling. Opt out with
     GEOGRAPH_BACKTEST_ON_BOOT=0.
     """
-    if os.getenv("GEOGRAPH_BACKTEST_ON_BOOT", "1").strip().lower() in {"0", "false", "no"}:
-        return {"ok": True, "skipped": "disabled by GEOGRAPH_BACKTEST_ON_BOOT"}
+    # OPT-IN SINCE 2026-08-14. Readmitted to the boot the same day AsofArchive
+    # made the walk cheap (dd3bbec), which fixed its COMPUTE cost but not the
+    # cost that actually matters here: it runs on the boot's background thread
+    # before the API opens the graph, so its ~40s land squarely inside the
+    # graph-dark window. The ledger it writes lives in Postgres and survives a
+    # redeploy, so a routine boot serves the last walk and adds none. Run it
+    # with GEOGRAPH_BACKTEST_ON_BOOT=1, or beside the API via
+    # scripts/run_backtest.py (read-only on the graph — it never needs the boot).
+    if os.getenv("GEOGRAPH_BACKTEST_ON_BOOT", "0").strip().lower() not in {"1", "true", "yes"}:
+        return {"ok": True, "skipped": "not a measuring boot (GEOGRAPH_BACKTEST_ON_BOOT)"}
     result = _run_step(
         "paper backtest",
         [sys.executable, str(_BACKTEST_SCRIPT)],

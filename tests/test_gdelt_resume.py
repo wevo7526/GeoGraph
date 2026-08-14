@@ -494,22 +494,53 @@ def test_a_deep_but_stale_panel_refreshes_its_recent_window(monkeypatch):
     assert not ran
 
 
-def test_the_paper_backtest_is_on_by_default_and_declinable(monkeypatch):
-    # The gate MOVED, on evidence, 2026-08-14: the walk was banished from the
-    # boot when each cutoff cost a full 1.31M-row pass (the first corpus boot
-    # burned its whole 900s ceiling), and readmitted when AsofArchive made the
-    # ~425 cutoffs cost ~2s total through the same locked estimator path. The
-    # step must still honour an explicit opt-out — downtime budgeting belongs
-    # to the operator.
+def test_the_measuring_steps_are_opt_in_so_the_graph_opens_fast(monkeypatch):
+    # THE 2026-08-14 OUTAGE. API-first binds the port in ~20s, but the graph
+    # endpoints stay 503 until the background boot thread finishes — Kuzu is one
+    # writer OR many readers across processes, so the API opens its connection
+    # only after the last write-child exits. The study/forecasts/backtest are
+    # write-children that re-derive data ALREADY on the volume, and the study
+    # never converged inside its budget, so it burned ~600s of graph-dark time
+    # on every single deploy. They are now opt-in: a routine boot skips them and
+    # opens the graph seconds after the seed. Each must decline by DEFAULT,
+    # naming the variable that turns it back on for a measuring deploy.
+    for var, step in (
+        ("GEOGRAPH_STUDY_ON_BOOT", lambda: boot._run_study(["mena"])),
+        ("GEOGRAPH_FORECASTS_ON_BOOT", boot._freeze_forecasts),
+        ("GEOGRAPH_BACKTEST_ON_BOOT", boot._run_backtest),
+    ):
+        monkeypatch.delenv(var, raising=False)
+        result = step()
+        assert result is not None
+        assert result["ok"] and var in result["skipped"], (
+            f"{var} must be opt-in (default off) so the graph opens fast"
+        )
+
+
+def test_the_paper_backtest_is_declinable_and_opt_in(monkeypatch):
+    # The gate MOVED twice, on evidence: banished from the boot when each cutoff
+    # cost a full 1.31M-row pass (the first corpus boot burned its whole 900s
+    # ceiling), readmitted when AsofArchive made the ~425 cutoffs cost ~2s, then
+    # made opt-in again on 2026-08-14 — not for its compute (that is cheap now)
+    # but because it runs before the API opens the graph, so even ~40s lands in
+    # the graph-dark window. An explicit opt-out is still honoured, and so is
+    # the new default: off unless a measuring deploy asks for it.
     monkeypatch.setenv("GEOGRAPH_BACKTEST_ON_BOOT", "0")
-    result = boot._run_backtest()
-    assert result["ok"] and "GEOGRAPH_BACKTEST_ON_BOOT" in result["skipped"]
+    assert "GEOGRAPH_BACKTEST_ON_BOOT" in boot._run_backtest()["skipped"]
+    monkeypatch.setenv("GEOGRAPH_BACKTEST_ON_BOOT", "1")
+    ran: list[str] = []
+    monkeypatch.setattr(boot, "_run_step",
+                        lambda label, *a, **k: (ran.append(label), {"ok": True, "step": label})[1])
+    boot._run_backtest()
+    assert ran, "GEOGRAPH_BACKTEST_ON_BOOT=1 must run the walk"
 
 
 def test_the_study_takes_a_bounded_slice_not_the_remainder(monkeypatch):
     # It used to take every second the window had left, which optimises for
     # progress per boot. The watermark makes progress fungible across boots and
     # downtime is not, so the budget — not the remainder — is what binds.
+    # (Opt in explicitly: the study is off by default since 2026-08-14.)
+    monkeypatch.setenv("GEOGRAPH_STUDY_ON_BOOT", "1")
     monkeypatch.setattr(boot, "_panel_is_empty", lambda: False)
     monkeypatch.setattr(boot, "_STUDY_BUDGET_SECONDS", 150)
     monkeypatch.setattr(boot, "_STUDY_TIMEOUT_SECONDS", 300)

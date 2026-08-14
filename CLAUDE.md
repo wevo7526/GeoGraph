@@ -136,10 +136,27 @@ behind the single-writer lock, which is why 2026-08-13 was a four-hour outage;
   walk-forward backtest boot-viable again (426 corpus-scale cutoffs in <1s per
   region vs a 900s ceiling it used to burn without finishing) while keeping
   the locked "never a backtest-only estimator" rule — the rule locks the code
-  path, not statelessness. The backtest boot step is DEFAULT ON again; only
-  fully-entered books compound (partial books are recorded skips), and the
-  row contract's `baseline` is now PER EVENT and AS OF that event (reading
-  the Dyad node's standing scalar at historical cutoffs was oos-spec leak 1).
+  path, not statelessness. Only fully-entered books compound (partial books
+  are recorded skips), and the row contract's `baseline` is now PER EVENT and
+  AS OF that event (reading the Dyad node's standing scalar at historical
+  cutoffs was oos-spec leak 1).
+- **The measuring boot steps are OPT-IN, so a routine deploy's graph opens in
+  seconds** (fixed 2026-08-14, the second half of the API-first move). API-first
+  binds the port in ~20s, but the graph endpoints answer 503 until the last
+  write-child exits — Kuzu is one writer OR many readers across processes, so
+  the API opens its connection only when the background boot thread finishes
+  (`core/api/app.py::_run_boot_behind_the_api`). The study, the forecast freeze
+  and the backtest are write-children that re-derive data ALREADY persisted on
+  the volume, and the study never converged inside its 600s budget — so it
+  burned ~600s of graph-dark time on EVERY deploy re-measuring the archive,
+  and forecasts/backtest added ~175s more. They now default OFF
+  (`GEOGRAPH_STUDY_ON_BOOT` / `GEOGRAPH_FORECASTS_ON_BOOT` /
+  `GEOGRAPH_BACKTEST_ON_BOOT`, opt-in like GDELT and the rescore): a routine
+  deploy runs `seed → open graph` and serves every measurement it had a moment
+  ago; a measuring deploy sets the vars and pays the downtime deliberately. The
+  healthcheck already passed at ~20s, so this never risked the container — only
+  the graph half of the API. `test_the_measuring_steps_are_opt_in_so_the_graph_opens_fast`
+  pins the defaults.
 - **The ML→game bridge exists** (`core/games/bridge.py`): the frozen model
   mode's per-dyad trajectory tilts that dyad's transition kernel
   (exponential tilt, bounded by `TILT_SCALE`, η from predicted drift over
