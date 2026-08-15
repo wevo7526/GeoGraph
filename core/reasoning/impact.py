@@ -211,13 +211,32 @@ def dyad_timeline(conn: Any, dyad_id: str, *, limit: int = 40) -> dict[str, Any]
             continue
         event = by_event.setdefault(
             str(row["event_id"]),
-            {"event_id": row["event_id"], "date": str(row["event_time"]), "markets": []},
+            {
+                "event_id": row["event_id"], "date": str(row["event_time"]),
+                # What happened, who did it to whom, how it was coded — the
+                # timeline used to carry the date alone and read as a list of
+                # numbers with no story (the redesign spec's "what happened,
+                # which markets moved, who reacted first").
+                "name": row.get("event_name"),
+                "goldstein": row.get("goldstein"),
+                "escalation_direction": row.get("escalation_direction"),
+                "escalation_magnitude": row.get("escalation_magnitude"),
+                "fidelity_tier": row.get("fidelity_tier"),
+                "initiator_id": row.get("initiator_id"),
+                "target_id": row.get("target_id"),
+                "first_mover": None,
+                "markets": [],
+            },
         )
+        if row.get("first_mover") and not event["first_mover"]:
+            event["first_mover"] = row["market_name"]
         event["markets"].append({
             "market_id": row["market_id"],
             "market_name": row["market_name"],
             "car": round(float(row["abnormal_return"]), 6),
             "window": str(row["window"]),
+            "p_value": row.get("p_value"),
+            "first_mover": bool(row.get("first_mover")),
         })
     events = sorted(by_event.values(), key=lambda e: e["date"], reverse=True)[:limit]
     return {"dyad": dyad_id, "events": events, "total": len(by_event)}
@@ -244,3 +263,83 @@ def hypothetical_impact(
         "precedents": {"n": n, "as_of": as_of, "regime_gated": True},
         "boundary_statement": BOUNDARY_STATEMENT,
     }
+
+
+# ── coverage: the market-movement trace, registered per dyad ────────────────
+
+_COVERAGE_CACHE: dict[str, dict[str, Any]] = {}
+
+
+def dyad_coverage(conn: Any, region_pack: str, roster: set[str]) -> dict[str, Any]:
+    """Per dyad in a pack: how many of its graph events carry a measured
+    market effect, so "no measured effects" is distinguishable from "not yet
+    measured". Cached per process — AFFECTED changes only on a measuring
+    boot, and the API process is replaced on deploy.
+
+    Deep-tier events carry region_pack '' and count for every pack whose
+    roster holds both actors; the pack's own wire events count once.
+    """
+    cached = _COVERAGE_CACHE.get(region_pack)
+    if cached is not None:
+        return cached
+    events = kuzu_store.query(
+        conn,
+        "MATCH (x:Actor)<-[:INITIATED_BY]-(e:Event)-[:DIRECTED_AT]->(y:Actor) "
+        "WHERE e.region_pack = $pack OR e.region_pack = '' "
+        "RETURN x.node_id AS a, y.node_id AS b, count(e) AS n",
+        {"pack": region_pack},
+    )
+    measured = kuzu_store.query(
+        conn,
+        "MATCH (x:Actor)<-[:INITIATED_BY]-(e:Event)-[:DIRECTED_AT]->(y:Actor), "
+        "(e)-[:AFFECTED]->(m:Market) "
+        "WHERE e.region_pack = $pack OR e.region_pack = '' "
+        "RETURN x.node_id AS a, y.node_id AS b, count(DISTINCT e) AS n",
+        {"pack": region_pack},
+    )
+    per_dyad: dict[str, dict[str, Any]] = {}
+
+    def slot(a: str, b: str) -> dict[str, Any] | None:
+        if a not in roster or b not in roster:
+            return None
+        did = escalation.dyad_id(a, b)
+        return per_dyad.setdefault(did, {"dyad_id": did, "events": 0, "measured": 0})
+
+    for row in events:
+        s_ = slot(str(row["a"]), str(row["b"]))
+        if s_ is not None:
+            s_["events"] += int(row["n"] or 0)
+    for row in measured:
+        s_ = slot(str(row["a"]), str(row["b"]))
+        if s_ is not None:
+            s_["measured"] += int(row["n"] or 0)
+    rows = []
+    for entry in per_dyad.values():
+        n = entry["events"]
+        entry["share_measured"] = round(entry["measured"] / n, 4) if n else 0.0
+        entry["status"] = (
+            "measured" if entry["measured"] else ("unmeasured" if n else "no_events")
+        )
+        rows.append(entry)
+    rows.sort(key=lambda r: (-r["measured"], -r["events"], r["dyad_id"]))
+    total_events = sum(r["events"] for r in rows)
+    total_measured = sum(r["measured"] for r in rows)
+    out = {
+        "region": region_pack,
+        "dyads": rows,
+        "summary": {
+            "dyads": len(rows),
+            "dyads_measured": sum(1 for r in rows if r["measured"]),
+            "events": total_events,
+            "events_measured": total_measured,
+            "share_measured": round(total_measured / total_events, 4) if total_events else 0.0,
+        },
+        "note": (
+            "events = graph events between two roster actors (pack wire + deep tier); "
+            "measured = those carrying at least one AFFECTED edge. Corpus-only events "
+            "are not in the graph and cannot carry effects until a loading boot merges "
+            "them; a measuring boot (GEOGRAPH_STUDY_ON_BOOT=1) grows `measured`."
+        ),
+    }
+    _COVERAGE_CACHE[region_pack] = out
+    return out

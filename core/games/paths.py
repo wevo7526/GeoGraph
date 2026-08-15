@@ -152,6 +152,12 @@ def enumerate_paths(
                                 "intensity_band": x_next,
                                 "band_probability": round(share, 4),
                                 "band_spread": spread,
+                                # The posteriors AFTER this step's actions —
+                                # a function of the action course alone, so
+                                # every band-variant of a course shares them
+                                # and the aggregation below keeps them intact.
+                                "belief_a": round(posterior_a, 4),
+                                "belief_b": round(posterior_b, 4),
                             }],
                         ))
         # Deterministic cap: probability descending, then the path's own steps

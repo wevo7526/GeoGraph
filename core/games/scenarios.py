@@ -1,0 +1,675 @@
+"""The region scenario map: every active dyad solved, named, priced, explained.
+
+`/games/explore` answers one dyad at a time and persists nothing. This module
+is the map the game-theory page reads: for a region, every dyad the panel
+can model is solved at its DATA-DRIVEN opening state (CINC capability,
+beliefs filtered from its own actions, the gated ML model's kernel tilt where
+one is frozen), under BOTH stage concepts — the fitted quantal response and
+the LP correlated equilibrium with its distance from a Nash point — its
+paths are walked and priced to the measured market map, and each course of
+play is NAMED as a scenario with a likelihood. The region view aggregates
+those into a future-event map: which dyads carry escalation mass, over which
+quarters, priced to which markets.
+
+THE EXPLANATION IS WRITTEN FROM THE NUMBERS AND NOTHING ELSE. `explain()` is a
+template over the solution's own fields — no model originates a sentence the
+payload cannot substantiate (build-spec §17). It reads like an analyst's note
+because the quantities have meanings; that is the point of a structural game
+over a black box.
+
+Persistence lives in `core/panel/pg_store.py` (`game_solutions`), written by
+`scripts/solve_games.py`; nothing here writes.
+"""
+
+from __future__ import annotations
+
+from typing import Any
+
+import numpy as np
+
+from core.games import bridge as bridge_module
+from core.games import opening as opening_module
+from core.games import paths as paths_module
+from core.games import pricing as pricing_module
+from core.games import solve as solve_module
+from core.games import state as state_module
+
+#: Dyads solved per region — the panel's most active first. Beyond this the
+#: series are thin and the opening state is mostly the default.
+REGION_DYADS = 12
+
+#: A step's market row needs this many measurements before the scenario
+#: names it as an implication (the pricing module's own thinness bar).
+_MARKET_MIN = pricing_module.MIN_MEASUREMENTS
+
+BAND_LABELS = ("cooperative", "calm", "tense", "hostile", "open conflict", "war")
+
+BOUNDARY_STATEMENT = (
+    "Scenarios are courses of play the solved game puts mass on, priced by "
+    "what such courses have historically moved — pressure over quarters, not "
+    "dated predictions. The kernel is counted from the archive; the payoffs "
+    "are fitted at bounds and read as a direction; the LP's nash_gap says how "
+    "far its welfare-maximal play is from a Nash point. Not advice."
+)
+
+
+def band_label(band: int, bands: int) -> str:
+    if bands <= 1:
+        return BAND_LABELS[0]
+    index = int(round(band / (bands - 1) * (len(BAND_LABELS) - 1)))
+    return BAND_LABELS[max(0, min(index, len(BAND_LABELS) - 1))]
+
+
+def split_sides(dyad_name: str) -> tuple[str, str]:
+    for sep in ("–", "—", " - ", "--"):
+        if sep in dyad_name:
+            a, b = dyad_name.split(sep, 1)
+            return a.strip(), b.strip()
+    return dyad_name, "the other side"
+
+
+# ── naming a course of play ─────────────────────────────────────────────────
+
+
+def classify_course(steps: list[dict[str, Any]], opening_band: int) -> tuple[str, str]:
+    """(kind, sentence) for an action course. Deterministic, from the steps."""
+    esc_a = sum(1 for s in steps if s["action_a"] == "escalate")
+    esc_b = sum(1 for s in steps if s["action_b"] == "escalate")
+    de_a = sum(1 for s in steps if s["action_a"] == "de-escalate")
+    de_b = sum(1 for s in steps if s["action_b"] == "de-escalate")
+    end_band = int(steps[-1]["intensity_band"]) if steps else opening_band
+    first_esc = next(
+        (i for i, s in enumerate(steps) if "escalate" in (s["action_a"], s["action_b"])),
+        None,
+    )
+    last_de = max(
+        (i for i, s in enumerate(steps)
+         if "de-escalate" in (s["action_a"], s["action_b"])),
+        default=None,
+    )
+    if esc_a and esc_b:
+        if last_de is not None and first_esc is not None and last_de > first_esc:
+            return "brinkmanship", "both sides escalate, then at least one steps back"
+        return "mutual_escalation", "both sides escalate"
+    if esc_a or esc_b:
+        if last_de is not None and first_esc is not None and last_de > first_esc:
+            return "probe_and_retreat", "one side presses, then steps back"
+        return "one_sided_pressure", "one side presses while the other holds"
+    if de_a or de_b:
+        return "step_down", "at least one side de-escalates and neither presses"
+    if end_band > opening_band:
+        return "drift_up", "both hold, yet the counted kernel drifts intensity up"
+    if end_band < opening_band:
+        return "drift_down", "both hold and intensity subsides"
+    return "holding_pattern", "both sides hold; intensity stays where it is"
+
+
+def _presser(steps: list[dict[str, Any]], side_a: str, side_b: str) -> str | None:
+    esc_a = sum(1 for s in steps if s["action_a"] == "escalate")
+    esc_b = sum(1 for s in steps if s["action_b"] == "escalate")
+    if esc_a and not esc_b:
+        return side_a
+    if esc_b and not esc_a:
+        return side_b
+    return None
+
+
+def market_implications(steps: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """The measured market map of a course: per market, the median abnormal
+    return across the steps that carry a non-thin measurement, ranked by
+    magnitude. Empty when the course was never priced — stated, not filled."""
+    pooled: dict[str, dict[str, Any]] = {}
+    for step in steps:
+        for row in step.get("market", []) or []:
+            if row.get("thin") or int(row.get("n", 0)) < _MARKET_MIN:
+                continue
+            slot = pooled.setdefault(row["market_id"], {
+                "market_id": row["market_id"],
+                "market_name": row.get("market_name", row["market_id"]),
+                "medians": [], "n": 0,
+            })
+            slot["medians"].append(float(row["median"]))
+            slot["n"] += int(row["n"])
+    out = []
+    for slot in pooled.values():
+        median = float(np.median(slot["medians"]))
+        out.append({
+            "market_id": slot["market_id"],
+            "market_name": slot["market_name"],
+            "median": round(median, 6),
+            "n": slot["n"],
+            "steps_priced": len(slot["medians"]),
+        })
+    out.sort(key=lambda r: -abs(r["median"]))
+    return out
+
+
+def scenarios_for(
+    priced: dict[str, Any], *, dyad_id: str, dyad_name: str, opening_band: int, bands: int
+) -> list[dict[str, Any]]:
+    """Named scenarios from the priced paths — one per course of play."""
+    side_a, side_b = split_sides(dyad_name)
+    out = []
+    for path in priced.get("paths", []):
+        steps = path["steps"]
+        kind, sentence = classify_course(steps, opening_band)
+        end_band = int(steps[-1]["intensity_band"]) if steps else opening_band
+        presser = _presser(steps, side_a, side_b)
+        course = " → ".join(
+            f"{s['action_a']}/{s['action_b']}" for s in steps
+        )
+        implications = market_implications(steps)
+        out.append({
+            "scenario_name": f"{kind}:{dyad_id}",
+            "kind": kind,
+            "likelihood": float(path["probability"]),
+            "dyad_id": dyad_id,
+            "dyad_name": dyad_name,
+            "presser": presser,
+            "course": course,
+            "steps": steps,
+            "opening_band": opening_band,
+            "end_band": end_band,
+            "end_label": band_label(end_band, bands),
+            "delta_band": end_band - opening_band,
+            "beliefs_end": (
+                {"a": steps[-1].get("belief_a"), "b": steps[-1].get("belief_b")}
+                if steps else None
+            ),
+            "market_implications": implications[:4],
+            "rationale": (
+                f"{sentence}; intensity moves {band_label(opening_band, bands)} → "
+                f"{band_label(end_band, bands)} over {len(steps)} quarter"
+                f"{'s' if len(steps) != 1 else ''} with probability "
+                f"{float(path['probability']):.0%} of the retained mass"
+                + (f"; {presser} is the side pressing" if presser else "")
+                + "."
+            ),
+        })
+    return out
+
+
+# ── one dyad, both concepts ────────────────────────────────────────────────
+
+
+def _escalation_probability(marginal: list[dict[str, Any]], opening_band: int) -> float:
+    """P(band at the horizon's end > opening band), off the fan."""
+    if not marginal:
+        return 0.0
+    dist = marginal[-1]["distribution"]
+    return round(float(sum(dist[opening_band + 1:])), 4)
+
+
+def _propensity(equilibrium: dict[str, Any], capability: int) -> dict[str, list[float]]:
+    escalate = state_module.ACTIONS.index("escalate")
+    return {
+        state_module.TYPES[t]: [
+            round(float(equilibrium["policy"][0, b, capability, t][escalate]), 4)
+            for b in range(len(state_module.INTENSITY_EDGES))
+        ]
+        for t in range(len(state_module.TYPES))
+    }
+
+
+def _matrix_at(equilibrium: dict[str, Any], band: int, capability: int, own: int) -> dict[str, Any]:
+    a, b = equilibrium["opening_matrices"]
+    return {
+        "a": [[round(float(v), 4) for v in row] for row in a[band, capability, own]],
+        "b": [[round(float(v), 4) for v in row] for row in b[band, capability, own]],
+        "actions": list(state_module.ACTIONS),
+        "type": state_module.TYPES[own],
+        "mix_a": [round(float(v), 4) for v in equilibrium["policy"][0, band, capability, own]],
+        "mix_b": [round(float(v), 4) for v in equilibrium["policy_b"][0, band, capability, own]],
+        "value": round(float(equilibrium["value"][band, capability, own]), 4),
+    }
+
+
+def solve_dyad(
+    context: dict[str, Any],
+    *,
+    region: str,
+    dyad_id: str,
+    payoffs: solve_module.Payoffs,
+    graph_conn: Any,
+    horizon: int = 4,
+    solvers: tuple[str, ...] = ("lp", "qre"),
+) -> dict[str, Any] | None:
+    """The full solved game for one dyad at its data-driven opening state.
+
+    `context` is the games router's per-region context (table, kernel, joint,
+    effects, model_trajectories, model_identity, coverage, as_of). Returns
+    None when the dyad has no series in the region.
+    """
+    own = [r for r in context["table"] if r["dyad_id"] == dyad_id]
+    if not own:
+        return None
+    dyad_name = str(own[0]["dyad_name"])
+    bands = len(state_module.INTENSITY_EDGES)
+
+    scale = state_module.dyad_scale([float(r["intensity"]) for r in own])
+    latest = max(own, key=lambda r: r["q"])
+    band = state_module.intensity_band(float(latest["intensity"]), scale)
+    capability = opening_module.capability_state(graph_conn, dyad_id)
+    beliefs = opening_module.filtered_beliefs(context["joint"], dyad_id, payoffs)
+    cap = int(capability["band"])
+
+    eta = bridge_module.eta_from_trajectory(context["model_trajectories"].get(dyad_id, []))
+    kernel = bridge_module.tilted_kernel(context["kernel"], eta)
+    tilt = bridge_module.audit(eta, context["model_identity"])
+
+    concepts: dict[str, Any] = {}
+    for solver in solvers:
+        equilibrium = solve_module.solve(kernel, payoffs, horizon=horizon, solver=solver)
+        walked = paths_module.enumerate_paths(
+            equilibrium, kernel, intensity=band, capability=cap,
+            belief_a=float(beliefs["a"]), belief_b=float(beliefs["b"]), payoffs=payoffs,
+        )
+        priced = pricing_module.price_paths(
+            walked, context["effects"], as_of=context["as_of"], scale=scale or 1.0
+        )
+        marginal = paths_module.marginal_intensity(priced, horizon)
+        concepts[solver] = {
+            "concept": equilibrium["concept"],
+            "nash_gap": equilibrium.get("nash_gap"),
+            "marginal": marginal,
+            "escalation_probability": _escalation_probability(marginal, band),
+            "escalation_propensity": _propensity(equilibrium, cap),
+            "paths": priced["paths"],
+            "paths_enumerated": priced["paths_enumerated"],
+            "retained_probability": priced["retained_probability"],
+            "pricing": priced.get("pricing"),
+            "opening_matrix": {
+                state_module.TYPES[t]: _matrix_at(equilibrium, band, cap, t)
+                for t in range(len(state_module.TYPES))
+            },
+            "scenarios": scenarios_for(
+                priced, dyad_id=dyad_id, dyad_name=dyad_name,
+                opening_band=band, bands=bands,
+            ),
+        }
+
+    primary = solvers[0]
+    solution = {
+        "region": region,
+        "dyad_id": dyad_id,
+        "dyad_name": dyad_name,
+        "sides": list(split_sides(dyad_name)),
+        "as_of": context["as_of"],
+        "horizon": horizon,
+        "bands": bands,
+        "band_labels": [band_label(b, bands) for b in range(bands)],
+        "opening": {
+            "intensity_band": band,
+            "intensity_label": band_label(band, bands),
+            "latest_intensity": round(float(latest["intensity"]), 3),
+            "scale": round(float(scale or 0.0), 3),
+            "active_quarters": len([r for r in own if float(r["intensity"]) > 0]),
+            "capability": capability,
+            "beliefs": beliefs,
+            "tilt": tilt,
+        },
+        "payoffs": {
+            "discount": payoffs.discount, "cost_resolute": payoffs.cost_resolute,
+            "cost_irresolute": payoffs.cost_irresolute, "stake": payoffs.stake,
+            "audience": payoffs.audience,
+        },
+        "primary_solver": primary,
+        "concepts": concepts,
+        "kernel": context["coverage"],
+        "boundary_statement": BOUNDARY_STATEMENT,
+    }
+    solution["explanation"] = explain(solution)
+    return solution
+
+
+# ── the explanation, from the numbers ──────────────────────────────────────
+
+
+def _pct(x: float) -> str:
+    return f"{x:.0%}"
+
+
+def _mix_words(mix: list[float]) -> str:
+    parts = [f"{state_module.ACTIONS[i]} {_pct(m)}" for i, m in enumerate(mix) if m >= 0.05]
+    return ", ".join(parts) if parts else "no action above 5%"
+
+
+def explain(solution: dict[str, Any]) -> list[str]:
+    """Paragraphs a reader can check against the payload — every number in
+    the prose is a field in the solution."""
+    side_a, side_b = solution["sides"]
+    op = solution["opening"]
+    primary = solution["primary_solver"]
+    lp = solution["concepts"].get("lp")
+    qre = solution["concepts"].get("qre")
+    horizon = solution["horizon"]
+    out: list[str] = []
+
+    cap = op["capability"]
+    bel = op["beliefs"]
+    cap_words = (
+        f"a CINC capability ratio of {float(cap.get('ratio', 0.5)):.2f} "
+        f"(band {cap['band']} of {len(state_module.CAPABILITY_EDGES) - 1})"
+        if cap.get("source") == "cinc"
+        else "no CINC estimate for either side, so the middle capability band by default"
+    )
+    bel_words = (
+        "beliefs filtered through the game's own Bayes rule from "
+        f"{bel.get('quarters_observed', 0)} "
+        f"observed quarters put {side_a} at {_pct(float(bel['a']))} and {side_b} at "
+        f"{_pct(float(bel['b']))} likely resolute"
+        if bel.get("source") == "bayes_filter"
+        else "no observed actions to filter, so the prior on resolve is flat"
+    )
+    out.append(
+        f"{side_a} and {side_b} open in the {op['intensity_label']} band "
+        f"(latest quarterly intensity {op['latest_intensity']:.2f} against this pair's own "
+        f"scale of {op['scale']:.2f}; {op['active_quarters']} active quarters on record), with "
+        f"{cap_words}; {bel_words}."
+    )
+
+    if lp:
+        m = lp["opening_matrix"]["resolute"]
+        gap = lp.get("nash_gap") or {}
+        out.append(
+            f"The LP solution: at this opening state the welfare-maximal correlated equilibrium "
+            f"has a resolute {side_a} playing {_mix_words(m['mix_a'])} and {side_b} playing "
+            f"{_mix_words(m['mix_b'])}. Across the {gap.get('stage_games', 0)} stage games of the "
+            "backward induction the LP sat on a Nash point in "
+            f"{_pct(float(gap.get('share_product_form', 0)))} "
+            f"of them (mean nash_gap {float(gap.get('mean', 0)):.3f}, worst "
+            f"{float(gap.get('max', 0)):.3f}) — "
+            + (
+                "the correlated play is essentially a Bayesian Nash equilibrium here."
+                if float(gap.get("mean", 0)) < 0.02
+                else "some states need a coordinating signal the archive does not "
+                "model; read those cells as a direction."
+            )
+        )
+    if qre and lp:
+        modal_lp = int(np.argmax(lp["opening_matrix"]["resolute"]["mix_a"]))
+        modal_qre = int(np.argmax(qre["opening_matrix"]["resolute"]["mix_a"]))
+        agree = modal_lp == modal_qre
+        out.append(
+            f"The fitted quantal response, the concept the payoffs were estimated under, "
+            f"{'agrees' if agree else 'disagrees'} on the modal opening action "
+            f"({state_module.ACTIONS[modal_qre]} vs the LP's {state_module.ACTIONS[modal_lp]}); "
+            f"its escalation probability over {horizon} quarters is "
+            f"{_pct(qre['escalation_probability'])} "
+            f"against the LP's {_pct(lp['escalation_probability'])}. Where they diverge, "
+            "the QRE is "
+            "the estimator's own play and the LP is the exact benchmark."
+        )
+
+    concept = solution["concepts"][primary]
+    if concept["scenarios"]:
+        top = concept["scenarios"][0]
+        marg = concept["marginal"]
+        fan_start = marg[0]["expected_band"] if marg else op["intensity_band"]
+        fan_end = marg[-1]["expected_band"] if marg else op["intensity_band"]
+        out.append(
+            f"The most likely course under the {primary.upper()} is "
+            f"{top['kind'].replace('_', ' ')} "
+            f"({top['course']}) at {_pct(top['likelihood'])} of the retained mass, ending "
+            f"{top['end_label']}"
+            + (f" with {top['presser']} pressing" if top.get("presser") else "")
+            + f". The fan's expected band moves {fan_start:.2f} → {fan_end:.2f}; "
+            "the chance the pair "
+            f"sits ABOVE its opening band after {horizon} quarters is "
+            f"{_pct(concept['escalation_probability'])}. {concept['paths_enumerated']} "
+            "courses were "
+            f"enumerated and the top {len(concept['paths'])} carry "
+            f"{_pct(concept['retained_probability'])} of them."
+        )
+        if top["market_implications"]:
+            moves = "; ".join(
+                f"{r['market_name']} {r['median']:+.2%} (median abnormal return over "
+                f"{r['n']} measured events)"
+                for r in top["market_implications"][:3]
+            )
+            out.append(
+                "Priced by the transmission engine, courses like this one have "
+                f"historically moved: {moves}. "
+                "Direction and size are measured per event and regime-gated; nothing here "
+                "is asserted."
+            )
+        else:
+            out.append(
+                "The transmission engine holds too few measured effects for courses like "
+                "this one at this "
+                "intensity to name a market implication — that absence is reported rather "
+                "than filled."
+            )
+    else:
+        out.append(
+            "No course of play cleared the retained-mass floor — the fan alone is the forecast."
+        )
+
+    tilt = op.get("tilt")
+    if tilt:
+        out.append(
+            f"The learned layer tilts this pair's kernel: η = {float(tilt['eta']):+.3f} "
+            "(bounded by "
+            f"{tilt['scale']}) from the frozen model {tilt['model']}'s trajectory for "
+            "this dyad — the "
+            "counted kernel remains the evidence; the tilt is the model's claim about magnitude."
+        )
+    else:
+        out.append(
+            "No gated model trajectory is frozen for this pair, so the kernel is untilted: the "
+            "learned layer makes no claim here."
+        )
+    k = solution["kernel"]
+    out.append(
+        f"Kernel: {k.get('measured', 0)} of {k.get('cells', 0)} transition cells measured "
+        f"({_pct(float(k.get('share_measured', 0)))}) from {k.get('observations', 0)} "
+        "dyad-quarters; "
+        "payoffs are the region's fitted values (several at the estimator's bounds — a direction, "
+        "not a point). " + BOUNDARY_STATEMENT
+    )
+    return out
+
+
+# ── the region map ─────────────────────────────────────────────────────────
+
+
+def region_map(
+    context: dict[str, Any],
+    *,
+    region: str,
+    payoffs: solve_module.Payoffs,
+    graph_conn: Any,
+    dyad_ids: list[str],
+    horizon: int = 4,
+    solvers: tuple[str, ...] = ("lp", "qre"),
+) -> dict[str, Any]:
+    """Every dyad solved; the region's future-event map aggregated from them.
+
+    Returns the per-dyad solutions in full (the drill-in reads them) beside
+    the region aggregate; the writer splits them across rows.
+    """
+    solutions: list[dict[str, Any]] = []
+    for dyad_id in dyad_ids:
+        solved = solve_dyad(
+            context, region=region, dyad_id=dyad_id, payoffs=payoffs,
+            graph_conn=graph_conn, horizon=horizon, solvers=solvers,
+        )
+        if solved is not None:
+            solutions.append(solved)
+
+    primary = solvers[0]
+    bands = len(state_module.INTENSITY_EDGES)
+    heat = []
+    ranking = []
+    all_scenarios: list[dict[str, Any]] = []
+    for s in solutions:
+        c = s["concepts"][primary]
+        heat.append({
+            "dyad_id": s["dyad_id"], "dyad_name": s["dyad_name"],
+            "opening_band": s["opening"]["intensity_band"],
+            "expected_band": [row["expected_band"] for row in c["marginal"]],
+            "modal_band": [row["modal_band"] for row in c["marginal"]],
+        })
+        top = c["scenarios"][0] if c["scenarios"] else None
+        ranking.append({
+            "dyad_id": s["dyad_id"], "dyad_name": s["dyad_name"],
+            "opening_band": s["opening"]["intensity_band"],
+            "opening_label": s["opening"]["intensity_label"],
+            "escalation_probability": c["escalation_probability"],
+            "escalation_probability_qre": (
+                s["concepts"]["qre"]["escalation_probability"] if "qre" in s["concepts"] else None
+            ),
+            "expected_end_band": (
+                c["marginal"][-1]["expected_band"] if c["marginal"] else None
+            ),
+            "top_scenario": (
+                {k: top[k] for k in (
+                    "scenario_name", "kind", "likelihood", "course", "end_label", "presser",
+                )}
+                if top else None
+            ),
+            "nash_gap_mean": (c.get("nash_gap") or {}).get("mean"),
+            "tilted": s["opening"]["tilt"] is not None,
+            "capability_source": s["opening"]["capability"].get("source"),
+            "beliefs_source": s["opening"]["beliefs"].get("source"),
+        })
+        for sc in c["scenarios"]:
+            all_scenarios.append({
+                k: sc[k] for k in (
+                    "scenario_name", "kind", "likelihood", "dyad_id", "dyad_name",
+                    "presser", "course", "opening_band", "end_band", "end_label",
+                    "delta_band", "market_implications", "rationale",
+                )
+            })
+    ranking.sort(key=lambda r: (-(r["escalation_probability"] or 0), r["dyad_id"]))
+    escalatory = sorted(
+        (sc for sc in all_scenarios if sc["delta_band"] > 0 or sc["kind"] in
+         ("mutual_escalation", "one_sided_pressure", "brinkmanship")),
+        key=lambda sc: -sc["likelihood"],
+    )
+    calming = sorted(
+        (sc for sc in all_scenarios if sc["delta_band"] < 0 or sc["kind"] in ("step_down",)),
+        key=lambda sc: -sc["likelihood"],
+    )
+
+    # Region-level fan: dyad-average of the per-period marginals — a picture
+    # of where the region's mass sits, period by period.
+    region_fan = []
+    for period in range(horizon):
+        mass = np.zeros(bands)
+        n = 0
+        for s in solutions:
+            m = s["concepts"][primary]["marginal"]
+            if len(m) > period:
+                mass += np.asarray(m[period]["distribution"], dtype=float)
+                n += 1
+        share = mass / n if n else mass
+        region_fan.append({
+            "period": period + 1,
+            "distribution": [round(float(v), 4) for v in share],
+            "expected_band": round(float(share @ np.arange(bands)), 3) if n else None,
+        })
+
+    gaps: list[float] = [
+        float(g) for g in (
+            (s["concepts"]["lp"].get("nash_gap") or {}).get("mean")
+            for s in solutions if "lp" in s["concepts"]
+        ) if g is not None
+    ]
+    aggregate = {
+        "region": region,
+        "as_of": context["as_of"],
+        "horizon": horizon,
+        "bands": bands,
+        "band_labels": [band_label(b, bands) for b in range(bands)],
+        "primary_solver": primary,
+        "solvers": list(solvers),
+        "concepts": {
+            solver: solutions[0]["concepts"][solver]["concept"] for solver in solvers
+        } if solutions else {},
+        "payoffs": solutions[0]["payoffs"] if solutions else None,
+        "kernel": context["coverage"],
+        "model": context.get("model_identity"),
+        "dyads_solved": len(solutions),
+        "dyads_tilted": sum(
+            1 for s in solutions if s["opening"]["tilt"] is not None
+        ),
+        "dyads_cinc": sum(
+            1 for s in solutions if s["opening"]["capability"].get("source") == "cinc"
+        ),
+        "nash_gap": {
+            "mean": round(float(np.mean(gaps)), 4) if gaps else None,
+            "max": round(float(np.max(gaps)), 4) if gaps else None,
+        },
+        "ranking": ranking,
+        "heat": heat,
+        "region_fan": region_fan,
+        "scenarios_escalatory": escalatory[:12],
+        "scenarios_calming": calming[:12],
+        "scenarios_all": sorted(all_scenarios, key=lambda sc: -sc["likelihood"])[:40],
+        "boundary_statement": BOUNDARY_STATEMENT,
+    }
+    aggregate["explanation"] = explain_region(aggregate)
+    return {"region": aggregate, "dyads": solutions}
+
+
+def explain_region(aggregate: dict[str, Any]) -> list[str]:
+    ranking = aggregate["ranking"]
+    out: list[str] = []
+    if not ranking:
+        return ["No dyad in this region cleared the panel's modelling bar; nothing was solved."]
+    hot = [r for r in ranking if (r["escalation_probability"] or 0) >= 0.5]
+    lead = ranking[0]
+    out.append(
+        f"{aggregate['dyads_solved']} pairs solved under the {aggregate['primary_solver'].upper()} "
+        f"and the fitted QRE at their own opening states ({aggregate['dyads_cinc']} with "
+        "CINC-measured "
+        f"capability, {aggregate['dyads_tilted']} tilted by the frozen model). "
+        f"{len(hot)} of them carry at least even odds of sitting above their opening band after "
+        f"{aggregate['horizon']} quarters; the pair carrying the most escalation mass is "
+        f"{lead['dyad_name']} ({_pct(lead['escalation_probability'] or 0)}, opening "
+        f"{lead['opening_label']}"
+        + (f", most likely course {lead['top_scenario']['kind'].replace('_', ' ')} at "
+           f"{_pct(lead['top_scenario']['likelihood'])}" if lead.get("top_scenario") else "")
+        + ")."
+    )
+    esc = aggregate["scenarios_escalatory"][:3]
+    if esc:
+        out.append(
+            "The escalatory scenarios with the most mass: " + "; ".join(
+                f"{sc['dyad_name']} — {sc['kind'].replace('_', ' ')} at {_pct(sc['likelihood'])}"
+                + (f", pressed by {sc['presser']}" if sc.get("presser") else "")
+                + (
+                    f", historically moving {sc['market_implications'][0]['market_name']} "
+                    f"{sc['market_implications'][0]['median']:+.2%}"
+                    if sc.get("market_implications") else ""
+                )
+                for sc in esc
+            ) + "."
+        )
+    calm = aggregate["scenarios_calming"][:2]
+    if calm:
+        out.append(
+            "Where the game expects a step-down: " + "; ".join(
+                f"{sc['dyad_name']} ({_pct(sc['likelihood'])})" for sc in calm
+            ) + "."
+        )
+    gap = aggregate["nash_gap"]
+    if gap.get("mean") is not None:
+        out.append(
+            f"Across the region the LP's mean nash_gap is {gap['mean']:.3f} (worst dyad "
+            f"{gap['max']:.3f}): "
+            + (
+                "the welfare-maximal correlated play is, in effect, Bayesian Nash play."
+                if gap["mean"] < 0.02
+                else "several dyads' stage games call for coordination the archive "
+                "does not model."
+            )
+        )
+    k = aggregate["kernel"]
+    out.append(
+        f"Kernel {_pct(float(k.get('share_measured', 0)))} measured over "
+        f"{k.get('observations', 0)} "
+        f"dyad-quarters. " + BOUNDARY_STATEMENT
+    )
+    return out

@@ -49,6 +49,8 @@ whose job is shipping code, and the graph opens seconds after the seed.
   GEOGRAPH_STUDY_BUDGET=600    seconds the study may spend ACROSS packs
   GEOGRAPH_FORECASTS_ON_BOOT=1 opt IN to re-freezing the Forecast nodes (off by
                                default; the last freeze persists on the volume)
+  GEOGRAPH_GAMES_ON_BOOT=1     opt IN to the region scenario-map solve (Postgres
+                               game_solutions; off by default, same reason)
   GEOGRAPH_BACKTEST_ON_BOOT=1  opt IN to the walk-forward paper backtest (off by
                                default; the ledger persists in Postgres)
   GEOGRAPH_GDELT_ON_BOOT=1     opt IN to loading the wire (hours; off by default)
@@ -89,6 +91,7 @@ _METRICS_SCRIPT = _ROOT / "scripts" / "run_network_metrics.py"
 _FORECASTS_SCRIPT = _ROOT / "scripts" / "run_forecasts.py"
 _GDELT_SCRIPT = _ROOT / "scripts" / "backfill_gdelt.py"
 _BACKTEST_SCRIPT = _ROOT / "scripts" / "run_backtest.py"
+_GAMES_SCRIPT = _ROOT / "scripts" / "solve_games.py"
 _SCORE_SCRIPT = _ROOT / "scripts" / "score_forecasts.py"
 _DERIVED_DIR = _ROOT / "data" / "derived"
 _DEEP_TIER_SCRIPT = _ROOT / "scripts" / "load_deep_tier.py"
@@ -1273,6 +1276,29 @@ def _run_backtest() -> dict[str, Any]:
     return {k: v for k, v in result.items() if k != "step"}
 
 
+def _solve_games() -> dict[str, Any]:
+    """The region scenario maps (core/games/scenarios.py) — every active
+    dyad solved under the LP correlated equilibrium and the fitted QRE,
+    priced, named and explained, persisted to Postgres `game_solutions`.
+
+    OPT-IN like the other measuring steps: it reads the graph read-only
+    (CINC, the frozen model, AFFECTED) on the boot thread, so its ~3-4
+    minutes would land inside the graph-dark window on every boot; the
+    solutions live in Postgres and survive a redeploy, so a routine boot
+    serves the last solve. GEOGRAPH_GAMES_ON_BOOT=1 runs it; the fingerprint
+    guard then skips it until an input moves.
+    """
+    if os.getenv("GEOGRAPH_GAMES_ON_BOOT", "0").strip().lower() not in {"1", "true", "yes"}:
+        return {"ok": True, "skipped": "not a measuring boot (GEOGRAPH_GAMES_ON_BOOT)"}
+    result = _run_step(
+        "solve games",
+        [sys.executable, str(_GAMES_SCRIPT)],
+        timeout=_LOAD_TIMEOUT_SECONDS,
+        echo=True,
+    )
+    return {k: v for k, v in result.items() if k != "step"}
+
+
 def _score_forecasts() -> dict[str, Any]:
     """Calibration over the frozen trail (Phase 5): Brier where horizons have
     resolved, retrodiction on the long-horizon nodes. Needs the write lock,
@@ -1493,6 +1519,17 @@ def _boot_status() -> dict[str, Any]:
                 f"|{_panel_edge()}|{image}"
             ),
             _run_backtest,
+        )),
+        # The scenario maps read events (the kernel), AFFECTED (the market
+        # map), estimates (CINC) and the frozen forecasts (the model tilt);
+        # the committed game/model artifacts ride in the image fingerprint.
+        ("games", lambda: _guarded(
+            "games",
+            lambda: (
+                f"{_graph_fingerprint('events', 'latest', 'affected', 'estimates', 'forecasts')}"
+                f"|{image}"
+            ),
+            _solve_games,
         )),
     )
     for key, step in steps:

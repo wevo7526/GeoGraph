@@ -94,6 +94,43 @@ DDL: tuple[str, ...] = (
         PRIMARY KEY (region_pack, quarter_end)
     )
     """,
+    # What a walk-forward run knew about ITSELF and threw away at the API
+    # boundary until 2026-08-15: the skipped quarters with their reasons and
+    # the run's own summary. A region whose every quarter was a recorded skip
+    # used to serve "no persisted backtest" — indistinguishable from never
+    # having run. One row per region, replaced whole with the ledger.
+    """
+    CREATE TABLE IF NOT EXISTS paper_backtest_runs (
+        region_pack   TEXT        NOT NULL PRIMARY KEY,
+        quarters_traded INTEGER   NOT NULL,
+        quarters_skipped INTEGER  NOT NULL,
+        skipped       JSONB       NOT NULL,
+        summary       JSONB       NOT NULL,
+        method        TEXT        NOT NULL,
+        computed_at   TIMESTAMPTZ NOT NULL DEFAULT now()
+    )
+    """,
+    # The solved games (core/games/scenarios.py): one row per (region,
+    # scope, dyad). scope='region' holds the aggregate map (dyad_id = ''),
+    # scope='dyad' the full per-dyad solution. Postgres rather than a Forecast
+    # node because the API and the solver child need concurrent access and
+    # nothing here is provenance-bearing graph structure; the frozen
+    # `sequence` Forecast stays the scoreable record. Replaced whole per
+    # region on every solve — a solution is a function of (archive, kernel,
+    # payoffs, model artifact) and stale rows beside fresh ones would blend
+    # two solves into one map.
+    """
+    CREATE TABLE IF NOT EXISTS game_solutions (
+        region_pack   TEXT        NOT NULL,
+        scope         TEXT        NOT NULL,
+        dyad_id       TEXT        NOT NULL DEFAULT '',
+        as_of         DATE        NOT NULL,
+        solver        TEXT        NOT NULL,
+        payload       JSONB       NOT NULL,
+        computed_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
+        PRIMARY KEY (region_pack, scope, dyad_id)
+    )
+    """,
 )
 
 
@@ -302,6 +339,124 @@ def record_backtest(conn: Any, region_pack: str, result: dict[str, Any]) -> int:
             )
     conn.commit()
     return len(ledger)
+
+
+def record_backtest_run(conn: Any, region_pack: str, result: dict[str, Any]) -> None:
+    """Persist the run's skips and summary beside its ledger (see DDL)."""
+    import json
+
+    with conn.cursor() as cur:
+        cur.execute("DELETE FROM paper_backtest_runs WHERE region_pack = %s", (region_pack,))
+        cur.execute(
+            """
+            INSERT INTO paper_backtest_runs
+                (region_pack, quarters_traded, quarters_skipped, skipped, summary, method)
+            VALUES (%s, %s, %s, %s, %s, %s)
+            """,
+            (
+                region_pack,
+                int(result.get("quarters_traded", 0)),
+                int(result.get("quarters_skipped", 0)),
+                json.dumps(result.get("skipped", [])),
+                json.dumps(result.get("summary") or {}),
+                str(result.get("method", "")),
+            ),
+        )
+    conn.commit()
+
+
+def backtest_run(conn: Any, region_pack: str) -> dict[str, Any] | None:
+    """The persisted run record for a region, or None."""
+    import json
+
+    with conn.cursor() as cur:
+        cur.execute(
+            "SELECT quarters_traded, quarters_skipped, skipped, summary, method, computed_at "
+            "FROM paper_backtest_runs WHERE region_pack = %s",
+            (region_pack,),
+        )
+        row = cur.fetchone()
+    if row is None:
+        return None
+    traded, skipped_n, skipped, summary, method, computed_at = row
+    return {
+        "quarters_traded": int(traded),
+        "quarters_skipped": int(skipped_n),
+        "skipped": skipped if isinstance(skipped, list) else json.loads(skipped),
+        "summary": summary if isinstance(summary, dict) else json.loads(summary),
+        "method": method,
+        "computed_at": computed_at.isoformat(),
+    }
+
+
+def record_game_solutions(
+    conn: Any, region_pack: str, solved: dict[str, Any], *, solver: str
+) -> int:
+    """Persist a region's scenario map: the aggregate row plus one row per
+    dyad, replacing the region's previous solve whole."""
+    import json
+
+    aggregate = solved["region"]
+    dyads = solved["dyads"]
+    with conn.cursor() as cur:
+        cur.execute("DELETE FROM game_solutions WHERE region_pack = %s", (region_pack,))
+        cur.execute(
+            """
+            INSERT INTO game_solutions (region_pack, scope, dyad_id, as_of, solver, payload)
+            VALUES (%s, 'region', '', %s, %s, %s)
+            """,
+            (region_pack, aggregate["as_of"], solver, json.dumps(aggregate)),
+        )
+        if dyads:
+            cur.executemany(
+                """
+                INSERT INTO game_solutions (region_pack, scope, dyad_id, as_of, solver, payload)
+                VALUES (%(region)s, 'dyad', %(dyad)s, %(as_of)s, %(solver)s, %(payload)s)
+                """,
+                [
+                    {
+                        "region": region_pack, "dyad": d["dyad_id"], "as_of": d["as_of"],
+                        "solver": solver, "payload": json.dumps(d),
+                    }
+                    for d in dyads
+                ],
+            )
+    conn.commit()
+    return 1 + len(dyads)
+
+
+def game_solution(
+    conn: Any, region_pack: str, *, scope: str, dyad_id: str = ""
+) -> dict[str, Any] | None:
+    """One persisted solution (the region aggregate or a dyad), with its
+    computed_at stamped in, or None."""
+    import json
+
+    with conn.cursor() as cur:
+        cur.execute(
+            "SELECT payload, computed_at, solver FROM game_solutions "
+            "WHERE region_pack = %s AND scope = %s AND dyad_id = %s",
+            (region_pack, scope, dyad_id),
+        )
+        row = cur.fetchone()
+    if row is None:
+        return None
+    payload, computed_at, solver = row
+    out = payload if isinstance(payload, dict) else json.loads(payload)
+    out["computed_at"] = computed_at.isoformat()
+    out["persisted"] = True
+    out["solver_persisted"] = solver
+    return out
+
+
+def game_solution_dyads(conn: Any, region_pack: str) -> list[str]:
+    with conn.cursor() as cur:
+        cur.execute(
+            "SELECT dyad_id FROM game_solutions WHERE region_pack = %s AND scope = 'dyad' "
+            "ORDER BY dyad_id",
+            (region_pack,),
+        )
+        return [r[0] for r in cur.fetchall()]
 
 
 def backtest_rows(conn: Any, region_pack: str) -> list[dict[str, Any]]:

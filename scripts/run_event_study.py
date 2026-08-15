@@ -49,7 +49,9 @@ def _effect_source(result: event_study.EffectResult) -> str:
     """The Source the panel rows behind this number came from."""
     if result.resolution in ("month", "year"):
         return shiller.SOURCE_SHILLER
-    if result.market_ticker in ("DGS2", "DGS10"):
+    # Every FRED-loaded tenor, not two of three: DGS3MO's daily effects were
+    # stamped yfinance for as long as this tuple omitted it (2026-08-15).
+    if result.market_ticker in ("DGS2", "DGS3MO", "DGS10"):
         return market_data.SOURCE_FRED
     return market_data.SOURCE_YFINANCE
 

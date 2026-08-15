@@ -508,6 +508,7 @@ def test_the_measuring_steps_are_opt_in_so_the_graph_opens_fast(monkeypatch):
         ("GEOGRAPH_STUDY_ON_BOOT", lambda: boot._run_study(["mena"])),
         ("GEOGRAPH_FORECASTS_ON_BOOT", boot._freeze_forecasts),
         ("GEOGRAPH_BACKTEST_ON_BOOT", boot._run_backtest),
+        ("GEOGRAPH_GAMES_ON_BOOT", boot._solve_games),
     ):
         monkeypatch.delenv(var, raising=False)
         result = step()

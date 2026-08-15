@@ -158,12 +158,16 @@ def posterior(prior: float, action: int, payoffs: Payoffs) -> float:
     return float(numerator / denominator) if denominator > 0 else prior
 
 
+SOLVERS = ("qre", "lp")
+
+
 def solve(
     kernel: np.ndarray,
     payoffs: Payoffs,
     *,
     horizon: int = 4,
     precision: float = PRECISION,
+    solver: str = "qre",
 ) -> dict[str, Any]:
     """The equilibrium policy over (period, intensity, capability, type).
 
@@ -172,9 +176,19 @@ def solve(
     entering through the opponent's expected mixture. That keeps the table at
     a size thousands of solves can afford, which is the whole constraint.
 
+    `solver` picks the stage concept: "qre" (the fitted logit response — the
+    default and the estimator's concept) or "lp" (the welfare-maximal
+    correlated equilibrium by linear programming, `equilibrium.py`, with the
+    distance from a Nash point reported as `nash_gap`). The recursion, the
+    policy table and everything downstream are shared.
+
     Returns policy[period][intensity][capability][type] → mixture over
     ACTIONS, plus the value function it came from.
     """
+    if solver not in SOLVERS:
+        raise ValueError(f"solver must be one of {SOLVERS}, got {solver!r}")
+    from core.games import equilibrium as equilibrium_module
+
     bands = len(state_module.INTENSITY_EDGES)
     caps = len(state_module.CAPABILITY_EDGES)
     actions = len(state_module.ACTIONS)
@@ -182,6 +196,16 @@ def solve(
 
     value = np.zeros((bands, caps, types))
     policy = np.zeros((horizon, bands, caps, types, actions))
+    # The opponent's marginal at every solved cell — the LP's joint is not a
+    # product, so B's side is kept rather than re-derived from A's.
+    policy_b = np.zeros((horizon, bands, caps, types, actions))
+    gaps: list[float] = []
+    lp_status_ok = True
+    # The period-0 stage matrices (payoff + discounted continuation) at every
+    # state — what a reader sees when asked "what game is being played at the
+    # opening". 2 × (bands, caps, types, actions, actions); small.
+    opening_a = np.zeros((bands, caps, types, actions, actions))
+    opening_b = np.zeros((bands, caps, types, actions, actions))
 
     for period in range(horizon - 1, -1, -1):
         next_value = value.copy()
@@ -201,21 +225,54 @@ def solve(
                                 stage_payoff(b, a, x, k, own, payoffs)
                                 + payoffs.discount * future
                             )
+                    if period == 0:
+                        opening_a[x, k, own] = matrix_a
+                        opening_b[x, k, own] = matrix_b
+                    if solver == "lp":
+                        stage = equilibrium_module.solve_stage_lp(matrix_a, matrix_b)
+                        policy[period, x, k, own] = stage.mix_a
+                        policy_b[period, x, k, own] = stage.mix_b
+                        # Under a correlated joint the value is Σ p·A, which
+                        # collapses to mix_a @ A @ mix_b exactly when the
+                        # joint is a product (nash_gap = 0).
+                        value[x, k, own] = stage.value_a
+                        gaps.append(stage.nash_gap)
+                        lp_status_ok = lp_status_ok and stage.status == "optimal"
+                        continue
                     mix_a, mix_b = solve_stage(matrix_a, matrix_b, precision=precision)
                     policy[period, x, k, own] = mix_a
+                    policy_b[period, x, k, own] = mix_b
                     # A's expected value is mix_a @ payoff_a @ mix_b — the
                     # OPPONENT'S equilibrium mixture, not A's own. Using mix_a
                     # on both sides is exact only for a symmetric stage game,
                     # and the counted kernel is not symmetrized, so it biased
                     # every continuation value.
                     value[x, k, own] = float(mix_a @ (matrix_a @ mix_b))
-    return {
+    out: dict[str, Any] = {
         "policy": policy,
+        "policy_b": policy_b,
         "value": value,
+        "opening_matrices": (opening_a, opening_b),
         "horizon": horizon,
         "precision": precision,
+        "solver": solver,
         "concept": (
-            f"quantal-response MPBE, finite horizon H={horizon}, "
-            f"precision {precision} held fixed"
+            equilibrium_module.concept_line(horizon)
+            if solver == "lp"
+            else (
+                f"quantal-response MPBE, finite horizon H={horizon}, "
+                f"precision {precision} held fixed"
+            )
         ),
     }
+    if solver == "lp":
+        arr = np.asarray(gaps) if gaps else np.zeros(1)
+        out["nash_gap"] = {
+            "mean": round(float(arr.mean()), 4),
+            "max": round(float(arr.max()), 4),
+            # The share of stage games the LP solved AT a Nash point.
+            "share_product_form": round(float((arr < 1e-6).mean()), 4),
+            "stage_games": int(len(gaps)),
+            "all_optimal": bool(lp_status_ok),
+        }
+    return out

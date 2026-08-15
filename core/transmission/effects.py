@@ -101,8 +101,15 @@ def effects_for_dyad(conn: kuzu.Connection, dyad_id: str) -> list[dict[str, Any]
         "-[:DIRECTED_AT]->(y:Actor {node_id: $target}) "
         "MATCH (e)-[a:AFFECTED]->(m:Market) "
         "RETURN e.node_id AS event_id, e.event_time AS event_time, "
+        "e.name AS event_name, e.goldstein AS goldstein, "
+        "e.escalation_direction AS escalation_direction, "
+        "e.escalation_magnitude AS escalation_magnitude, "
+        "e.fidelity_tier AS fidelity_tier, e.region_pack AS region_pack, "
+        "x.node_id AS initiator_id, y.node_id AS target_id, "
         "m.node_id AS market_id, m.name AS market_name, "
-        "a.abnormal_return AS abnormal_return, a.window AS window"
+        "a.abnormal_return AS abnormal_return, a.window AS window, "
+        "a.first_mover AS first_mover, a.p_value AS p_value, "
+        "a.t_stat AS t_stat, a.resolution AS resolution"
     )
     rows = kuzu_store.query(conn, pattern, {"initiator": actor_a, "target": actor_b})
     if actor_a != actor_b:

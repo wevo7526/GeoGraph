@@ -1,45 +1,42 @@
 @import "tailwindcss";
 
-/* THE ARCHIVE IS SET ON PAPER (2026-08-12).
+/* THE ARCHIVE IS SET ON WHITE (2026-08-15).
    ---------------------------------------------------------------------------
-   A DELIBERATE DEVIATION FROM BUILD-SPEC §15, which specifies a near-black
-   ground with parchment text. The landing page was reset as a broadsheet
-   front page and the contrast against a dark app read as two products rather
-   than one; the whole surface now carries the print language instead. §15's
-   actual requirement — restrained, serious, one accent, nothing decorative —
-   is honoured in full. Its ground and text are inverted, and this comment is
-   the citation rather than a silent change.
+   A DELIBERATE, USER-DIRECTED DEVIATION FROM BUILD-SPEC §15 (near-black
+   ground, parchment text) AND FROM THE 2026-08-12 PARCHMENT SURFACE. The
+   ground is now plain white and the ink plain black: the print language is
+   kept — masthead rules, dot-leader ledgers, one accent, nothing decorative —
+   and only its paper stock changed. §15's actual requirement (restrained,
+   serious, one accent) is honoured in full; this comment is the citation.
 
-   ONE EXCEPTION, AND IT IS A DESIGN, NOT A LEFTOVER: the 3D canvas keeps its
-   near-black ground (--plate). A lit instrument inset into a printed page is
-   how technical broadsheets have always shown a plate, and the categorical
-   series colours below were validated against a dark surface — repainting
-   them for paper would break an encoding that is currently correct.
+   THE 3D CANVAS IS WHITE TOO, ruled with a black border. The 2026-08-12 note
+   kept a dark plate because the categorical actor colours had been validated
+   against near-black; they were RE-VALIDATED against #ffffff for this change
+   (every series colour clears the 3:1 graphical-object floor on white, the
+   gold was darkened to do so) and Graph3D's dim/ink/text constants inverted
+   with them. Do not "restore" the dark plate as a bug fix.
 
-   Every colour that lands on paper was validated with the data-viz palette
-   checker (lightness band, chroma floor, protan/deutan separation,
-   normal-vision floor, contrast vs the #f2ecdd ground) rather than chosen by
-   eye. --accent and --alert are a DIVERGING PAIR carrying sign, not decoration:
+   --accent and --alert are a DIVERGING PAIR carrying sign, not decoration:
    gains and de-escalation take the blue, losses and escalation the oxblood.
-   Their worst-case CVD separation is ΔE 21.9 and both clear AA text contrast
-   (5.40:1 and 6.02:1), so a red/green-blind reader loses nothing. */
+   On white they read 6.4:1 and 7.3:1 against the ground and their CVD
+   separation is unchanged from the paper palette (ΔE 21.9). */
 :root {
-  --ground: #f2ecdd;      /* the page */
-  --plate: #12100c;       /* the instrument canvas inset into it */
-  --panel: #e9e1cd;       /* boxed content — a tint, never a raised card */
-  --line: #c9bfa8;        /* hairline rules; recessive by design */
-  --rule-strong: #1a1610; /* the masthead rule and its emphasis siblings */
-  --text: #1a1610;
-  --muted: #6d6353;
+  --ground: #ffffff;      /* the page */
+  --plate: #ffffff;       /* the instrument canvas — white, black-ruled */
+  --panel: #f5f5f5;       /* boxed content — a tint, never a raised card */
+  --line: #d4d4d4;        /* hairline rules; recessive by design */
+  --rule-strong: #000000; /* the masthead rule and its emphasis siblings */
+  --text: #111111;
+  --muted: #666666;
   --accent: #2a5fa8;      /* the one flourish: links, active nav, gains */
   --alert: #9e3418;       /* loss, escalation, the thing that needs saying */
 
   /* Categorical series for the network view — actor types. Validated as a set
      (lightness band, chroma floor, CVD and normal-vision separation, contrast)
-     against the DARK PLATE, which is the only surface they are drawn on. The
-     UI tokens above are inks and surfaces; they fail as series colors by
-     design — never encode identity with --text/--muted. */
-  --series-state: #c0872a;
+     against the WHITE PLATE, the surface they are drawn on. The UI tokens
+     above are inks and surfaces; they fail as series colors by design —
+     never encode identity with --text/--muted. */
+  --series-state: #a8731f;
   --series-person: #b04a5c;
   --series-org: #4a82d4;
   --series-swf: #2f9960;
@@ -222,15 +219,14 @@ body {
    a ResizeObserver — ForceGraph3D with no size draws a WINDOW-sized canvas
    that overflows its column (the documented MarketGraph bug). Overlays sit on
    top of the canvas, out of layout. */
-/* THE PLATE. The one dark surface left in the archive, and deliberately so —
-   see the palette note at the top of this file. The WebGL scene is lit
-   against near-black and the categorical actor colours were validated there;
-   inverting it would cost a correct encoding and buy nothing. */
+/* THE PLATE. White, ruled with a solid black border — the knowledge graph is
+   a figure set into the page, and the rule is what says so. See the palette
+   note at the top of this file for the re-validation that made this safe. */
 .canvas3d {
   position: relative;
   background: var(--plate);
   min-width: 0;
-  border: 1px solid var(--rule-strong);
+  border: 2px solid #000000;
 }
 
 .canvas3d-fill {

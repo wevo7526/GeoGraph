@@ -54,6 +54,9 @@ def run(pack_name: str) -> dict[str, Any] | None:
             reversion_book=books["reversion"],
         )
         written = pg_store.record_backtest(panel, pack_name, result)
+        # The skips and the summary travel with the ledger — a region whose
+        # every quarter was a recorded skip must say so, not read as unrun.
+        pg_store.record_backtest_run(panel, pack_name, result)
     finally:
         panel.close()
 

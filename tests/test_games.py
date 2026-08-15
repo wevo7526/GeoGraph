@@ -661,3 +661,165 @@ def test_beliefs_are_filtered_from_observed_actions():
         "a": 0.5, "b": 0.5, "quarters_observed": 0, "source": "default",
     }
     assert hawks["source"] == "bayes_filter"
+
+
+# ── the LP equilibrium and the scenario map (2026-08-15) ──────────────────────
+
+
+def test_the_lp_stage_solution_is_a_correlated_equilibrium():
+    # Every incentive constraint holds on the LP's joint distribution: a side
+    # told its recommended action cannot gain by deviating.
+    from core.games import equilibrium
+
+    rng = np.random.default_rng(3)
+    a = rng.normal(size=(3, 3))
+    b = rng.normal(size=(3, 3))
+    stage = equilibrium.solve_stage_lp(a, b)
+    assert stage.status == "optimal"
+    assert abs(stage.joint.sum() - 1.0) < 1e-6 and (stage.joint >= 0).all()
+    for i in range(3):
+        for i_alt in range(3):
+            gain = sum(stage.joint[i, j] * (a[i_alt, j] - a[i, j]) for j in range(3))
+            assert gain <= 1e-6
+    for j in range(3):
+        for j_alt in range(3):
+            gain = sum(stage.joint[i, j] * (b[i, j_alt] - b[i, j]) for i in range(3))
+            assert gain <= 1e-6
+    assert 0.0 <= stage.nash_gap <= 1.0
+
+
+def test_a_product_form_ce_reports_a_zero_nash_gap():
+    # A prisoner's-dilemma-shaped stage: the unique equilibrium is pure, so
+    # the welfare-maximal CE that survives the incentive constraints is a
+    # product and the gap says so.
+    from core.games import equilibrium
+
+    a = np.array([[3.0, 0.0, 0.0], [5.0, 1.0, 0.0], [5.0, 1.0, 1.0]])
+    stage = equilibrium.solve_stage_lp(a, a.T)
+    assert stage.nash_gap < 1e-6
+
+
+def test_the_lp_solver_threads_through_the_recursion():
+    # Same kernel, same payoffs, two concepts: both return proper policies,
+    # the LP carries its nash_gap audit and B's marginal, and the QRE does not
+    # pretend to.
+    kernel = _realistic_kernel()
+    lp = solve.solve(kernel, solve.Payoffs(), horizon=2, solver="lp")
+    qre = solve.solve(kernel, solve.Payoffs(), horizon=2, solver="qre")
+    for eq in (lp, qre):
+        assert np.allclose(eq["policy"].sum(axis=-1), 1.0)
+        assert np.allclose(eq["policy_b"].sum(axis=-1), 1.0)
+        assert eq["opening_matrices"][0].shape[-2:] == (3, 3)
+    assert lp["solver"] == "lp" and "nash_gap" in lp and lp["nash_gap"]["all_optimal"]
+    assert "correlated-equilibrium LP" in lp["concept"]
+    assert "nash_gap" not in qre
+    with pytest.raises(ValueError):
+        solve.solve(kernel, solve.Payoffs(), horizon=2, solver="nope")
+
+
+def test_paths_carry_the_belief_trajectory():
+    result = _paths()
+    for path in result["paths"]:
+        for step in path["steps"]:
+            assert 0.0 <= step["belief_a"] <= 1.0 and 0.0 <= step["belief_b"] <= 1.0
+
+
+def test_scenarios_are_named_from_the_course_and_sum_over_the_retained_mass():
+    from core.games import scenarios
+
+    priced = _paths()
+    named = scenarios.scenarios_for(
+        priced, dyad_id="dyad:x--y", dyad_name="Xland – Yland", opening_band=2, bands=6,
+    )
+    assert named and len(named) == len(priced["paths"])
+    kinds = {sc["kind"] for sc in named}
+    assert kinds <= {
+        "mutual_escalation", "one_sided_pressure", "brinkmanship", "probe_and_retreat",
+        "step_down", "drift_up", "drift_down", "holding_pattern",
+    }
+    assert all(sc["scenario_name"].endswith(":dyad:x--y") for sc in named)
+    assert abs(sum(sc["likelihood"] for sc in named) - priced["retained_probability"]) < 1e-3
+    assert all(sc["rationale"] and sc["end_label"] for sc in named)
+
+
+def test_the_course_classifier_reads_who_pressed():
+    from core.games import scenarios
+
+    esc = {"action_a": "escalate", "action_b": "hold", "intensity_band": 3}
+    hold = {"action_a": "hold", "action_b": "hold", "intensity_band": 2}
+    de = {"action_a": "de-escalate", "action_b": "hold", "intensity_band": 1}
+    assert scenarios.classify_course([esc, esc], 2)[0] == "one_sided_pressure"
+    assert scenarios.classify_course([esc, de], 2)[0] == "probe_and_retreat"
+    assert scenarios.classify_course([hold, hold], 2)[0] == "holding_pattern"
+    both = {"action_a": "escalate", "action_b": "escalate", "intensity_band": 4}
+    assert scenarios.classify_course([both, both], 2)[0] == "mutual_escalation"
+    assert scenarios._presser([esc], "A", "B") == "A"
+    assert scenarios._presser([both], "A", "B") is None
+
+
+def test_the_explanation_is_written_from_the_payload():
+    # Every number in the prose is a field of the solution: the check is that
+    # the writer runs on a synthetic solution and cites its figures.
+    from core.games import scenarios
+
+    kernel = _realistic_kernel()
+    payoffs = solve.Payoffs()
+    context = {
+        "table": [
+            {"dyad_id": "dyad:x--y", "dyad_name": "Xland – Yland", "q": q,
+             "date": f"{2000 + q // 4}-01-01", "intensity": 3.0 + (q % 3), "events": 4,
+             "tone": -2.0}
+            for q in range(30)
+        ],
+        "kernel": kernel,
+        "joint": {},
+        "effects": [],
+        "model_trajectories": {},
+        "model_identity": None,
+        "coverage": {"cells": 54, "measured": 54, "fallback": 0, "share_measured": 1.0,
+                     "observations": 999},
+        "as_of": "2007-01-01",
+    }
+    solved = scenarios.solve_dyad(
+        context, region="test", dyad_id="dyad:x--y", payoffs=payoffs, graph_conn=None,
+        horizon=2,
+    )
+    assert solved is not None
+    assert set(solved["concepts"]) == {"lp", "qre"}
+    text = " ".join(solved["explanation"])
+    assert "Xland" in text and "Yland" in text
+    assert "nash_gap" in text
+    assert "untilted" in text  # no frozen model in this context
+    lp = solved["concepts"]["lp"]
+    assert 0.0 <= lp["escalation_probability"] <= 1.0
+    assert lp["opening_matrix"]["resolute"]["actions"] == list(state.ACTIONS)
+
+
+def test_the_region_map_aggregates_every_solved_dyad(tmp_path, monkeypatch):
+    from core.games import scenarios
+
+    kernel = _realistic_kernel()
+    table = []
+    for d in ("dyad:a--b", "dyad:c--d"):
+        table += [
+            {"dyad_id": d, "dyad_name": d, "q": q, "date": f"{2000 + q // 4}-01-01",
+             "intensity": 2.0 + (q % 4), "events": 3, "tone": -1.0}
+            for q in range(24)
+        ]
+    context = {
+        "table": table, "kernel": kernel, "joint": {}, "effects": [],
+        "model_trajectories": {}, "model_identity": None,
+        "coverage": {"cells": 54, "measured": 54, "fallback": 0, "share_measured": 1.0,
+                     "observations": 100},
+        "as_of": "2005-10-01",
+    }
+    solved = scenarios.region_map(
+        context, region="test", payoffs=solve.Payoffs(), graph_conn=None,
+        dyad_ids=["dyad:a--b", "dyad:c--d", "dyad:missing"], horizon=2,
+    )
+    agg = solved["region"]
+    assert agg["dyads_solved"] == 2 and len(solved["dyads"]) == 2
+    assert len(agg["ranking"]) == 2 and len(agg["heat"]) == 2
+    assert len(agg["region_fan"]) == 2
+    assert agg["explanation"] and agg["boundary_statement"]
+    assert all(abs(sum(row["distribution"]) - 1.0) < 1e-3 for row in agg["region_fan"])

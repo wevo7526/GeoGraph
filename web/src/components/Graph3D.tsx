@@ -12,7 +12,7 @@ import type { Dyad, Flow, GraphEvent, PackActor, Relation } from '../types'
  * lesson). These are the validated categorical steps from styles.css, NOT the
  * UI inks: --text/--muted fail as series colors by design. */
 export const ACTOR_COLOR: Record<PackActor['actor_type'], string> = {
-  state: '#c0872a',
+  state: '#a8731f',
   person: '#b04a5c',
   org: '#4a82d4',
   swf: '#2f9960',
@@ -52,17 +52,18 @@ export const MARKET_NODE = '#8a93a6'
 
 /** Event-flow edges (dyads active in the slider window). */
 const EDGE_ESCALATING = 'rgba(164, 74, 63, 0.85)'
-const EDGE_ACTIVE = 'rgba(138, 147, 166, 0.65)'
-const EDGE_DORMANT = 'rgba(35, 42, 58, 0.55)'
+const EDGE_ACTIVE = 'rgba(90, 98, 115, 0.70)'
+const EDGE_DORMANT = 'rgba(35, 42, 58, 0.18)'
 export const EDGE_SWATCH_ESCALATING = '#a44a3f'
-export const EDGE_SWATCH_ACTIVE = '#8a93a6'
+export const EDGE_SWATCH_ACTIVE = '#5a6273'
 
-/** What everything unrelated to the selection fades to: just above the ink
- * ground, so the shape of the region stays visible as context. */
-const DIM_NODE = '#1b2130'
-const DIM_LINK = 'rgba(35, 42, 58, 0.25)'
-const INK = '#0b0e14'
-const TEXT = '#d9d4c5'
+/** What everything unrelated to the selection fades to: just below the white
+ * ground, so the shape of the region stays visible as context. The plate is
+ * WHITE (styles.css, 2026-08-15) — these constants were inverted with it. */
+const DIM_NODE = '#dcdcdc'
+const DIM_LINK = 'rgba(35, 42, 58, 0.10)'
+const INK = '#ffffff'
+const TEXT = '#111111'
 
 interface Sim extends PackActor {
   kind: 'actor' | 'market'
@@ -412,7 +413,7 @@ export default function Graph3D({
       const dimmed = focus !== null && !focus.neighbours.has(n.id)
       const label = (height: number): THREE.Object3D => {
         const sprite = new SpriteText(n.name)
-        sprite.color = n.id === selectedActor ? '#ffffff' : dimmed ? '#3a4356' : TEXT
+        sprite.color = n.id === selectedActor ? '#000000' : dimmed ? '#b8b8b8' : TEXT
         sprite.fontFace = 'Georgia'
         sprite.textHeight = height
         ;(sprite as unknown as { position: { set: (x: number, y: number, z: number) => void } })
@@ -459,7 +460,7 @@ export default function Graph3D({
         controlType="orbit"
         nodeVal="val"
         nodeColor={(n) => {
-          if (n.id === selectedActor) return '#ffffff'
+          if (n.id === selectedActor) return '#000000'
           if (focus && !focus.neighbours.has(n.id)) return DIM_NODE
           return n.color
         }}

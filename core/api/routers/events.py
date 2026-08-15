@@ -365,8 +365,12 @@ def escalation_trajectory(request: Request, dyad_id: str) -> dict[str, Any]:
 
 
 @router.get("/dyads")
-def list_dyads(request: Request) -> dict[str, Any]:
-    """Every dyad with escalation state, most conflictual baseline first."""
+def list_dyads(request: Request, region: str | None = None) -> dict[str, Any]:
+    """Every dyad with escalation state, most conflictual baseline first.
+
+    `region` keeps the dyads whose BOTH actors sit on that pack's roster —
+    the parameter was accepted and ignored until 2026-08-15, so every lens
+    served the same 32 spine dyads (Iran pairs under the Eurasia lens)."""
     conn = _conn(request)
     rows = kuzu_store.query(
         conn,
@@ -375,4 +379,12 @@ def list_dyads(request: Request) -> dict[str, Any]:
         "d.ewma_baseline AS ewma_baseline, d.ewma_as_of AS ewma_as_of "
         "ORDER BY d.ewma_baseline, d.node_id",
     )
-    return {"rows": rows}
+    if region:
+        from core import packs
+
+        try:
+            roster = {a["id"] for a in packs.load(region).actors}
+        except packs.PackError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        rows = [r for r in rows if r["actor_a_id"] in roster and r["actor_b_id"] in roster]
+    return {"rows": rows, "region": region}

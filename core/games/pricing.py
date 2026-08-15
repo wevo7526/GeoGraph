@@ -44,7 +44,10 @@ def measured_effects(conn: Any, *, region_pack: str | None = None) -> list[dict[
     # OPTIONAL MATCH it filters the optional pattern (which cannot drop rows)
     # and every region's effects flow into every game's pricing. It must sit
     # on the outer MATCH.
-    where = "WHERE e.region_pack = $pack " if region_pack else ""
+    # The pack filter KEEPS pack-agnostic deep-tier events (COW MIDs carry
+    # region_pack = ''): they are the only measured effects most historical
+    # dyads have, and dropping them priced every game over the wire alone.
+    where = "WHERE (e.region_pack = $pack OR e.region_pack = '') " if region_pack else ""
     return kuzu_store.query(
         conn,
         "MATCH (e:Event)-[a:AFFECTED]->(m:Market) "

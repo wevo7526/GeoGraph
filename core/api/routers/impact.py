@@ -40,6 +40,22 @@ class HypotheticalRequest(BaseModel):
     region: str | None = None
 
 
+@router.get("/impact/coverage")
+def impact_coverage(request: Request, region: str = "mena") -> dict[str, Any]:
+    """The market-movement trace, registered per dyad: for every pair on the
+    pack's roster, how many graph events it holds and how many carry a
+    measured effect. This is how "no measured effects" is told apart from
+    "not yet measured" — the transmission engine only measures events in the
+    graph, and only on a measuring boot."""
+    from core import packs
+
+    try:
+        roster = {a["id"] for a in packs.load(region).actors}
+    except packs.PackError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return impact_module.dyad_coverage(_conn(request), region, roster)
+
+
 @router.get("/impact/{event_id}")
 def impact_for_event(request: Request, event_id: str) -> dict[str, Any]:
     result = impact_module.event_impact(_conn(request), event_id)

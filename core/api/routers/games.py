@@ -25,128 +25,128 @@ from typing import Any
 from fastapi import APIRouter, HTTPException, Query, Request
 
 from core.games import bridge as bridge_module
+from core.games import context as context_module
 from core.games import duration as duration_module
 from core.games import opening as opening_module
 from core.games import paths as paths_module
 from core.games import pricing as pricing_module
 from core.games import solve as solve_module
 from core.games import state as state_module
-from core.games import transition as transition_module
-from core.graph import kuzu_store
 from core.models import panel as panel_module
-from core.wire import serving
 
 router = APIRouter(tags=["games"])
 
-#: Per-region kernel cache. Counting it walks every dyad-quarter in the
-#: archive, which is seconds — far too slow for a slider, and it cannot
-#: change under a single API process anyway (Kuzu is single-writer and the
-#: API holds the lock).
-_CACHE: dict[str, dict[str, Any]] = {}
+_CACHE = context_module.CACHE
 
 
 def _context(request: Request, region: str) -> dict[str, Any]:
-    conn = request.app.state.graph
-    cached = _CACHE.get(region)
-    # A context built while the graph was closed (api-first boot in progress)
-    # has no measured effects and no model tilt; it must not outlive the
-    # boot. Rebuild the first time the graph is open.
-    if cached is not None and (cached["graph_was_open"] or conn is None):
-        return cached
-
-    # THE CORPUS FIRST for the panel and the joint actions — the same order
-    # `fit_game.py` reads, so the game a user explores here is solved over the
-    # same table its committed payoffs were fitted to. The graph keeps two
-    # jobs it is the only source for: the fallback when no artifact ships, and
-    # the AFFECTED effects below, which the transmission engine writes there
-    # and nothing else may.
-    table = serving.table(region)
-    joint = serving.joint_actions()
-    if table is None or joint is None:
-        if conn is None:
-            raise HTTPException(
-                status_code=503,
-                detail=request.app.state.graph_error or "graph unavailable",
-            )
-        table = panel_module.build(
-            panel_module.dyad_event_rows(conn), region_pack=region
-        )
-        joint = transition_module.joint_actions(
-            transition_module.event_rows(conn), quarter_of=panel_module.quarter_index
-        )
-    if not table:
+    """The region context (kernel, joint actions, effects, model tilt), built
+    by `core.games.context.build` — shared with the scenario map so the
+    persisted solutions and the live counterfactuals see one archive."""
+    try:
+        return context_module.build(request.app.state.graph, region)
+    except context_module.GraphNeeded as exc:
         raise HTTPException(
-            status_code=404,
-            detail=f"no modelable dyad in {region} — nothing to solve over",
-        )
-    kernel, observed = transition_module.kernel(
-        transition_module.count(table, joint)
-    )
-
-    # The frozen model mode's trajectories — the ML→game bridge's input. Read
-    # once per region: a gated learned drift tilts its dyad's kernel, with the
-    # audit on the response. No graph or no frozen model → no tilt, exactly.
-    model_trajectories: dict[str, list[dict[str, Any]]] = {}
-    model_identity: dict[str, Any] | None = None
-    if conn is not None:
-        frozen_model = kuzu_store.query(
-            conn,
-            "MATCH (f:Forecast) WHERE f.mode = 'model' AND f.region_pack = $region "
-            "RETURN f.frozen_inputs_json AS frozen "
-            "ORDER BY f.generated_at DESC, f.node_id LIMIT 1",
-            {"region": region},
-        )
-        if frozen_model and frozen_model[0]["frozen"]:
-            import json
-
-            inputs = json.loads(str(frozen_model[0]["frozen"]))
-            model_trajectories = {
-                t["dyad_id"]: t["path"] for t in inputs.get("trajectories", [])
-            }
-            model_identity = inputs.get("model")
-
-    context = {
-        "table": table,
-        "kernel": kernel,
-        "joint": joint,
-        "coverage": transition_module.coverage(observed),
-        # Measured market effects live in the graph alone. An open graph adds
-        # them; without one the game still solves, priced over no effects
-        # rather than refusing the page.
-        "effects": (
-            pricing_module.measured_effects(conn, region_pack=region)
-            if conn is not None else {}
-        ),
-        "model_trajectories": model_trajectories,
-        "model_identity": model_identity,
-        "graph_was_open": conn is not None,
-        "as_of": max(row["date"] for row in table),
-    }
-    _CACHE[region] = context
-    return context
+            status_code=503, detail=request.app.state.graph_error or str(exc)
+        ) from exc
+    except context_module.NothingToSolve as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
 def _defaults(region: str) -> dict[str, float]:
-    """The fitted payoffs a slider starts from, so "no change" means the
-    frozen forecast rather than an arbitrary guess."""
-    import json
+    return context_module.fitted_payoffs(region)
 
-    from core.models import registry
 
-    target = registry.MODELS_DIR / f"game-{region}.json"
-    if not target.exists():
-        base = solve_module.Payoffs()
-        return {
-            "discount": base.discount,
-            "cost_resolute": base.cost_resolute,
-            "cost_irresolute": base.cost_irresolute,
-            "stake": base.stake,
-            "audience": base.audience,
-        }
-    with open(target, encoding="utf-8") as fh:
-        artifact = json.load(fh)
-    registry.verify_hash(artifact, what=target.name)
-    return dict(artifact["payoffs"])
+def _panel() -> Any | None:
+    """A panel connection, or None when Postgres is unset/unreachable — the
+    scenario endpoints then solve live and say `persisted: false`."""
+    from core import settings as settings_module
+    from core.panel import pg_store
+
+    try:
+        return pg_store.connect(settings_module.load())
+    except pg_store.PanelUnavailable:
+        return None
+
+
+def _live_region(request: Request, region: str, dyads: int) -> dict[str, Any]:
+    from core.games import scenarios
+
+    context = _context(request, region)
+    payoffs = solve_module.Payoffs(**_defaults(region))
+    return scenarios.region_map(
+        context, region=region, payoffs=payoffs, graph_conn=request.app.state.graph,
+        dyad_ids=context_module.active_dyads(context, dyads),
+    )
+
+
+@router.get("/games/region")
+def region_scenarios(
+    request: Request,
+    region: str = "mena",
+    live: bool = False,
+    dyads: int = Query(8, ge=1, le=40),
+) -> dict[str, Any]:
+    """The region's future-event map: every active dyad solved under the LP
+    correlated equilibrium (nash_gap reported) and the fitted QRE, courses
+    named as scenarios with likelihoods, priced to the measured market map,
+    explained from the numbers (core/games/scenarios.py).
+
+    PERSISTED FIRST: `scripts/solve_games.py` (the boot's games step) writes
+    the map to Postgres, and that is what every caller sees — same numbers
+    for everyone, dated. `live=true` re-solves on request for `dyads` pairs
+    (slower; flagged `persisted: false`), which is also the fallback when
+    nothing is persisted yet.
+    """
+    from core.panel import pg_store
+
+    if not live:
+        panel = _panel()
+        if panel is not None:
+            try:
+                stored = pg_store.game_solution(panel, region, scope="region")
+            finally:
+                panel.close()
+            if stored is not None:
+                return stored
+    solved = _live_region(request, region, dyads)
+    out = solved["region"]
+    out["persisted"] = False
+    out["note"] = (
+        "solved on request — no persisted scenario map for this region yet "
+        "(scripts/solve_games.py, or a boot with GEOGRAPH_GAMES_ON_BOOT=1)"
+    )
+    return out
+
+
+@router.get("/games/dyad")
+def dyad_solution(
+    request: Request, dyad: str, region: str = "mena", live: bool = False
+) -> dict[str, Any]:
+    """One dyad's full solved game — both concepts, opening matrices, belief
+    trajectories, priced courses, named scenarios and the explanation."""
+    from core.games import scenarios
+    from core.panel import pg_store
+
+    if not live:
+        panel = _panel()
+        if panel is not None:
+            try:
+                stored = pg_store.game_solution(panel, region, scope="dyad", dyad_id=dyad)
+            finally:
+                panel.close()
+            if stored is not None:
+                return stored
+    context = _context(request, region)
+    payoffs = solve_module.Payoffs(**_defaults(region))
+    solved = scenarios.solve_dyad(
+        context, region=region, dyad_id=dyad, payoffs=payoffs,
+        graph_conn=request.app.state.graph,
+    )
+    if solved is None:
+        raise HTTPException(status_code=404, detail=f"no series for {dyad} in {region}")
+    solved["persisted"] = False
+    return solved
 
 
 @router.get("/games/defaults")
