@@ -53,7 +53,7 @@ REGION_DYADS = 12
 #: play named at 100%, because those rows also predate the belief ceiling that
 #: stopped a filtered belief reaching certainty. A persisted computation
 #: outlives the code that wrote it; the version is what makes that safe.
-PAYLOAD_VERSION = "2026-08-15.3"
+PAYLOAD_VERSION = "2026-08-15.4"
 
 #: A step's market row needs this many measurements before the scenario
 #: names it as an implication (the pricing module's own thinness bar).
@@ -202,23 +202,40 @@ def scenarios_for(
     escalatory list could carry the same pair under the same name four times,
     each holding a slice of one distribution — and each slice's likelihood
     answered "how much mass is on this exact sequence", which is a question
-    about the enumeration's resolution rather than about the world. Pooling
-    every course the classifier reads the same way answers the question a
-    reader actually has ("how likely is mutual escalation at all"), makes the
-    name unique by construction, and keeps the total intact: the likelihoods
-    still sum to the retained mass. The modal course of the kind is kept as
-    `course`, with `courses` saying how many were pooled behind it.
+    about the enumeration's resolution rather than about the world. With 1,645
+    enumerated courses the top eight held 1.4% of the mass between them, so
+    the page's own headline read "most likely course … at 1%".
+
+    The likelihood is therefore pooled over EVERY enumerated course of that
+    kind (`paths.enumerate_paths` returns `kinds`, computed before the reading
+    cut), and the shares sum to one across kinds. The modal course is kept as
+    `course`, with `courses` saying how many were pooled behind it. Payloads
+    without `kinds` — anything frozen before this — fall back to pooling the
+    kept paths, which is the old, smaller number.
     """
     side_a, side_b = split_sides(dyad_name)
     grouped: dict[str, dict[str, Any]] = {}
-    for path in priced.get("paths", []):
-        steps = path["steps"]
+    for course_group in priced.get("kinds") or []:
+        steps = course_group["steps"]
         kind, sentence = classify_course(steps, opening_band)
-        slot = grouped.setdefault(kind, {
-            "kind": kind, "sentence": sentence, "likelihood": 0.0, "paths": [],
-        })
-        slot["likelihood"] += float(path["probability"])
-        slot["paths"].append(path)
+        grouped[kind] = {
+            "kind": kind, "sentence": sentence,
+            "likelihood": float(course_group["probability"]),
+            "lead": float(course_group.get("lead_probability", course_group["probability"])),
+            "courses": int(course_group.get("courses", 1)),
+            "paths": [course_group],
+        }
+    if not grouped:
+        for path in priced.get("paths", []):
+            kind, sentence = classify_course(path["steps"], opening_band)
+            slot = grouped.setdefault(kind, {
+                "kind": kind, "sentence": sentence, "likelihood": 0.0,
+                "lead": 0.0, "courses": 0, "paths": [],
+            })
+            slot["likelihood"] += float(path["probability"])
+            slot["lead"] = max(slot["lead"], float(path["probability"]))
+            slot["courses"] += 1
+            slot["paths"].append(path)
 
     out = []
     for slot in sorted(grouped.values(), key=lambda g: (-g["likelihood"], g["kind"])):
@@ -241,8 +258,8 @@ def scenarios_for(
             "scenario_name": f"{kind}:{dyad_id}",
             "kind": kind,
             "likelihood": round(likelihood, 4),
-            "courses": len(slot["paths"]),
-            "lead_likelihood": round(float(lead["probability"]), 4),
+            "courses": int(slot["courses"]),
+            "lead_likelihood": round(float(slot["lead"]), 4),
             "dyad_id": dyad_id,
             "dyad_name": dyad_name,
             "presser": presser,
@@ -261,7 +278,7 @@ def scenarios_for(
             "rationale": (
                 f"{slot['sentence']}; pooled over {len(slot['paths'])} course"
                 f"{'s' if len(slot['paths']) != 1 else ''} of play carrying "
-                f"{likelihood:.0%} of the retained mass, the modal one "
+                f"{likelihood:.0%} of the walk's own mass, the modal one "
                 f"({course}) holding {float(lead['probability']):.0%}; intensity "
                 f"moves {band_label(opening_band, bands)} → "
                 f"{band_label(end_band, bands)} over {len(steps)} quarter"
@@ -368,6 +385,10 @@ def solve_dyad(
         walked = paths_module.enumerate_paths(
             equilibrium, kernel, intensity=band, capability=cap,
             belief_a=float(beliefs["a"]), belief_b=float(beliefs["b"]), payoffs=payoffs,
+            # The naming lives here; the walk does the counting. Injected so
+            # the kind shares are pooled over EVERY enumerated course rather
+            # than over the eight the reading cut keeps.
+            classify=lambda steps: classify_course(steps, band)[0],
         )
         priced = pricing_module.price_paths(
             walked, context["effects"], as_of=context["as_of"], scale=scale or 1.0
@@ -527,7 +548,7 @@ def explain(solution: dict[str, Any]) -> list[str]:
         out.append(
             f"The most likely kind of course under the {primary.upper()} is "
             f"{top['kind'].replace('_', ' ')} at {_pct(top['likelihood'])} of the "
-            f"retained mass — {top.get('courses', 1)} enumerated course"
+            f"walk's own mass — {top.get('courses', 1)} enumerated course"
             f"{'s' if int(top.get('courses', 1)) != 1 else ''} the classifier reads "
             f"the same way, the modal one ({top['course']}, "
             f"{_pct(top.get('lead_likelihood', top['likelihood']))}) ending "

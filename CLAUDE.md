@@ -495,10 +495,16 @@ degenerate.
   per dyad solve), which is what makes a live region map viable as a fallback.
   The limit is honest and tested: under a dominant action the polytope is a
   POINT, the solution is pure, and no regularisation can or should spread it.
-- **A scenario is one KIND of course, not one course** (`scenarios_for`).
-  `scenario_name` is `kind:dyad` and was therefore not unique — one
-  distribution split across four rows of the region's escalatory list, each
-  labelled the same — and a single sequence's mass answers a question about
-  the enumeration's resolution rather than about the world. Pooled by kind:
-  unique names, likelihoods that still sum to the retained mass, `courses`
-  saying how many were pooled and `lead_likelihood` the modal one's own share.
+- **A scenario is one KIND of course, counted over EVERY enumerated course**
+  (`paths.enumerate_paths(classify=…)` → `kinds`, consumed by
+  `scenarios_for`). Two bugs in one: `scenario_name` is `kind:dyad` and was
+  therefore not unique (one distribution split across four identically
+  labelled rows of the region's escalatory list), and a single sequence's mass
+  answers a question about the enumeration's resolution rather than about the
+  world — US–Iran enumerated 1,645 courses and the eight the reading cut
+  prints held 1.4% between them, so the page's headline read "most likely
+  course … at 1%". The kind shares are now pooled BEFORE the top-N cut and sum
+  to one across kinds; `courses` says how many were pooled, `lead_likelihood`
+  the modal one's own share, and the per-kind representative is priced too so
+  a named scenario never loses its market row to the cut. `classify` is
+  injected into `paths.py` so the walk keeps knowing nothing about naming.

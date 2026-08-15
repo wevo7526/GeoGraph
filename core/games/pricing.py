@@ -199,19 +199,28 @@ def price_paths(
         str(e["market_id"]): str(e["market_name"])
         for e in effects if e.get("market_name")
     }
-    priced = []
-    for path in paths.get("paths", []):
-        steps = [
-            {**step, "market": price_step(step, index, names,
-                                          min_measurements=min_measurements)}
-            for step in path["steps"]
-        ]
-        priced.append({**path, "steps": steps})
+    def _price(course: dict[str, Any]) -> dict[str, Any]:
+        return {
+            **course,
+            "steps": [
+                {**step, "market": price_step(step, index, names,
+                                              min_measurements=min_measurements)}
+                for step in course["steps"]
+            ],
+        }
+
+    priced = [_price(path) for path in paths.get("paths", [])]
+    # The per-KIND representatives are priced too: a kind can hold real mass
+    # without any of its courses surviving the top-N reading cut, and a named
+    # scenario with no market row would be the one place the surface stops
+    # saying what such courses have historically moved.
+    kinds = [_price(kind) for kind in paths.get("kinds", [])]
 
     measured = sum(len(m) for markets in index.values() for m in markets.values())
     return {
         **paths,
         "paths": priced,
+        "kinds": kinds,
         "pricing": {
             "measurements": measured,
             "cells": len(index),

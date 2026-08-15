@@ -104,7 +104,7 @@ function RegionGames({ region, onPick }: { region: string; onPick: (dyad: string
           <p className="text-sm mb-4" style={{ maxWidth: '64ch' }}>
             <b>{lead.dyad_name}</b> — {lead.tone_label ?? 'unread'} on balance — carries the most: {pct(lead.sharp_departure_probability, 0)}
             {lead.sharp_departure_probability_lp != null ? ` (LP benchmark ${pct(lead.sharp_departure_probability_lp, 0)})` : ''}, opening at a {lead.opening_label}
-            {lead.top_scenario ? `; its most likely course is ${kind(lead.top_scenario.kind)} at ${pct(lead.top_scenario.likelihood, 0)}` : ''}.
+            {lead.top_scenario ? `; the likeliest kind of course is ${kind(lead.top_scenario.kind)} at ${pct(lead.top_scenario.likelihood, 0)} of its walk` : ''}.
             Bands are departures from each pair's own baseline, not absolute hostility — the tone chip is the absolute read. Click a pair to open its solved game.
           </p>
         )}
@@ -131,7 +131,7 @@ function RegionGames({ region, onPick }: { region: string; onPick: (dyad: string
         </div>
       </Beat>
 
-      <Beat n={2} title="The scenarios" aside={`${map.scenarios_all.length} courses named across ${map.dyads_solved} pairs`}>
+      <Beat n={2} title="The scenarios" aside={`${map.scenarios_all.length} kinds of course named across ${map.dyads_solved} pairs · each pair's kinds sum to one`}>
         <div className="grid md:grid-cols-2 gap-8">
           <div>
             <div className="kicker mb-2" style={{ color: 'var(--alert)' }}>Courses that press — most mass first</div>
@@ -338,7 +338,7 @@ function DyadGame({
         </p>
         {top && (
           <p className="text-sm mt-2" style={{ maxWidth: '62ch' }}>
-            Most likely course: <b>{kind(top.kind)}</b> ({top.course}) at {pct(top.likelihood, 0)} of the retained mass, ending {top.end_label}
+            Most likely kind of course: <b>{kind(top.kind)}</b> at {pct(top.likelihood, 0)} of the walk's mass{top.courses && top.courses > 1 ? ` (${top.courses} courses, modal ${top.course})` : ` (${top.course})`}, ending {top.end_label}
             {top.presser ? `, ${top.presser} pressing` : ''}.
             {top.market_implications.length
               ? ` Historically such courses moved ${top.market_implications.slice(0, 3).map((m) => `${m.market_name} ${(m.median * 100).toFixed(2)}% (n=${m.n})`).join(', ')}.`

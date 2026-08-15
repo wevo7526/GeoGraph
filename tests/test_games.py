@@ -230,6 +230,35 @@ def _paths() -> dict[str, Any]:
     )
 
 
+def test_the_kind_shares_are_counted_over_every_course_not_the_printed_eight():
+    # THE 1% HEADLINE. `top` is a reading cut — 1,645 courses were enumerated
+    # for US–Iran and the eight printed held 1.4% of the mass between them, so
+    # a scenario pooled from THEM said "most likely course … at 1%". The kind
+    # shares are counted before the cut and sum to one.
+    from core.games import scenarios
+
+    kernel = _realistic_kernel()
+    equilibrium = solve.solve(kernel, solve.Payoffs(), horizon=4)
+    walked = paths.enumerate_paths(
+        equilibrium, kernel, intensity=3, capability=1,
+        belief_a=0.5, belief_b=0.5, payoffs=solve.Payoffs(),
+        classify=lambda steps: scenarios.classify_course(steps, 3)[0],
+    )
+    assert walked["kinds"], "no kind was counted"
+    assert sum(k["probability"] for k in walked["kinds"]) == pytest.approx(1.0, abs=1e-3)
+    assert sum(k["courses"] for k in walked["kinds"]) == walked["paths_enumerated"]
+    assert all(k["lead_probability"] <= k["probability"] + 1e-9 for k in walked["kinds"])
+    # And the shares are strictly bigger than the printed courses' own mass,
+    # which is the whole point of counting before the cut.
+    assert max(k["probability"] for k in walked["kinds"]) >= walked["retained_probability"]
+    named = scenarios.scenarios_for(
+        walked, dyad_id="dyad:x--y", dyad_name="Xland – Yland", opening_band=3, bands=6,
+    )
+    assert sum(sc["likelihood"] for sc in named) == pytest.approx(1.0, abs=1e-3)
+    # No classifier passed: the old, smaller pooling over the kept paths.
+    assert not _paths()["kinds"]
+
+
 def test_paths_survive_their_own_threshold():
     # The threshold is a share of the retained distribution, not a raw weight.
     # Compared against an absolute floor, a path through four periods of

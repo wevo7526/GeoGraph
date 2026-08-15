@@ -63,6 +63,28 @@ def _expected_policy(
     return mixture
 
 
+def _resolved_steps(
+    steps: list[dict[str, Any]], band_mass: np.ndarray
+) -> list[dict[str, Any]]:
+    """A course's steps with each period's band read off the DISTRIBUTION the
+    band branching put on it, rather than off whichever branch happened to
+    create the group."""
+    out = []
+    for index, step in enumerate(steps):
+        mass = band_mass[index]
+        total = float(mass.sum())
+        share = mass / total if total > 0 else mass
+        band = int(np.argmax(share))
+        above = np.nonzero(share > BAND_BRANCH_FLOOR)[0]
+        out.append({
+            **step,
+            "intensity_band": band,
+            "band_probability": round(float(share[band]), 4),
+            "band_spread": [int(above[0]), int(above[-1])] if above.size else [band, band],
+        })
+    return out
+
+
 def enumerate_paths(
     equilibrium: dict[str, Any],
     kernel: np.ndarray,
@@ -73,6 +95,7 @@ def enumerate_paths(
     belief_b: float,
     payoffs: solve_module.Payoffs,
     top: int = TOP_PATHS,
+    classify: Any = None,
 ) -> dict[str, Any]:
     """Every path through the horizon, ranked by probability.
 
@@ -211,27 +234,49 @@ def enumerate_paths(
         })
     paths_payload = []
     for group in kept:
-        steps_out = []
-        for index, step in enumerate(group["steps"]):
-            mass = group["band_mass"][index]
-            mass_total = float(mass.sum())
-            share = mass / mass_total if mass_total > 0 else mass
-            band = int(np.argmax(share))
-            above = np.nonzero(share > BAND_BRANCH_FLOOR)[0]
-            steps_out.append({
-                **step,
-                "intensity_band": band,
-                "band_probability": round(float(share[band]), 4),
-                "band_spread": (
-                    [int(above[0]), int(above[-1])] if above.size else [band, band]
-                ),
-            })
         paths_payload.append({
             "probability": round(group["probability"] / total, 4) if total else 0.0,
-            "steps": steps_out,
+            "steps": _resolved_steps(group["steps"], group["band_mass"]),
         })
+
+    # KINDS OVER THE WHOLE WALK, not over the eight survivors. `top` is a
+    # reading cut — with 1,645 enumerated courses the top eight hold 1.4% of
+    # the mass, so a scenario built by pooling THEM answers "how much mass is
+    # on the courses we chose to print". Pooling every enumerated course by
+    # the name the classifier gives it answers the reader's actual question
+    # ("how likely is a step-down at all"), and the shares then sum to one
+    # across kinds instead of to the retained fraction. `classify` is injected
+    # so this module keeps knowing nothing about how a course is NAMED
+    # (core/games/scenarios.py owns that, and imports this one).
+    kinds_payload: list[dict[str, Any]] = []
+    if classify is not None and total:
+        buckets: dict[str, dict[str, Any]] = {}
+        for group in ordered:
+            steps_resolved = _resolved_steps(group["steps"], group["band_mass"])
+            bucket = buckets.setdefault(
+                str(classify(steps_resolved)),
+                {"probability": 0.0, "courses": 0, "lead": 0.0, "steps": steps_resolved},
+            )
+            bucket["probability"] += group["probability"]
+            bucket["courses"] += 1
+            if group["probability"] > bucket["lead"]:
+                bucket["lead"] = group["probability"]
+                bucket["steps"] = steps_resolved
+        kinds_payload = [
+            {
+                "kind": kind,
+                "probability": round(bucket["probability"] / total, 4),
+                "lead_probability": round(bucket["lead"] / total, 4),
+                "courses": bucket["courses"],
+                "steps": bucket["steps"],
+            }
+            for kind, bucket in sorted(
+                buckets.items(), key=lambda item: (-item[1]["probability"], item[0])
+            )
+        ]
     return {
         "paths": paths_payload,
+        "kinds": kinds_payload,
         "paths_enumerated": len(groups),
         # What the top N leaves out, stated. A reader who sees eight paths
         # summing to 0.6 knows something different from one who sees 0.95.
