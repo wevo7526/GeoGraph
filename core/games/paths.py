@@ -35,9 +35,11 @@ from core.games import state as state_module
 TOP_PATHS = 8
 #: Paths below this are not worth a reader's attention even inside the top N.
 MIN_PATH_PROBABILITY = 0.005
-#: Next-band branches below this share of a kernel row are pruned. The floor
-#: is about tree size, not belief: the mass it drops is small and the
-#: marginals accumulate BEFORE the top-N cut, so the fan barely feels it.
+#: Next-band branches below this share of a kernel row are not WALKED FORWARD
+#: (the tree-size bound). It no longer drops mass from the fan: the marginal
+#: accumulates every band's share, tail included, so a sub-floor rupture
+#: transition is counted in the fan even though it is not branched — the floor
+#: is about tree size, never about hiding the escalation tail.
 BAND_BRANCH_FLOOR = 0.05
 #: Live paths carried between periods. A cap, not a target — with band
 #: branching the exact tree is (9 x 6)^H and a bound keeps the walk exact
@@ -125,10 +127,21 @@ def enumerate_paths(
                     ]
                     for x_next in range(bands):
                         share = float(row[x_next])
-                        if share < BAND_BRANCH_FLOOR:
+                        if share <= 0.0:
                             continue
                         branch = joint * share
+                        # THE FAN GETS THE FULL MASS, the tree does not. The
+                        # marginal accumulates EVERY band's share — including the
+                        # sub-floor tail — so escalation into the open top band
+                        # (rupture is inherently a sub-5% transition, precisely
+                        # the event this forecast exists to warn about) shows up
+                        # in the fan instead of being silently pruned. The floor
+                        # then bounds only the BRANCHING: a tail band is counted
+                        # here but not walked forward, which keeps the tree exact
+                        # over the mass that matters without hiding the tail.
                         marginal_mass[period, x_next] += branch
+                        if share < BAND_BRANCH_FLOOR:
+                            continue
                         nxt.append((
                             branch, x_next, posterior_a, posterior_b,
                             [*steps, {
