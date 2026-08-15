@@ -122,6 +122,18 @@ def test_every_expected_number_is_backed_by_precedents(conn):
             assert market["expected"]["n_precedents"] > 0
 
 
+def test_dyad_timeline_groups_by_event_most_recent_first(conn):
+    dyad = escalation.dyad_id("actor:a", "actor:b")
+    timeline = impact.dyad_timeline(conn, dyad)
+    assert timeline["total"] == 3
+    dates = [e["date"] for e in timeline["events"]]
+    assert dates == ["2016-06-01", "2015-06-01", "1950-06-01"]
+    # Each event carries its measured market moves, grouped under it.
+    first = timeline["events"][0]
+    assert first["markets"] and first["markets"][0]["market_id"] == "market:x"
+    assert "car" in first["markets"][0]
+
+
 def test_hypothetical_shares_the_object_shape(conn):
     dyad = escalation.dyad_id("actor:a", "actor:b")
     hist = impact.event_impact(conn, "event:target")

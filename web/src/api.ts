@@ -5,6 +5,7 @@ import type {
   CaseStudyIndexEntry,
   Dyad,
   DyadSeries,
+  DyadTimeline,
   Effect,
   EventDetail,
   EventList,
@@ -181,6 +182,10 @@ export const getPrecedent = (dyadId: string, region?: string) => {
   if (region) query.set('region', region)
   return get<Precedent>(`/api/precedent?${query}`)
 }
+
+// A relationship's market-moving events, most recent first — the timeline feed.
+export const getDyadTimeline = (dyadId: string) =>
+  get<DyadTimeline>(`/api/impact/dyad/${encodeURIComponent(dyadId)}`)
 
 // Counterfactuals: re-solved on request, never frozen and never scored. The
 // payload says so itself; the UI must not present one as a forecast.

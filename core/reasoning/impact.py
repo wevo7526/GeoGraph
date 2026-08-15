@@ -198,6 +198,31 @@ def event_impact(conn: Any, event_id: str) -> dict[str, Any] | None:
     }
 
 
+def dyad_timeline(conn: Any, dyad_id: str, *, limit: int = 40) -> dict[str, Any]:
+    """A relationship's market-moving events, most recent first: one entry per
+    event that carries a measured AFFECTED edge, each listing what its markets
+    did. The feed behind the Relationship page's past→now spine — the north
+    star made visible per event. Empty is honest (this dyad has no measured
+    effects yet), never fabricated."""
+    rows = effects_module.effects_for_dyad(conn, dyad_id)
+    by_event: dict[str, dict[str, Any]] = {}
+    for row in rows:
+        if row["abnormal_return"] is None:
+            continue
+        event = by_event.setdefault(
+            str(row["event_id"]),
+            {"event_id": row["event_id"], "date": str(row["event_time"]), "markets": []},
+        )
+        event["markets"].append({
+            "market_id": row["market_id"],
+            "market_name": row["market_name"],
+            "car": round(float(row["abnormal_return"]), 6),
+            "window": str(row["window"]),
+        })
+    events = sorted(by_event.values(), key=lambda e: e["date"], reverse=True)[:limit]
+    return {"dyad": dyad_id, "events": events, "total": len(by_event)}
+
+
 def hypothetical_impact(
     conn: Any, *, dyad_id: str, as_of: str, region: str | None = None
 ) -> dict[str, Any]:

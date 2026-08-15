@@ -454,6 +454,19 @@ export interface Precedent {
   method: string
 }
 
+/** A relationship's market-moving events, most recent first — the Relationship
+ *  page's past→now timeline. Each event carries the measured moves of its
+ *  markets (AFFECTED abnormal returns), never a modelled number. */
+export interface DyadTimeline {
+  dyad: string
+  total: number
+  events: Array<{
+    event_id: string
+    date: string
+    markets: Array<{ market_id: string; market_name: string; car: number; window: string }>
+  }>
+}
+
 export interface PaperPosition {
   ticker: string
   weight: number

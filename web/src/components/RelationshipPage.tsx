@@ -6,7 +6,9 @@
 import { useEffect, useMemo, useState } from 'react'
 
 import {
+  exploreGame,
   getDyadSeries,
+  getDyadTimeline,
   getForecast,
   getForecasts,
   getPanelDyads,
@@ -23,9 +25,17 @@ import {
 } from '../lib/language'
 import { toggle as toggleWatch, useIsWatched } from '../lib/watchlist'
 import { useRegionLabel } from '../regions'
-import type { DyadSeries, ForecastDetail, PanelDyad, Precedent } from '../types'
+import type {
+  DyadSeries,
+  DyadTimeline,
+  ForecastDetail,
+  GameExplore,
+  PanelDyad,
+  Precedent,
+} from '../types'
 import { BoxRow, Empty, Fan, LineBand } from './charts/Charts'
 import type { Point } from './charts/Charts'
+import { BandFan, Step } from './GameViz'
 
 function dyadFromHash(): string {
   const q = window.location.hash.split('?')[1]
@@ -60,6 +70,8 @@ export default function RelationshipPage({
   const [selected, setSelected] = useState('')
   const [series, setSeries] = useState<DyadSeries | null | undefined>(undefined)
   const [precedent, setPrecedent] = useState<Precedent | null | undefined>(undefined)
+  const [timeline, setTimeline] = useState<DyadTimeline | null | undefined>(undefined)
+  const [game, setGame] = useState<GameExplore | null | undefined>(undefined)
   const [outlook, setOutlook] = useState<ForecastDetail | null | undefined>(undefined)
 
   useEffect(() => {
@@ -79,8 +91,12 @@ export default function RelationshipPage({
     let live = true
     setSeries(undefined)
     setPrecedent(undefined)
+    setTimeline(undefined)
+    setGame(undefined)
     getDyadSeries(selected, region).then((r) => live && setSeries(r))
     getPrecedent(selected, region).then((r) => live && setPrecedent(r))
+    getDyadTimeline(selected).then((r) => live && setTimeline(r))
+    exploreGame(region, selected).then((r) => live && setGame(r))
     return () => {
       live = false
     }
@@ -235,6 +251,31 @@ export default function RelationshipPage({
                 </p>
               </div>
             )}
+
+            {timeline && timeline.events.length > 0 && (
+              <div className="mt-6">
+                <div className="kicker mb-2">Recent events, and what markets did</div>
+                <div className="space-y-1">
+                  {timeline.events.slice(0, 8).map((ev) => (
+                    <div key={ev.event_id} className="flex items-baseline gap-3 text-sm">
+                      <span className="mono text-xs shrink-0" style={{ color: 'var(--muted)' }}>
+                        {ev.date}
+                      </span>
+                      <span className="flex flex-wrap gap-x-4 gap-y-0.5">
+                        {ev.markets.slice(0, 3).map((m) => (
+                          <span key={m.market_id}>
+                            {m.market_name}{' '}
+                            <span style={{ color: m.car >= 0 ? 'var(--accent)' : 'var(--alert)' }}>
+                              {marketMove(m.car)}
+                            </span>
+                          </span>
+                        ))}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
           </Section>
 
           {/* Now */}
@@ -292,6 +333,43 @@ export default function RelationshipPage({
                   </p>
                 )}
               </div>
+            )}
+          </Section>
+
+          {/* How it plays out — the game toward equilibrium */}
+          <Section title="How it plays out">
+            <p className="text-sm mb-4" style={{ color: 'var(--muted)' }}>
+              We solve the escalation game each side is playing — their incentives, and
+              what they currently believe about each other — and let it run forward. This
+              is where the balance of play settles, and how the odds of escalation spread
+              over the coming quarters.
+            </p>
+            {game === undefined ? (
+              <Empty note="solving the game…" />
+            ) : !game ? (
+              <Empty note="couldn't solve the game for this relationship yet" />
+            ) : (
+              <>
+                <BandFan
+                  marginal={game.marginal}
+                  bands={game.marginal[0]?.distribution.length ?? 5}
+                />
+                {game.paths[0] && game.paths[0].steps.length > 0 && (
+                  <div className="mt-5">
+                    <div className="kicker mb-2" style={{ color: 'var(--muted)' }}>
+                      The most likely sequence, priced to markets
+                    </div>
+                    <div className="space-y-3">
+                      {game.paths[0].steps.map((s) => (
+                        <Step key={s.period} step={s} />
+                      ))}
+                    </div>
+                  </div>
+                )}
+                <p className="mono text-[10px] mt-4" style={{ color: 'var(--muted)' }}>
+                  {game.boundary_statement}
+                </p>
+              </>
             )}
           </Section>
 

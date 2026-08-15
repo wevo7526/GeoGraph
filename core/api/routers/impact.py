@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import BaseModel
 
 from core.classifier import escalation
@@ -46,6 +46,16 @@ def impact_for_event(request: Request, event_id: str) -> dict[str, Any]:
     if result is None:
         raise HTTPException(status_code=404, detail=f"no event {event_id}")
     return result
+
+
+@router.get("/impact/dyad/{dyad_id}")
+def impact_dyad_timeline(
+    request: Request, dyad_id: str, limit: int = Query(40, ge=1, le=200)
+) -> dict[str, Any]:
+    """A relationship's market-moving events, most recent first — the feed
+    behind the Relationship page's timeline. Two path segments after /impact,
+    so it never collides with GET /impact/{event_id} (one segment)."""
+    return impact_module.dyad_timeline(_conn(request), dyad_id, limit=limit)
 
 
 @router.post("/impact")
