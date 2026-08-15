@@ -144,12 +144,19 @@ def upsert_observations(conn: Any, rows: list[dict[str, Any]]) -> int:
             open = EXCLUDED.open, high = EXCLUDED.high, low = EXCLUDED.low,
             close = EXCLUDED.close, value = EXCLUDED.value, source_ref = EXCLUDED.source_ref
     """
+    # executemany, not a per-row round trip: a full-history panel load is tens
+    # to hundreds of thousands of daily bars across every market, and the load
+    # runs on the boot path — one server round trip per bar is minutes of pure
+    # latency. Same treatment record_runs already gets.
+    full_rows = [
+        {k: row.get(k) for k in
+         ("market_ticker", "obs_date", "frequency", "open", "high",
+          "low", "close", "value", "source_ref")}
+        for row in rows
+    ]
     with conn.cursor() as cur:
-        for row in rows:
-            full = {k: row.get(k) for k in
-                    ("market_ticker", "obs_date", "frequency", "open", "high",
-                     "low", "close", "value", "source_ref")}
-            cur.execute(sql, full)
+        if full_rows:
+            cur.executemany(sql, full_rows)
     conn.commit()
     return len(rows)
 
@@ -162,8 +169,8 @@ def upsert_intraday(conn: Any, rows: list[dict[str, Any]]) -> int:
         ON CONFLICT (market_ticker, ts) DO UPDATE SET price = EXCLUDED.price
     """
     with conn.cursor() as cur:
-        for row in rows:
-            cur.execute(sql, row)
+        if rows:
+            cur.executemany(sql, list(rows))
     conn.commit()
     return len(rows)
 
