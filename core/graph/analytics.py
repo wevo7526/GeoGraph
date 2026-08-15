@@ -185,6 +185,15 @@ def _metric_rows(graph: nx.Graph, window: Window) -> list[dict[str, Any]]:
     return rows
 
 
+def _write_metrics(conn: Any, window: Window) -> int:
+    """Compute and persist one window's metrics over an ALREADY-OPEN write
+    connection. The core of compute_metrics/compute_windows."""
+    rows = _metric_rows(_subgraph(conn, window), window)
+    if rows:
+        kuzu_store.merge_nodes(conn, "NetworkMetric", rows)
+    return len(rows)
+
+
 def compute_metrics(db_path: Path, window: Window) -> int:
     """Degree, betweenness, eigenvector centrality, Burt's constraint
     (structural holes), and community/coalition detection over the window's
@@ -196,10 +205,18 @@ def compute_metrics(db_path: Path, window: Window) -> int:
     8 TiB address-space reservations pile up."""
     conn = kuzu_store.connect(db_path)
     try:
-        rows = _metric_rows(_subgraph(conn, window), window)
-        if rows:
-            kuzu_store.merge_nodes(conn, "NetworkMetric", rows)
-        return len(rows)
+        return _write_metrics(conn, window)
+    finally:
+        kuzu_store.close(conn)
+
+
+def compute_windows(db_path: Path, windows: list[Window]) -> list[tuple[Window, int]]:
+    """Every window over ONE open connection — the boot's path. Opening the
+    graph once instead of per window avoids the 20-40 cold opens (and their
+    8 TiB reservations) the standard decade+regime set would otherwise pay."""
+    conn = kuzu_store.connect(db_path)
+    try:
+        return [(window, _write_metrics(conn, window)) for window in windows]
     finally:
         kuzu_store.close(conn)
 

@@ -52,9 +52,11 @@ def main() -> None:
     windows = (
         [analytics.Window(*args.window)] if args.window else standard_windows()
     )
+    # ONE open connection for every window, not one per window: the standard
+    # set is the decades plus every regime span (20-40 windows), and each cold
+    # open reserves address space it must then release.
     total = 0
-    for window in windows:
-        written = analytics.compute_metrics(settings.kuzu_db_path, window)
+    for window, written in analytics.compute_windows(settings.kuzu_db_path, windows):
         total += written
         print(f"{window.start}..{window.end}: {written} metric(s)")
     print(f"total: {total}")
