@@ -150,3 +150,40 @@ def test_intraday_upserts_by_timestamp(panel):
     with panel.cursor() as cur:
         cur.execute("SELECT price FROM market_intraday WHERE market_ticker = %s", (_TICKER,))
         assert [row[0] for row in cur.fetchall()] == [2.0]
+
+
+def test_the_watermark_is_per_market_not_per_event(panel):
+    # The bare DISTINCT watermark let packs shadow each other: china measured
+    # an event against ITS markets and mena then skipped it entirely, so
+    # pack-unique markets never got their measurement. Per-market, an event is
+    # skipped only once every one of THIS pack's tickers has an attempt.
+    from dataclasses import dataclass
+
+    @dataclass(frozen=True)
+    class _Skip:
+        event_node_id: str
+        market_ticker: str
+        window: str
+        resolution: str
+        status: str
+        reason: str
+
+    second = _TICKER + ".2"
+    try:
+        pg_store.record_runs(panel, [], [
+            _Skip("event:wm-test", _TICKER, "car_0_1", "day", "skipped_no_data", "test"),
+        ])
+        # One of two tickers attempted → NOT measured for the two-ticker pack,
+        # but the legacy no-tickers watermark (event-distinct) still holds it.
+        assert "event:wm-test" not in pg_store.measured_events(panel, [_TICKER, second])
+        assert "event:wm-test" in pg_store.measured_events(panel)
+        pg_store.record_runs(panel, [], [
+            _Skip("event:wm-test", second, "car_0_1", "day", "skipped_no_data", "test"),
+        ])
+        assert "event:wm-test" in pg_store.measured_events(panel, [_TICKER, second])
+    finally:
+        with panel.cursor() as cur:
+            cur.execute(
+                "DELETE FROM event_study_runs WHERE event_node_id = 'event:wm-test'"
+            )
+        panel.commit()

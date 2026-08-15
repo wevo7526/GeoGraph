@@ -214,13 +214,21 @@ def main() -> None:
 
     def _flush() -> None:
         nonlocal written
-        if pending_results or pending_skips:
-            pg_store.record_runs(panel, pending_results, pending_skips)
+        # A dry run writes NOTHING — including the Postgres side. record_runs
+        # feeds measured_events, so a dry-run write would watermark previewed
+        # events as covered and real runs would never measure them.
         if not args.dry_run:
+            # Kuzu first, the watermark LAST: record_runs is what makes an
+            # event "measured", so it must be the final durable step. The old
+            # order committed the watermark before the merge — a mid-flush
+            # graph failure (full volume, lost lock) then stranded up to a
+            # chunk of events as measured-with-no-edges, invisibly.
             for source_id, group in pending_by_source.items():
                 written += effects_writer.write_effects(
                     graph, group, market_node_ids=market_node_ids, source_id=source_id
                 )
+            if pending_results or pending_skips:
+                pg_store.record_runs(panel, pending_results, pending_skips)
         pending_results.clear()
         pending_skips.clear()
         pending_by_source.clear()
@@ -284,10 +292,7 @@ def main() -> None:
             if index % chunk == 0:
                 _flush()
         _flush()  # the final partial chunk
-    finally:
-        panel.close()
 
-    try:
         if args.dry_run:
             print("\ndry run — nothing written")
             return
@@ -297,6 +302,11 @@ def main() -> None:
             sys.exit("PROVENANCE VIOLATIONS:\n" + "\n".join(violations))
         print("provenance: ok")
     finally:
+        # One finally covers BOTH stores on every path — the graph close used
+        # to live in a second try that an exception in the loop never reached,
+        # leaving the write lock (and Kuzu's 8 TiB reservation) to process
+        # exit.
+        panel.close()
         kuzu_store.close(graph)
 
 

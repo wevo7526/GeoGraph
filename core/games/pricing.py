@@ -40,15 +40,19 @@ def measured_effects(conn: Any, *, region_pack: str | None = None) -> list[dict[
     hit the graph once per path per step per market, which for a distribution
     over eight paths is hundreds of round trips for data that fits in memory.
     """
+    # The region predicate binds to the clause it FOLLOWS: placed after the
+    # OPTIONAL MATCH it filters the optional pattern (which cannot drop rows)
+    # and every region's effects flow into every game's pricing. It must sit
+    # on the outer MATCH.
     where = "WHERE e.region_pack = $pack " if region_pack else ""
     return kuzu_store.query(
         conn,
         "MATCH (e:Event)-[a:AFFECTED]->(m:Market) "
+        f"{where}"
         # OPTIONAL: an event with a measured effect but no coded dyad is still
         # a priceable event — dropping it here would quietly shrink the sample
         # every step is matched against.
         "OPTIONAL MATCH (e)-[:OF_DYAD]->(d:Dyad) "
-        f"{where}"
         "RETURN e.node_id AS event_id, e.event_time AS event_time, "
         "e.quad_class AS quad_class, "
         "e.escalation_magnitude AS magnitude, d.node_id AS dyad_id, "
