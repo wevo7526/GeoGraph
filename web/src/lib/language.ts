@@ -17,16 +17,48 @@ export function tensionLevel(intensity: number, peak: number): string {
 
 export type Trend = 'rising' | 'easing' | 'steady'
 
-/** Direction over the last stretch of quarters, size-normalised so a big quiet
- *  pair and a small tense one are judged on their own scale. */
-export function tensionTrend(rows: Array<{ intensity: number }>): Trend {
-  if (rows.length < 4) return 'steady'
-  const recent = rows.slice(-2).reduce((s, r) => s + r.intensity, 0) / 2
-  const prior = rows.slice(-4, -2).reduce((s, r) => s + r.intensity, 0) / 2
-  const scale = Math.max(1e-9, Math.abs(prior))
-  const change = (recent - prior) / scale
-  if (change > 0.15) return 'rising'
-  if (change < -0.15) return 'easing'
+// Hostility per quarter from the SIGNED tone (mean Goldstein): positive means
+// hostile (tone more negative). Direction reads THIS, never the intensity
+// magnitude — intensity is a departure from a self-catching-up baseline, so a
+// relationship pinned at peak hostility shows near-zero intensity and would
+// read "easing" at its worst. Escalation is hostility RISING (tone falling).
+function hostility(rows: Array<{ tone: number }>): number[] {
+  return rows.map((r) => -(r.tone ?? 0))
+}
+
+function slope(values: number[]): number {
+  const n = values.length
+  if (n < 2) return 0
+  const xbar = (n - 1) / 2
+  const ybar = values.reduce((s, v) => s + v, 0) / n
+  let num = 0
+  let den = 0
+  for (let i = 0; i < n; i++) {
+    num += (i - xbar) * (values[i] - ybar)
+    den += (i - xbar) ** 2
+  }
+  return den === 0 ? 0 : num / den
+}
+
+function stdev(values: number[]): number {
+  const n = values.length
+  if (n < 2) return 0
+  const m = values.reduce((s, v) => s + v, 0) / n
+  return Math.sqrt(values.reduce((s, v) => s + (v - m) ** 2, 0) / n)
+}
+
+/** Direction — the least-squares slope of HOSTILITY over the recent window,
+ *  self-scaled by the dyad's own volatility. Hostility rising is escalation.
+ *  Robust to a single spike's placement, unlike a two-quarter mean of the
+ *  spiky departure-magnitude that made "escalating" read as "easing". */
+export function tensionTrend(rows: Array<{ tone: number }>): Trend {
+  const host = hostility(rows)
+  if (host.length < 4) return 'steady'
+  const window = host.slice(-Math.min(6, host.length))
+  const sd = stdev(host) || 1
+  const norm = slope(window) / sd
+  if (norm > 0.08) return 'rising'
+  if (norm < -0.08) return 'easing'
   return 'steady'
 }
 
