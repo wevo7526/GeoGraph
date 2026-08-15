@@ -1,5 +1,6 @@
 import type {
   Assessment,
+  BacktestLedger,
   CaseStudy,
   CaseStudyIndexEntry,
   Dyad,
@@ -225,6 +226,11 @@ export const exploreGame = (
   }
   return get<GameExplore>(`/api/games/explore?${query}`)
 }
+
+// The walk-forward paper backtest ledger — the region's frozen calls marked to
+// market on $1M notional, quarter by quarter. Region-level, not per-dyad.
+export const getBacktest = (region: string) =>
+  get<BacktestLedger>(`/api/trading/backtest?region=${encodeURIComponent(region)}`)
 
 export const getForecasts = (region?: string) =>
   get<{ rows: ForecastSummary[] }>(
