@@ -160,6 +160,17 @@ export default function RelationshipPage({
     .sort((a, b) => (b.likelihood ?? 0) - (a.likelihood ?? 0))
     .slice(0, 3)
 
+  // Story pieces — the one-paragraph synthesis at the top: the strongest
+  // measured market move (most-evidenced first), and where the game sees the
+  // balance of play heading (expected band rising over the horizon).
+  const topMarket = marketRows.length ? marketRows[0] : null
+  const forwardRising =
+    game && game.marginal.length >= 2
+      ? game.marginal[game.marginal.length - 1].expected_band -
+          game.marginal[0].expected_band >
+        0.05
+      : null
+
   const seriesFailed = lastFailureFor('/api/panel/dyads')
 
   return (
@@ -214,6 +225,31 @@ export default function RelationshipPage({
               </button>
             )}
           </div>
+
+          {/* The story, in one paragraph */}
+          {level && (topMarket || (game && forwardRising !== null)) && (
+            <p className="mt-5 text-base leading-relaxed" style={{ maxWidth: '44rem' }}>
+              {topMarket && (
+                <>
+                  When {name} has flared before,{' '}
+                  <span className="whitespace-nowrap">
+                    {topMarket.market_name}{' '}
+                    <span
+                      style={{ color: topMarket.median >= 0 ? 'var(--accent)' : 'var(--alert)' }}
+                    >
+                      {marketMove(topMarket.median)}
+                    </span>
+                  </span>{' '}
+                  was the typical move across {topMarket.n} comparable episodes.{' '}
+                </>
+              )}
+              {game &&
+                forwardRising !== null &&
+                (forwardRising
+                  ? 'Looking forward, the solved game sees the balance of play building toward escalation.'
+                  : 'Looking forward, the solved game sees pressure easing.')}
+            </p>
+          )}
 
           {/* Where it's been */}
           <Section title="Where it's been">
