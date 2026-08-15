@@ -26,7 +26,7 @@ from __future__ import annotations
 import functools
 import json
 from pathlib import Path
-from typing import Any, cast
+from typing import Any, Literal, cast
 
 import yaml
 
@@ -173,7 +173,9 @@ CODER_MODEL = "claude-opus-5"
 
 #: Reasoning effort. High because the archive is small and curated: the total
 #: spend is trivial and the cost of a wrong code is a corrupted baseline.
-CODER_EFFORT = "high"
+#: Typed as the SDK's closed effort vocabulary — a bare str stops matching the
+#: TypedDict the moment the SDK regenerates its overloads.
+CODER_EFFORT: Literal["high"] = "high"
 
 _INSTRUCTIONS = """\
 You assign CAMEO event codes to descriptions of geopolitical events, for a \

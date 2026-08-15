@@ -18,7 +18,6 @@ web/.vite
 .env
 docs/
 tests/
-embtest/
 .claude/
 .idea
 .vscode

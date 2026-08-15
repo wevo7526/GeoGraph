@@ -529,8 +529,12 @@ def test_the_paper_backtest_is_declinable_and_opt_in(monkeypatch):
     assert "GEOGRAPH_BACKTEST_ON_BOOT" in boot._run_backtest()["skipped"]
     monkeypatch.setenv("GEOGRAPH_BACKTEST_ON_BOOT", "1")
     ran: list[str] = []
-    monkeypatch.setattr(boot, "_run_step",
-                        lambda label, *a, **k: (ran.append(label), {"ok": True, "step": label})[1])
+
+    def record_step(label, *a, **k):
+        ran.append(label)
+        return {"ok": True, "step": label}
+
+    monkeypatch.setattr(boot, "_run_step", record_step)
     boot._run_backtest()
     assert ran, "GEOGRAPH_BACKTEST_ON_BOOT=1 must run the walk"
 

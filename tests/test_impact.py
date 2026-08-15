@@ -8,6 +8,8 @@ invariant, at the read side).
 
 from __future__ import annotations
 
+from typing import Any
+
 import pytest
 
 from core.classifier import escalation
@@ -15,7 +17,7 @@ from core.graph import kuzu_store
 from core.reasoning import impact
 
 
-def _event(node_id: str, date: str, magnitude: float) -> dict:
+def _event(node_id: str, date: str, magnitude: float) -> dict[str, Any]:
     return {
         "node_id": node_id, "name": node_id, "event_time": date,
         "action_cameo_code": "190", "goldstein": -9.0,
@@ -91,6 +93,7 @@ def test_measured_actual_round_trips(conn):
 
 def test_expected_uses_only_regime_comparable_precedents(conn):
     result = impact.event_impact(conn, "event:target")
+    assert result is not None
     x = next(m for m in result["markets"] if m["market_id"] == "market:x")
     # prec1 (2016) counts; prec2 (1950, Bretton Woods) and the event itself do not.
     assert x["expected"]["n_precedents"] == 1
@@ -117,6 +120,7 @@ def test_every_expected_number_is_backed_by_precedents(conn):
     # The provenance invariant at the read side: no expected figure exists
     # without a positive precedent count standing behind it.
     result = impact.event_impact(conn, "event:target")
+    assert result is not None
     for market in result["markets"]:
         if market["expected"] is not None:
             assert market["expected"]["n_precedents"] > 0
@@ -137,6 +141,7 @@ def test_dyad_timeline_groups_by_event_most_recent_first(conn):
 def test_hypothetical_shares_the_object_shape(conn):
     dyad = escalation.dyad_id("actor:a", "actor:b")
     hist = impact.event_impact(conn, "event:target")
+    assert hist is not None
     hypo = impact.hypothetical_impact(conn, dyad_id=dyad, as_of="2015-06-01")
     assert set(hist.keys()) == set(hypo.keys())
     assert hist["boundary_statement"] == hypo["boundary_statement"]
