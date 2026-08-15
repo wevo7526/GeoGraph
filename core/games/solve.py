@@ -210,6 +210,8 @@ def solve(
     # product, so B's side is kept rather than re-derived from A's.
     policy_b = np.zeros((horizon, bands, caps, types, actions))
     gaps: list[float] = []
+    entropies: list[float] = []
+    violations: list[float] = []
     lp_status_ok = True
     # The period-0 stage matrices (payoff + discounted continuation) at every
     # state — what a reader sees when asked "what game is being played at the
@@ -239,7 +241,14 @@ def solve(
                         opening_a[x, k, own] = matrix_a
                         opening_b[x, k, own] = matrix_b
                     if solver == "lp":
-                        stage = equilibrium_module.solve_stage_lp(matrix_a, matrix_b)
+                        # ONE TEMPERATURE FOR BOTH CONCEPTS: the correlated
+                        # selection is regularised at the same 1/precision the
+                        # logit response uses, so the two stage concepts differ
+                        # in the equilibrium notion and NOT in how decisively
+                        # states are assumed to choose.
+                        stage = equilibrium_module.solve_stage_lp(
+                            matrix_a, matrix_b, temperature=1.0 / precision
+                        )
                         policy[period, x, k, own] = stage.mix_a
                         policy_b[period, x, k, own] = stage.mix_b
                         # Under a correlated joint the value is Σ p·A, which
@@ -247,6 +256,8 @@ def solve(
                         # joint is a product (nash_gap = 0).
                         value[x, k, own] = stage.value_a
                         gaps.append(stage.nash_gap)
+                        entropies.append(stage.entropy)
+                        violations.append(stage.ce_violation)
                         lp_status_ok = lp_status_ok and stage.status == "optimal"
                         continue
                     mix_a, mix_b = solve_stage(matrix_a, matrix_b, precision=precision)
@@ -267,7 +278,7 @@ def solve(
         "precision": precision,
         "solver": solver,
         "concept": (
-            equilibrium_module.concept_line(horizon)
+            equilibrium_module.concept_line(horizon, 1.0 / precision)
             if solver == "lp"
             else (
                 f"quantal-response MPBE, finite horizon H={horizon}, "
@@ -277,12 +288,22 @@ def solve(
     }
     if solver == "lp":
         arr = np.asarray(gaps) if gaps else np.zeros(1)
+        ent = np.asarray(entropies) if entropies else np.zeros(1)
+        viol = np.asarray(violations) if violations else np.zeros(1)
         out["nash_gap"] = {
             "mean": round(float(arr.mean()), 4),
             "max": round(float(arr.max()), 4),
-            # The share of stage games the LP solved AT a Nash point.
+            # The share of stage games solved AT a Nash point.
             "share_product_form": round(float((arr < 1e-6).mean()), 4),
             "stage_games": int(len(gaps)),
             "all_optimal": bool(lp_status_ok),
+            # THE DEGENERACY AUDIT. A pure joint has entropy 0, and that is
+            # what the unregularised welfare LP returned at every stage — the
+            # reason the region map used to name one course at 100%. Reported
+            # so the claim "this is not a vertex" is checkable, alongside the
+            # largest incentive constraint any stage left unmet.
+            "entropy_mean": round(float(ent.mean()), 4),
+            "entropy_min": round(float(ent.min()), 4),
+            "ce_violation_max": float(f"{float(viol.max()):.3g}"),
         }
     return out

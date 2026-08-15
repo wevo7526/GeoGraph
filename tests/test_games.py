@@ -714,15 +714,39 @@ def test_the_lp_stage_solution_is_a_correlated_equilibrium():
     assert 0.0 <= stage.nash_gap <= 1.0
 
 
-def test_a_product_form_ce_reports_a_zero_nash_gap():
-    # A prisoner's-dilemma-shaped stage: the unique equilibrium is pure, so
-    # the welfare-maximal CE that survives the incentive constraints is a
-    # product and the gap says so.
+def test_a_dominance_game_is_pure_and_reports_a_zero_nash_gap():
+    # When one action strictly dominates, the CE polytope is a POINT: every
+    # correlated equilibrium plays it, so the regularised selection returns the
+    # pure profile with zero entropy and the gap says it sat on a Nash point.
+    # The limit is the honest part — regularisation spreads a selection, never
+    # a polytope the payoffs have collapsed.
+    from core.games import equilibrium
+
+    a = np.array([[0.0, 0.0, 0.0], [1.0, 1.0, 1.0], [2.0, 2.0, 2.0]])
+    stage = equilibrium.solve_stage_lp(a, a.T)
+    assert stage.joint[2, 2] > 0.999
+    assert stage.entropy < 1e-6
+    assert stage.nash_gap < 1e-6
+
+
+def test_welfare_tied_equilibria_are_kept_rather_than_broken_by_the_solver():
+    # A prisoner's-dilemma-shaped stage where a pure profile and a correlated
+    # play carry the SAME welfare. The bare welfare LP is a linear objective
+    # over a polytope, so it returned whichever vertex HiGHS reached — one
+    # joint action at certainty, which downstream became "its most likely
+    # course is mutual escalation at 100%". The entropy term breaks the tie in
+    # the only defensible direction: keep both, claim no more certainty than
+    # the payoffs support.
     from core.games import equilibrium
 
     a = np.array([[3.0, 0.0, 0.0], [5.0, 1.0, 0.0], [5.0, 1.0, 1.0]])
     stage = equilibrium.solve_stage_lp(a, a.T)
-    assert stage.nash_gap < 1e-6
+    assert stage.status == "optimal"
+    assert stage.entropy > 0.5
+    assert float(stage.mix_a.max()) < 0.99
+    # Still an exact correlated equilibrium, and its welfare still maximal.
+    assert stage.ce_violation < 1e-6
+    assert abs((stage.joint * (a + a.T)).sum() - 2.0) < 1e-6
 
 
 def test_the_lp_solver_threads_through_the_recursion():
@@ -737,7 +761,12 @@ def test_the_lp_solver_threads_through_the_recursion():
         assert np.allclose(eq["policy_b"].sum(axis=-1), 1.0)
         assert eq["opening_matrices"][0].shape[-2:] == (3, 3)
     assert lp["solver"] == "lp" and "nash_gap" in lp and lp["nash_gap"]["all_optimal"]
-    assert "correlated-equilibrium LP" in lp["concept"]
+    assert "correlated-equilibrium" in lp["concept"]
+    assert "entropy-regularised" in lp["concept"]
+    # The degeneracy audit rides with the gap: a vertex selection would report
+    # entropy 0 at every stage, and the surface would be quoting certainty.
+    assert lp["nash_gap"]["ce_violation_max"] < 1e-6
+    assert "entropy_mean" in lp["nash_gap"]
     assert "nash_gap" not in qre
     with pytest.raises(ValueError):
         solve.solve(kernel, solve.Payoffs(), horizon=2, solver="nope")
@@ -757,7 +786,15 @@ def test_scenarios_are_named_from_the_course_and_sum_over_the_retained_mass():
     named = scenarios.scenarios_for(
         priced, dyad_id="dyad:x--y", dyad_name="Xland – Yland", opening_band=2, bands=6,
     )
-    assert named and len(named) == len(priced["paths"])
+    # ONE SCENARIO PER KIND, pooling every course the classifier reads the same
+    # way: `scenario_name` is `kind:dyad`, so one-per-course made the name
+    # ambiguous and split one distribution across four rows of the region's
+    # escalatory list. Names are unique, the pooled likelihoods still add to
+    # the retained mass, and every course is accounted for.
+    assert named and len(named) <= len(priced["paths"])
+    assert len({sc["scenario_name"] for sc in named}) == len(named)
+    assert sum(sc["courses"] for sc in named) == len(priced["paths"])
+    assert all(sc["likelihood"] >= sc["lead_likelihood"] for sc in named)
     kinds = {sc["kind"] for sc in named}
     assert kinds <= {
         "mutual_escalation", "one_sided_pressure", "brinkmanship", "probe_and_retreat",
@@ -849,3 +886,93 @@ def test_the_region_map_aggregates_every_solved_dyad(tmp_path, monkeypatch):
     assert len(agg["region_fan"]) == 2
     assert agg["explanation"] and agg["boundary_statement"]
     assert all(abs(sum(row["distribution"]) - 1.0) < 1e-3 for row in agg["region_fan"])
+
+
+# ── a persisted solution outlives the code that wrote it (2026-08-15) ────────
+
+
+class _Row:
+    """The one row `game_solution` reads, through psycopg's cursor shape."""
+
+    def __init__(self, payload: dict[str, Any]) -> None:
+        self.payload = payload
+
+    def __enter__(self) -> _Row:
+        return self
+
+    def __exit__(self, *exc: Any) -> None:
+        return None
+
+    def cursor(self) -> _Row:
+        return self
+
+    def execute(self, *args: Any) -> None:
+        return None
+
+    def fetchone(self) -> tuple[Any, Any, str]:
+        import datetime as dt
+
+        return (self.payload, dt.datetime(2026, 8, 15, 19, 1, tzinfo=dt.UTC), "lp")
+
+
+def test_a_persisted_solution_of_the_wrong_shape_is_a_miss_not_a_payload():
+    # THE NaN THE SURFACE WORE. `escalation_probability` was renamed
+    # `sharp_departure_probability`, the games boot step is opt-in and did not
+    # re-solve, and Postgres kept serving the previous shape — so the region
+    # map rendered "NaN%" for every pair beside courses named at 100% (those
+    # rows also predate the belief ceiling). The reader now checks the version
+    # and misses, which sends the endpoint to its live fallback.
+    from core.games import scenarios
+    from core.panel import pg_store
+
+    stale = {"region": "mena", "escalation_probability": 0.7, "payload_version": "2026-08-15.1"}
+    fresh = {**stale, "payload_version": scenarios.PAYLOAD_VERSION}
+
+    assert pg_store.game_solution(
+        _Row(stale), "mena", scope="region", version=scenarios.PAYLOAD_VERSION
+    ) is None
+    assert pg_store.game_solution(
+        _Row({"region": "mena"}), "mena", scope="region", version=scenarios.PAYLOAD_VERSION
+    ) is None
+    served = pg_store.game_solution(
+        _Row(fresh), "mena", scope="region", version=scenarios.PAYLOAD_VERSION
+    )
+    assert served is not None and served["persisted"] is True
+    assert served["computed_at"].startswith("2026-08-15")
+    # No version asked for: whatever is stored, for callers that want the row.
+    assert pg_store.game_solution(_Row(stale), "mena", scope="region") is not None
+
+
+def _region_context() -> dict[str, Any]:
+    """One modelable dyad over thirty quarters — enough to solve and name."""
+    return {
+        "table": [
+            {"dyad_id": "dyad:x--y", "dyad_name": "Xland – Yland", "q": q,
+             "date": f"{2000 + q // 4}-01-01", "intensity": 3.0 + (q % 3), "events": 4,
+             "tone": -2.0}
+            for q in range(30)
+        ],
+        "kernel": _realistic_kernel(),
+        "joint": {},
+        "effects": [],
+        "model_trajectories": {},
+        "model_identity": None,
+        "coverage": {"cells": 54, "measured": 54, "fallback": 0, "share_measured": 1.0,
+                     "observations": 999},
+        "as_of": "2007-01-01",
+    }
+
+
+def test_every_solved_payload_carries_its_version():
+    from core.games import scenarios
+
+    solved = scenarios.solve_dyad(
+        _region_context(), region="test", dyad_id="dyad:x--y",
+        payoffs=solve.Payoffs(), graph_conn=None, horizon=2,
+    )
+    assert solved is not None and solved["payload_version"] == scenarios.PAYLOAD_VERSION
+    mapped = scenarios.region_map(
+        _region_context(), region="test", payoffs=solve.Payoffs(), graph_conn=None,
+        dyad_ids=["dyad:x--y"], horizon=2,
+    )
+    assert mapped["region"]["payload_version"] == scenarios.PAYLOAD_VERSION

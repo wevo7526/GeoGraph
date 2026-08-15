@@ -44,9 +44,13 @@ whose job is shipping code, and the graph opens seconds after the seed.
                                satisfies the contract, so packs/china seeds
                                itself the day it becomes complete
   GEOGRAPH_LOAD_PANEL=0        never fetch prices at boot
-  GEOGRAPH_STUDY_ON_BOOT=1     opt IN to the transmission engine (off by
-                               default: it held the graph dark ~600s/deploy)
+  GEOGRAPH_STUDY_ON_BOOT=1     opt IN to the transmission engine over the whole
+                               archive (off by default: it held the graph dark
+                               ~600s/deploy). The CURATED SPINE is measured on
+                               every boot regardless — it is ~40 events and it
+                               is what every narrated surface reads.
   GEOGRAPH_STUDY_BUDGET=600    seconds the study may spend ACROSS packs
+  GEOGRAPH_SPINE_TIMEOUT=180   ceiling per pack for that always-on spine run
   GEOGRAPH_FORECASTS_ON_BOOT=1 opt IN to re-freezing the Forecast nodes (off by
                                default; the last freeze persists on the volume)
   GEOGRAPH_GAMES_ON_BOOT=1     opt IN to the region scenario-map solve (Postgres
@@ -720,6 +724,50 @@ def _load_panel_if_shallow(pack_names: list[str]) -> dict[str, Any] | None:
         )
         for name in pack_names
     ]
+    return {"ok": all(r["ok"] for r in results), "packs": results}
+
+
+#: Per pack, for the curated spine. A dozen events against a dozen markets;
+#: the ceiling is here to bound a pathological panel read, not to ration.
+_SPINE_TIMEOUT_SECONDS = int(os.getenv("GEOGRAPH_SPINE_TIMEOUT", "180"))
+
+
+def _run_spine_study(pack_names: list[str]) -> dict[str, Any]:
+    """The transmission engine over the events THE PACKS NAME — always on.
+
+    The full study is opt-in and rightly so: it is a hundred thousand events
+    and it walks them in date order, so a boot's slice measures the deep past
+    and stops. That is the correct trade for the archive and the wrong one for
+    the SPINE: the case studies, the marquee episodes and everything the front
+    page is written around are the most recent events in the archive, i.e. the
+    last ones a truncated walk would ever reach. On 2026-08-15 production had
+    632,586 measured effects and served "this study has a spine and no
+    numbers" on all three case studies, because the walk had reached 2003.
+
+    So the curated set is measured on EVERY boot, watermarked against the
+    GRAPH rather than the panel (`run_event_study.py --spine`) so it also
+    heals after a volume rebuild, which the panel-side watermark cannot see.
+    It is ~40 events across three packs: seconds when there is work, and a
+    graph query plus an early exit when there is not.
+
+    Deliberately NOT fingerprint-guarded. Every other guarded step re-derives
+    something already persisted; this one is the check that what should be
+    persisted IS, and a guard that skipped it would be a guard on the smoke
+    detector.
+    """
+    if _panel_is_empty() is not False:
+        return {"ok": True, "skipped": "panel empty"}
+    results = []
+    for name in pack_names:
+        results.append({
+            "pack": name,
+            **{k: v for k, v in _run_step(
+                f"spine study {name}",
+                [sys.executable, str(_STUDY_SCRIPT), name, "--spine"],
+                timeout=_SPINE_TIMEOUT_SECONDS,
+                echo=False,
+            ).items() if k != "step"},
+        })
     return {"ok": all(r["ok"] for r in results), "packs": results}
 
 
@@ -1536,6 +1584,9 @@ def _boot_status() -> dict[str, Any]:
         ("flows", _load_13f_weekly),
         ("panel", _apply_panel_schema),
         ("prices", lambda: _load_panel_if_shallow(names)),
+        # Before the full study, and independent of it: the packs' own events
+        # are what every narrated surface reads, and they are cheap.
+        ("spine", lambda: _run_spine_study(names)),
         ("study", lambda: _guarded(
             "study",
             lambda: (

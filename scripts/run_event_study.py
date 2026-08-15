@@ -2,7 +2,8 @@
 
   python scripts/run_event_study.py                     # the phase0 episode
   python scripts/run_event_study.py --event event:mena-2019-abqaiq
-  python scripts/run_event_study.py --all              # the whole spine (Phase 1)
+  python scripts/run_event_study.py --all              # the whole archive (Phase 1)
+  python scripts/run_event_study.py --spine            # the pack's curated events
   python scripts/run_event_study.py --dry-run          # measure, write nothing
 
 Reads prices from Postgres, computes in core.transmission.event_study, and
@@ -45,6 +46,68 @@ _PANEL_FREQUENCY: dict[str, str] = {
 }
 
 
+def curated_event_ids(pack: packs.Pack) -> set[str]:
+    """The events the PACK names — its marquee spine and the case study built
+    on it. These are the events the surface is written around, so they are the
+    ones a measuring run must never leave for last."""
+    ids = {str(event["id"]) for event in pack.marquee_events}
+    study = pack.case_study
+    if study:
+        ids |= {str(event_id) for event_id in study.get("events", [])}
+    return ids
+
+
+def select_all(
+    archive: list[dict[str, Any]], curated: set[str], *, min_gdelt_goldstein: float
+) -> list[dict[str, Any]]:
+    """`--all`'s event list: the archive above the materiality bar, CURATED
+    FIRST and then in date order.
+
+    The archive arrives ordered by event_time, so a run that exhausts its
+    budget measures 1905 forward and stops — and every event a surface is
+    written around (the case studies, the marquee spine, this decade) sits at
+    the far end of that walk. Production had measured 632,586 effects and had
+    reached 2003; the front page's own episodes were the last thing it would
+    ever get to. The watermark is unchanged and so is the total work; what
+    changes is WHICH events a truncated pass covers.
+    """
+    chosen = [
+        e for e in archive
+        if not str(e["id"]).startswith("event:gdelt-")
+        or (e["goldstein"] is not None
+            and abs(float(e["goldstein"])) >= min_gdelt_goldstein)
+    ]
+    chosen.sort(key=lambda e: (e["id"] not in curated, str(e["date"]), str(e["id"])))
+    return chosen
+
+
+def already_in_the_graph(graph: Any, event_ids: list[str]) -> set[str]:
+    """Which of these events already carry an AFFECTED edge — the GRAPH's own
+    watermark, for the small curated set.
+
+    The Postgres working set (`event_study_runs`) is the watermark everywhere
+    else, and it is the right one at archive scale. It is the WRONG one after
+    a graph rebuild: the two stores fail independently, so a rebuilt volume
+    (GEOGRAPH_RESET_GRAPH) starts with no AFFECTED edges while Postgres still
+    remembers every attempt — and the engine then skips, forever, exactly the
+    events it has already measured once. That is how the twelve-day war, the
+    fourth strait crisis and the february rupture all served "not yet
+    measured" on 2026-08-15 with 632,586 measured effects sitting in the same
+    graph.
+    """
+    measured: set[str] = set()
+    for event_id in event_ids:
+        rows = kuzu_store.query(
+            graph,
+            "MATCH (e:Event {node_id: $id})-[a:AFFECTED]->(:Market) "
+            "RETURN count(a) AS n",
+            {"id": event_id},
+        )
+        if rows and int(rows[0]["n"] or 0) > 0:
+            measured.add(event_id)
+    return measured
+
+
 def _effect_source(result: event_study.EffectResult) -> str:
     """The Source the panel rows behind this number came from."""
     if result.resolution in ("month", "year"):
@@ -60,7 +123,13 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("pack", nargs="?", default="mena")
     parser.add_argument("--event", action="append", help="event node_id; repeatable")
-    parser.add_argument("--all", action="store_true", help="every event in the spine")
+    parser.add_argument("--all", action="store_true", help="every event in the archive")
+    parser.add_argument(
+        "--spine", action="store_true",
+        help="only the events the pack NAMES (marquee + case study), watermarked "
+             "against the graph rather than the panel — cheap, bounded, and the "
+             "one selection the surface cannot serve without",
+    )
     parser.add_argument("--dry-run", action="store_true", help="print, write nothing")
     parser.add_argument(
         "--refresh", action="store_true",
@@ -103,6 +172,7 @@ def main() -> None:
         kuzu_store.close(graph)
         sys.exit("the graph holds no events — seed first")
 
+    curated = curated_event_ids(pack)
     if args.event:
         wanted = set(args.event)
         chosen = [e for e in archive if e["id"] in wanted]
@@ -110,13 +180,15 @@ def main() -> None:
         if missing:
             kuzu_store.close(graph)
             sys.exit(f"no such event(s) in the graph: {', '.join(sorted(missing))}")
+    elif args.spine:
+        chosen = [e for e in archive if e["id"] in curated]
+        if not chosen:
+            kuzu_store.close(graph)
+            sys.exit(f"packs/{pack.name} names no event the graph holds — seed first")
     elif args.all:
-        chosen = [
-            e for e in archive
-            if not e["id"].startswith("event:gdelt-")
-            or (e["goldstein"] is not None
-                and abs(float(e["goldstein"])) >= args.min_gdelt_goldstein)
-        ]
+        chosen = select_all(
+            archive, curated, min_gdelt_goldstein=args.min_gdelt_goldstein
+        )
         excluded = len(archive) - len(chosen)
         if excluded:
             print(
@@ -154,18 +226,33 @@ def main() -> None:
         sys.exit(str(exc))
 
     if not args.refresh:
-        # PER-MARKET watermark: skip an event only once it is measured against
-        # ALL of THIS pack's markets, so packs stop shadowing each other's
-        # measurements (a US–Russia event must reach Tadawul under mena even if
-        # china measured it against SSE first).
-        measured = pg_store.measured_events(panel, [m["ticker"] for m in pack.markets])
+        if args.spine:
+            # THE GRAPH IS THE WATERMARK for the curated set — see
+            # `already_in_the_graph`. Small enough to ask edge by edge, and it
+            # is the only watermark that survives a volume rebuild.
+            measured = already_in_the_graph(graph, [e["id"] for e in chosen])
+        else:
+            # PER-MARKET watermark: skip an event only once it is measured
+            # against ALL of THIS pack's markets, so packs stop shadowing each
+            # other's measurements (a US–Russia event must reach Tadawul under
+            # mena even if china measured it against SSE first).
+            measured = pg_store.measured_events(
+                panel, [m["ticker"] for m in pack.markets]
+            )
         before = len(chosen)
         chosen = [e for e in chosen if e["id"] not in measured]
         if before != len(chosen):
             print(f"{before - len(chosen)} already-measured events skipped "
                   "(the watermark; --refresh re-measures)")
         if not chosen:
+            # EXIT BEFORE THE PRELOAD. The preload below reads every market's
+            # whole era-appropriate span out of Postgres, which is most of the
+            # cost of a run with nothing to do — and the spine check runs on
+            # EVERY boot, so "nothing to do" has to be nearly free.
             print("nothing new to measure")
+            panel.close()
+            kuzu_store.close(graph)
+            return
 
     market_node_ids = {m["ticker"]: m["id"] for m in pack.markets}
     # PRELOAD, ONCE PER (ticker, frequency): the archive is a hundred thousand
@@ -173,8 +260,12 @@ def main() -> None:
     # round trips where sixteen bulk reads and an in-memory slice do the same
     # arithmetic. Spans cover the earliest event's estimation window through
     # the latest event's measurement window.
-    first_event = min(all_dates.values())
-    last_event = max(all_dates.values())
+    # SPANNED BY WHAT IS BEING MEASURED, not by the archive: a spine run
+    # measures a dozen modern events and has no use for the 1871 tail of the
+    # monthly panel. (`_nearby` still reads every date — overlap is a property
+    # of the whole archive, not of the selection.)
+    first_event = min(all_dates[e["id"]] for e in chosen)
+    last_event = max(all_dates[e["id"]] for e in chosen)
     preloaded: dict[tuple[str, str], list[dict[str, Any]]] = {}
     for m in pack.markets:
         table = json.loads(m["native_frequency"]) if m.get("native_frequency") else {}

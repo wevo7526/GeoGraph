@@ -405,14 +405,14 @@ Two consequences worth knowing before touching colour:
 
 - **The game solves under TWO stage concepts** (`core/games/solve.py`
   `solver="qre"|"lp"`): the fitted quantal response (the estimator's concept,
-  the default for `/games/explore` and the freeze) and the LP correlated
-  equilibrium (`core/games/equilibrium.py`: welfare-maximal CE by
-  `scipy.optimize.linprog`/HiGHS). The LP reports `nash_gap` — total variation
-  of its joint from the product of its marginals; 0 means it sat ON a Nash
-  point, and in practice ~98% of stage games do. That number is what "toward
-  the BNE" means on the surface; it is stated, never assumed. Both concepts
-  share the recursion, the path walk (`paths.py`, which now emits per-step
-  beliefs) and the ML tilt.
+  the default for `/games/explore` and the freeze) and the correlated
+  equilibrium (`core/games/equilibrium.py`). The CE reports `nash_gap` — total
+  variation of its joint from the product of its marginals; 0 means it sat ON a
+  Nash point, and in practice ~98% of stage games do. That number is what
+  "toward the BNE" means on the surface; it is stated, never assumed. Both
+  concepts share the recursion, the path walk (`paths.py`, which now emits
+  per-step beliefs) and the ML tilt. **The selection is ENTROPY-REGULARISED,
+  not a bare welfare LP** (fixed later the same day, see below).
 - **The scenario map** (`core/games/scenarios.py`): every active dyad in a
   region solved at its data-driven opening state under both concepts, courses
   of play NAMED as scenarios with likelihoods, priced to the measured market
@@ -449,3 +449,56 @@ Two consequences worth knowing before touching colour:
   the 2026-08-15 `recover` rebuild merged china and eurasia and never
   reached mena, so mena's wire was corpus-only in the graph and its measured
   effects empty. `/api/impact/coverage?region=mena` is the check.
+
+## The 2026-08-15 repairs (the spine is measured first, a payload carries its shape, the CE stops claiming certainty)
+
+Three failures the surface wore at once, all of them the same species: a
+component was right and the thing that fed it was stale, last in line, or
+degenerate.
+
+- **The curated spine is measured on EVERY boot** (`run_event_study.py
+  --spine`, boot step `spine`, always on). The full study walks the archive in
+  DATE ORDER and takes a budgeted slice, which is correct for a hundred
+  thousand events and exactly wrong for the ~40 the packs name: the case
+  studies, the marquee episodes and everything a narrated page reads are the
+  most RECENT events in the archive, so a truncated walk reaches them last.
+  Production held 632,586 measured effects, had walked as far as 2003, and
+  served "this study has a spine and no numbers" on all three case studies.
+  Two fixes, both cheap: `--all` now sorts curated-first-then-date (same work,
+  different order for a pass that gets cut off), and the curated set is
+  measured on every boot, watermarked **against the GRAPH** rather than the
+  panel. That second half matters independently — the two stores fail
+  independently, so after `GEOGRAPH_RESET_GRAPH` the panel's
+  `event_study_runs` still says "measured" for events the rebuilt graph has no
+  edges for, and the engine would skip them forever.
+- **A persisted computation outlives the code that wrote it, so it carries its
+  shape** (`scenarios.PAYLOAD_VERSION`, checked in `pg_store.game_solution`).
+  The ranking metric was renamed `escalation_probability` →
+  `sharp_departure_probability` an hour after the games boot step last ran;
+  the step is opt-in, nothing re-solved, and Postgres kept serving the old
+  shape to a frontend reading the new names — **every probability on the
+  game-theory page rendered `NaN%`**, beside courses named at 100% (those rows
+  also predate the belief ceiling). A version mismatch is now a cache MISS and
+  the endpoint solves live. `pct()` in `charts/Kit.tsx` renders "—" for
+  anything non-finite: a missing field is absent data, not a quantity.
+- **The CE selection is entropy-regularised** (`equilibrium.solve_stage_lp`).
+  Maximising welfare alone over the CE polytope is an LP, so its optimum is a
+  VERTEX — one joint action at certainty, whichever one HiGHS reached among
+  ties. The objective now adds the joint's entropy at the quantal response's
+  own temperature (λ read on the stage's welfare SPREAD, not in raw payoff
+  units — a flat 1/precision against discounted continuation values is no
+  regularisation at all), solved in the dual: `p(μ) = softmax((welfare −
+  Gᵀμ)/λ)` with L-BFGS-B over the multipliers. Same polytope, so it is still
+  an exact CE (`ce_violation` says how exactly, and the HiGHS vertex is the
+  fallback when the dual does not clear); strictly concave, so ties are kept
+  instead of resolved into certainty. It is also **14× faster** (0.8s vs 11.4s
+  per dyad solve), which is what makes a live region map viable as a fallback.
+  The limit is honest and tested: under a dominant action the polytope is a
+  POINT, the solution is pure, and no regularisation can or should spread it.
+- **A scenario is one KIND of course, not one course** (`scenarios_for`).
+  `scenario_name` is `kind:dyad` and was therefore not unique — one
+  distribution split across four rows of the region's escalatory list, each
+  labelled the same — and a single sequence's mass answers a question about
+  the enumeration's resolution rather than about the world. Pooled by kind:
+  unique names, likelihoods that still sum to the retained mass, `courses`
+  saying how many were pooled and `lead_likelihood` the modal one's own share.

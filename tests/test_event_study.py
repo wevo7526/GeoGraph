@@ -12,6 +12,7 @@ from __future__ import annotations
 import datetime as dt
 import math
 import statistics
+from typing import Any
 
 import pytest
 
@@ -478,3 +479,57 @@ def test_an_annual_era_market_measures_one_year():
     assert annual.raw_return == pytest.approx(-0.15)
     # Against a steady +2% baseline the ABNORMAL move is deeper than the raw.
     assert annual.abnormal_return == pytest.approx(-0.17, abs=0.005)
+
+
+# ── which events a truncated run reaches (2026-08-15) ────────────────────────
+
+
+def _study_module() -> Any:
+    """scripts/ is not a package; load the runner by path."""
+    import importlib.util
+    import pathlib
+
+    path = pathlib.Path(__file__).resolve().parent.parent / "scripts" / "run_event_study.py"
+    spec = importlib.util.spec_from_file_location("run_event_study", path)
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_the_curated_spine_is_measured_before_the_deep_archive():
+    # THE 2026-08-15 CASE-STUDY OUTAGE. The archive arrives in date order and a
+    # boot's study slice measures until its budget runs out — so with a pure
+    # chronological walk the events every narrated surface is built on (the
+    # most recent in the archive) are the last ones reached. Production held
+    # 632,586 measured effects, had walked as far as 2003, and served "a spine
+    # and no numbers" on all three case studies. Curated first, then dates.
+    study = _study_module()
+    archive = [
+        {"id": "event:cow-mid-1", "date": "1911-07-01", "goldstein": -9.0},
+        {"id": "event:gdelt-quiet", "date": "1990-01-01", "goldstein": -1.0},
+        {"id": "event:gdelt-loud", "date": "1990-01-02", "goldstein": -9.0},
+        {"id": "event:mena-2025-rising-lion", "date": "2025-06-13", "goldstein": -10.0},
+    ]
+    chosen = study.select_all(
+        archive, {"event:mena-2025-rising-lion"}, min_gdelt_goldstein=7.0,
+    )
+    assert [e["id"] for e in chosen] == [
+        "event:mena-2025-rising-lion",   # curated, whatever its date
+        "event:cow-mid-1",
+        "event:gdelt-loud",
+    ]  # the sub-materiality GDELT event is still excluded entirely
+
+
+def test_the_pack_names_the_events_the_spine_run_measures():
+    from core import packs
+
+    study = _study_module()
+    for name in packs.available():
+        pack = packs.load(name)
+        curated = study.curated_event_ids(pack)
+        assert curated >= {str(e["id"]) for e in pack.marquee_events}
+        case_study = pack.case_study
+        if case_study:
+            # The case study's own episodes are the ones a reader opens first.
+            assert curated >= {str(e) for e in case_study["events"]}

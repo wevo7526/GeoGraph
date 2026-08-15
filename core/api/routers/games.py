@@ -98,13 +98,16 @@ def region_scenarios(
     (slower; flagged `persisted: false`), which is also the fallback when
     nothing is persisted yet.
     """
+    from core.games import scenarios
     from core.panel import pg_store
 
     if not live:
         panel = _panel()
         if panel is not None:
             try:
-                stored = pg_store.game_solution(panel, region, scope="region")
+                stored = pg_store.game_solution(
+                    panel, region, scope="region", version=scenarios.PAYLOAD_VERSION
+                )
             finally:
                 panel.close()
             if stored is not None:
@@ -113,8 +116,9 @@ def region_scenarios(
     out = solved["region"]
     out["persisted"] = False
     out["note"] = (
-        "solved on request — no persisted scenario map for this region yet "
-        "(scripts/solve_games.py, or a boot with GEOGRAPH_GAMES_ON_BOOT=1)"
+        "solved on request — no persisted scenario map of this shape for the "
+        f"region (payload version {scenarios.PAYLOAD_VERSION}); re-solve with "
+        "scripts/solve_games.py, or a boot with GEOGRAPH_GAMES_ON_BOOT=1"
     )
     return out
 
@@ -132,7 +136,10 @@ def dyad_solution(
         panel = _panel()
         if panel is not None:
             try:
-                stored = pg_store.game_solution(panel, region, scope="dyad", dyad_id=dyad)
+                stored = pg_store.game_solution(
+                    panel, region, scope="dyad", dyad_id=dyad,
+                    version=scenarios.PAYLOAD_VERSION,
+                )
             finally:
                 panel.close()
             if stored is not None:

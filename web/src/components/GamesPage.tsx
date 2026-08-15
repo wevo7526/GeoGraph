@@ -79,7 +79,7 @@ function RegionGames({ region, onPick }: { region: string; onPick: (dyad: string
   return (
     <div className="reading-column py-8">
       <StoryHead
-        kicker={`Game theory · ${label.toUpperCase()} · ${map.primary_solver.toUpperCase()} + QRE`}
+        kicker={`Game theory · ${label.toUpperCase()} · ${(map.solvers ?? [map.primary_solver]).map((s) => s.toUpperCase()).join(' + ')}`}
         title="The next four quarters, solved"
         standfirst={map.explanation[0]}
         action={
@@ -232,7 +232,9 @@ function ScenarioList({ rows, onPick }: { rows: Scenario[]; onPick?: (dyad: stri
             }} />
           </div>
           <div className="ml-14 mono text-[11px] mt-1" style={{ color: 'var(--muted)' }}>
-            {sc.course} → {sc.end_label}{sc.presser ? ` · ${sc.presser} presses` : ''}
+            {sc.courses && sc.courses > 1
+              ? `${sc.courses} courses, modal ${sc.course}`
+              : sc.course} → {sc.end_label}{sc.presser ? ` · ${sc.presser} presses` : ''}
             {sc.market_implications.length ? ` · ${sc.market_implications.slice(0, 2).map((m) => `${m.market_name} ${(m.median * 100).toFixed(2)}%`).join(', ')}` : ' · unpriced'}
           </div>
         </li>

@@ -793,14 +793,21 @@ export interface ScenarioStep extends SequenceStep {
 export interface Scenario {
   scenario_name: string
   kind: string
+  /** Pooled over every enumerated course the classifier reads as this kind —
+   *  so it answers "how likely is mutual escalation at all", and the
+   *  likelihoods across a dyad's scenarios still sum to the retained mass. */
   likelihood: number
+  courses?: number
+  lead_likelihood?: number
   dyad_id: string
   dyad_name: string
   presser: string | null
+  /** The modal course of this kind; `courses` says how many were pooled. */
   course: string
   steps?: ScenarioStep[]
   opening_band: number
   end_band: number
+  end_band_range?: [number, number]
   end_label: string
   delta_band: number
   beliefs_end?: { a: number | null; b: number | null } | null
@@ -831,6 +838,11 @@ export interface NashGap {
   share_product_form: number
   stage_games: number
   all_optimal: boolean
+  /** The degeneracy audit: a vertex selection reports entropy 0 at every
+   *  stage, which is what used to produce "most likely course … at 100%". */
+  entropy_mean?: number
+  entropy_min?: number
+  ce_violation_max?: number
 }
 
 export interface ConceptSolution {
@@ -854,6 +866,7 @@ export interface ConceptSolution {
 }
 
 export interface DyadSolution {
+  payload_version?: string
   region: string
   dyad_id: string
   dyad_name: string
@@ -918,6 +931,9 @@ export interface RegionRanking {
 }
 
 export interface RegionMap {
+  /** The shape of a persisted solve; a stored row of another version is a
+   *  cache miss, not a payload (core/games/scenarios.py PAYLOAD_VERSION). */
+  payload_version?: string
   region: string
   as_of: string
   horizon: number

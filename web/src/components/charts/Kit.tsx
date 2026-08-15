@@ -22,8 +22,13 @@ function money(v: number): string {
   return `${v < 0 ? '−' : ''}$${s}`
 }
 
-export function pct(v: number, digits = 1): string {
-  return `${(v * 100).toFixed(digits)}%`
+/** A share as a percentage — and an em dash for anything that is not a number.
+ *  A missing field is a missing measurement, not a quantity: `NaN%` printed
+ *  across the whole game-theory page on 2026-08-15 (a persisted payload from
+ *  before a field rename), and it read as a broken product rather than as
+ *  absent data. Undefined in, "—" out, everywhere pct is used. */
+export function pct(v: number | null | undefined, digits = 1): string {
+  return Number.isFinite(v as number) ? `${((v as number) * 100).toFixed(digits)}%` : '—'
 }
 
 function EmptyNote({ note }: { note: string }) {

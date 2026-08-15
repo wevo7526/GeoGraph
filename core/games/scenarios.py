@@ -38,6 +38,23 @@ from core.games import state as state_module
 #: series are thin and the opening state is mostly the default.
 REGION_DYADS = 12
 
+#: THE SHAPE OF A PERSISTED SOLUTION, stamped into every payload this module
+#: builds and checked by the reader (`pg_store.game_solution`). Bump it
+#: whenever a field the surface reads is renamed, added or given a new
+#: meaning — a mismatch makes the stored row a cache MISS and the endpoint
+#: solves live instead of serving it.
+#:
+#: This exists because of the 2026-08-15 failure it would have caught: the
+#: ranking's metric was renamed `escalation_probability` →
+#: `sharp_departure_probability`, the games boot step is opt-in and did not
+#: re-solve, and Postgres kept serving payloads written an hour earlier by the
+#: previous shape. The API answered 200 with a payload that validated against
+#: nothing, and every pair on the region map read "NaN%" — beside courses of
+#: play named at 100%, because those rows also predate the belief ceiling that
+#: stopped a filtered belief reaching certainty. A persisted computation
+#: outlives the code that wrote it; the version is what makes that safe.
+PAYLOAD_VERSION = "2026-08-15.3"
+
 #: A step's market row needs this many measurements before the scenario
 #: names it as an implication (the pricing module's own thinness bar).
 _MARKET_MIN = pricing_module.MIN_MEASUREMENTS
@@ -177,22 +194,55 @@ def market_implications(steps: list[dict[str, Any]]) -> list[dict[str, Any]]:
 def scenarios_for(
     priced: dict[str, Any], *, dyad_id: str, dyad_name: str, opening_band: int, bands: int
 ) -> list[dict[str, Any]]:
-    """Named scenarios from the priced paths — one per course of play."""
+    """Named scenarios from the priced paths — one per KIND of course.
+
+    ONE SCENARIO PER KIND, not one per course (2026-08-15). A scenario used to
+    be a single action course, which had two consequences the surface wore:
+    `scenario_name` was `kind:dyad` and therefore NOT unique — the region's
+    escalatory list could carry the same pair under the same name four times,
+    each holding a slice of one distribution — and each slice's likelihood
+    answered "how much mass is on this exact sequence", which is a question
+    about the enumeration's resolution rather than about the world. Pooling
+    every course the classifier reads the same way answers the question a
+    reader actually has ("how likely is mutual escalation at all"), makes the
+    name unique by construction, and keeps the total intact: the likelihoods
+    still sum to the retained mass. The modal course of the kind is kept as
+    `course`, with `courses` saying how many were pooled behind it.
+    """
     side_a, side_b = split_sides(dyad_name)
-    out = []
+    grouped: dict[str, dict[str, Any]] = {}
     for path in priced.get("paths", []):
         steps = path["steps"]
         kind, sentence = classify_course(steps, opening_band)
+        slot = grouped.setdefault(kind, {
+            "kind": kind, "sentence": sentence, "likelihood": 0.0, "paths": [],
+        })
+        slot["likelihood"] += float(path["probability"])
+        slot["paths"].append(path)
+
+    out = []
+    for slot in sorted(grouped.values(), key=lambda g: (-g["likelihood"], g["kind"])):
+        lead = max(slot["paths"], key=lambda p: (p["probability"], str(p["steps"])))
+        steps = lead["steps"]
+        kind = str(slot["kind"])
+        likelihood = float(slot["likelihood"])
         end_band = int(steps[-1]["intensity_band"]) if steps else opening_band
         presser = _presser(steps, side_a, side_b)
-        course = " → ".join(
-            f"{s['action_a']}/{s['action_b']}" for s in steps
+        course = " → ".join(f"{s['action_a']}/{s['action_b']}" for s in steps)
+        # Priced over EVERY pooled course's steps: same class of course, more
+        # measured events behind the median, and the thinness bar unchanged.
+        implications = market_implications(
+            [step for p in slot["paths"] for step in p["steps"]]
         )
-        implications = market_implications(steps)
+        ends = sorted({
+            int(p["steps"][-1]["intensity_band"]) for p in slot["paths"] if p["steps"]
+        })
         out.append({
             "scenario_name": f"{kind}:{dyad_id}",
             "kind": kind,
-            "likelihood": float(path["probability"]),
+            "likelihood": round(likelihood, 4),
+            "courses": len(slot["paths"]),
+            "lead_likelihood": round(float(lead["probability"]), 4),
             "dyad_id": dyad_id,
             "dyad_name": dyad_name,
             "presser": presser,
@@ -200,6 +250,7 @@ def scenarios_for(
             "steps": steps,
             "opening_band": opening_band,
             "end_band": end_band,
+            "end_band_range": [ends[0], ends[-1]] if ends else [end_band, end_band],
             "end_label": band_label(end_band, bands),
             "delta_band": end_band - opening_band,
             "beliefs_end": (
@@ -208,10 +259,13 @@ def scenarios_for(
             ),
             "market_implications": implications[:4],
             "rationale": (
-                f"{sentence}; intensity moves {band_label(opening_band, bands)} → "
+                f"{slot['sentence']}; pooled over {len(slot['paths'])} course"
+                f"{'s' if len(slot['paths']) != 1 else ''} of play carrying "
+                f"{likelihood:.0%} of the retained mass, the modal one "
+                f"({course}) holding {float(lead['probability']):.0%}; intensity "
+                f"moves {band_label(opening_band, bands)} → "
                 f"{band_label(end_band, bands)} over {len(steps)} quarter"
-                f"{'s' if len(steps) != 1 else ''} with probability "
-                f"{float(path['probability']):.0%} of the retained mass"
+                f"{'s' if len(steps) != 1 else ''}"
                 + (f"; {presser} is the side pressing" if presser else "")
                 + "."
             ),
@@ -342,6 +396,7 @@ def solve_dyad(
 
     primary = solvers[0]
     solution = {
+        "payload_version": PAYLOAD_VERSION,
         "region": region,
         "dyad_id": dyad_id,
         "dyad_name": dyad_name,
@@ -433,9 +488,11 @@ def explain(solution: dict[str, Any]) -> list[str]:
         gap = lp.get("nash_gap") or {}
         out.append(
             f"The LP solution: at this opening state the welfare-maximal correlated equilibrium "
-            f"has a resolute {side_a} playing {_mix_words(m['mix_a'])} and {side_b} playing "
+            f"(entropy-regularised at the fitted precision, so a tie between equilibria is kept "
+            f"rather than resolved into certainty) has a resolute {side_a} playing "
+            f"{_mix_words(m['mix_a'])} and {side_b} playing "
             f"{_mix_words(m['mix_b'])}. Across the {gap.get('stage_games', 0)} stage games of the "
-            "backward induction the LP sat on a Nash point in "
+            "backward induction it sat on a Nash point in "
             f"{_pct(float(gap.get('share_product_form', 0)))} "
             f"of them (mean nash_gap {float(gap.get('mean', 0)):.3f}, worst "
             f"{float(gap.get('max', 0)):.3f}) — "
@@ -468,9 +525,12 @@ def explain(solution: dict[str, Any]) -> list[str]:
         fan_start = marg[0]["expected_band"] if marg else op["intensity_band"]
         fan_end = marg[-1]["expected_band"] if marg else op["intensity_band"]
         out.append(
-            f"The most likely course under the {primary.upper()} is "
-            f"{top['kind'].replace('_', ' ')} "
-            f"({top['course']}) at {_pct(top['likelihood'])} of the retained mass, ending "
+            f"The most likely kind of course under the {primary.upper()} is "
+            f"{top['kind'].replace('_', ' ')} at {_pct(top['likelihood'])} of the "
+            f"retained mass — {top.get('courses', 1)} enumerated course"
+            f"{'s' if int(top.get('courses', 1)) != 1 else ''} the classifier reads "
+            f"the same way, the modal one ({top['course']}, "
+            f"{_pct(top.get('lead_likelihood', top['likelihood']))}) ending "
             f"{top['end_label']}"
             + (f" with {top['presser']} pressing" if top.get("presser") else "")
             + f". The fan's expected band moves {fan_start:.2f} → {fan_end:.2f}; "
@@ -591,7 +651,8 @@ def region_map(
             ),
             "top_scenario": (
                 {k: top[k] for k in (
-                    "scenario_name", "kind", "likelihood", "course", "end_label", "presser",
+                    "scenario_name", "kind", "likelihood", "courses", "lead_likelihood",
+                    "course", "end_label", "presser",
                 )}
                 if top else None
             ),
@@ -603,9 +664,10 @@ def region_map(
         for sc in c["scenarios"]:
             all_scenarios.append({
                 **{k: sc[k] for k in (
-                    "scenario_name", "kind", "likelihood", "dyad_id", "dyad_name",
-                    "presser", "course", "opening_band", "end_band", "end_label",
-                    "delta_band", "market_implications", "rationale",
+                    "scenario_name", "kind", "likelihood", "courses", "lead_likelihood",
+                    "dyad_id", "dyad_name", "presser", "course", "opening_band",
+                    "end_band", "end_band_range", "end_label", "delta_band",
+                    "market_implications", "rationale",
                 )},
                 "tone_label": s["opening"].get("tone_label"),
             })
@@ -645,6 +707,7 @@ def region_map(
         ) if g is not None
     ]
     aggregate = {
+        "payload_version": PAYLOAD_VERSION,
         "region": region,
         "as_of": context["as_of"],
         "horizon": horizon,

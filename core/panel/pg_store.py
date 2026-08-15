@@ -426,10 +426,18 @@ def record_game_solutions(
 
 
 def game_solution(
-    conn: Any, region_pack: str, *, scope: str, dyad_id: str = ""
+    conn: Any, region_pack: str, *, scope: str, dyad_id: str = "", version: str | None = None
 ) -> dict[str, Any] | None:
     """One persisted solution (the region aggregate or a dyad), with its
-    computed_at stamped in, or None."""
+    computed_at stamped in, or None.
+
+    A stored payload whose `payload_version` is not `version` is a MISS, not a
+    row: the solve is a function of code that has since changed shape, and the
+    caller's fallback (solve live) is right where serving it is wrong. This is
+    the 2026-08-15 NaN: rows written an hour before a field rename were served
+    to a frontend reading the new names, and every probability on the region
+    map rendered "NaN%". Pass None to read whatever is there.
+    """
     import json
 
     with conn.cursor() as cur:
@@ -443,6 +451,8 @@ def game_solution(
         return None
     payload, computed_at, solver = row
     out = payload if isinstance(payload, dict) else json.loads(payload)
+    if version is not None and str(out.get("payload_version", "")) != version:
+        return None
     out["computed_at"] = computed_at.isoformat()
     out["persisted"] = True
     out["solver_persisted"] = solver

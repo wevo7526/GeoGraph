@@ -518,6 +518,37 @@ def test_the_measuring_steps_are_opt_in_so_the_graph_opens_fast(monkeypatch):
         )
 
 
+def test_the_curated_spine_is_measured_on_every_boot_not_only_a_measuring_one(
+    monkeypatch,
+):
+    # The counterpart to the rule above, and the 2026-08-15 lesson: the full
+    # study is opt-in because it is a hundred thousand events walked in date
+    # order, and that is exactly why the events the SURFACE names — the case
+    # studies, the marquee spine, all of them recent — were never reached.
+    # Production served "a spine and no numbers" on every case study while
+    # holding 632,586 measured effects. The curated set is ~40 events; it runs
+    # on every boot, and it must not be gated behind the measuring flag.
+    calls: list[list[str]] = []
+    monkeypatch.delenv("GEOGRAPH_STUDY_ON_BOOT", raising=False)
+    monkeypatch.setattr(boot, "_panel_is_empty", lambda: False)
+
+
+    def _record(label: str, argv: list[str], **kw: object) -> dict[str, object]:
+        calls.append(argv)
+        return {"step": label, "ok": True}
+
+    monkeypatch.setattr(boot, "_run_step", _record)
+    result = boot._run_spine_study(["mena", "china"])
+    assert result["ok"] and "skipped" not in result
+    assert [c[-1] for c in calls] == ["--spine", "--spine"]
+    assert [c[-2] for c in calls] == ["mena", "china"]
+    # No panel, nothing to measure against — said, not attempted.
+    calls.clear()
+    monkeypatch.setattr(boot, "_panel_is_empty", lambda: None)
+    assert boot._run_spine_study(["mena"])["skipped"] == "panel empty"
+    assert calls == []
+
+
 def test_the_paper_backtest_is_declinable_and_opt_in(monkeypatch):
     # The gate MOVED twice, on evidence: banished from the boot when each cutoff
     # cost a full 1.31M-row pass (the first corpus boot burned its whole 900s
