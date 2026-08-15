@@ -68,6 +68,10 @@ export default function RelationshipPage({
   const regionLabel = useRegionLabel(region)
   const [dyads, setDyads] = useState<PanelDyad[] | null>(null)
   const [selected, setSelected] = useState('')
+  // Set when a linked dyad is NOT in this region's panel — the page then
+  // shows the most active pair instead, and must say so rather than letting
+  // the substitution pass as the thing the reader clicked.
+  const [linkNote, setLinkNote] = useState<string | null>(null)
   const [series, setSeries] = useState<DyadSeries | null | undefined>(undefined)
   const [precedent, setPrecedent] = useState<Precedent | null | undefined>(undefined)
   const [timeline, setTimeline] = useState<DyadTimeline | null | undefined>(undefined)
@@ -93,8 +97,17 @@ export default function RelationshipPage({
       const rows = r?.rows ?? []
       setDyads(rows)
       const linked = dyadFromHash()
-      if (linked && rows.some((d) => d.dyad_id === linked)) setSelected(linked)
-      else if (rows.length) setSelected(rows[0].dyad_id)
+      if (linked && rows.some((d) => d.dyad_id === linked)) {
+        setSelected(linked)
+        setLinkNote(null)
+      } else {
+        if (rows.length) setSelected(rows[0].dyad_id)
+        setLinkNote(
+          linked && rows.length
+            ? 'The relationship this link named is not tracked in this region — showing the most active pair instead.'
+            : null,
+        )
+      }
     })
     return () => {
       live = false
@@ -213,7 +226,10 @@ export default function RelationshipPage({
           <select
             className="region-select mono text-xs"
             value={selected}
-            onChange={(e) => setSelected(e.target.value)}
+            onChange={(e) => {
+              setSelected(e.target.value)
+              setLinkNote(null)
+            }}
             aria-label="Choose a relationship"
           >
             {dyads.map((d) => (
@@ -233,6 +249,11 @@ export default function RelationshipPage({
         <Empty note="no relationships in this region yet" />
       ) : (
         <>
+          {linkNote && (
+            <p className="mono text-[11px] mt-2" style={{ color: 'var(--alert)' }}>
+              {linkNote}
+            </p>
+          )}
           <div className="mt-3 flex items-start justify-between gap-4">
             <div>
               <h1 className="text-2xl" style={{ letterSpacing: '-0.01em' }}>

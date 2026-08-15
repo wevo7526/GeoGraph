@@ -848,13 +848,17 @@ export default function Explorer({
   const [coverage, setCoverage] = useState<Record<string, number> | null>(null)
   const [total, setTotal] = useState<number | null>(null)
   const [events, setEvents] = useState<GraphEvent[] | null>(null)
+  const [windowTruncated, setWindowTruncated] = useState(false)
   const [year, setYear] = useState(YEAR_NOW)
   const [selection, setSelection] = useState<Selection>(null)
   const [focusActor, setFocusActor] = useState<string | null>(null)
   const [hover, setHover] = useState<string | null>(null)
   const graphHandle = useRef<Graph3DHandle>(null)
   const windowCache = useRef<
-    Map<string, { events: GraphEvent[]; actors: GraphActor[]; relations: Relation[] }>
+    Map<
+      string,
+      { events: GraphEvent[]; actors: GraphActor[]; relations: Relation[]; truncated: boolean }
+    >
   >(new Map())
 
   useEffect(() => {
@@ -897,7 +901,9 @@ export default function Explorer({
       events: GraphEvent[]
       actors: GraphActor[]
       relations: Relation[]
+      truncated: boolean
     }) => {
+      setWindowTruncated(bundle.truncated)
       setEvents((prev) => sameByKey(prev, bundle.events, (e) => e.node_id) ? prev! : bundle.events)
       setActors((prev) => (sameByKey(prev, bundle.actors, (a) => a.node_id) ? prev : bundle.actors))
       setRelations((prev) =>
@@ -922,6 +928,7 @@ export default function Explorer({
         events: eventsRes?.rows ?? [],
         actors: actorsRes?.rows ?? [],
         relations: relationsRes?.rows ?? [],
+        truncated: eventsRes?.truncated ?? false,
       }
       windowCache.current.set(key, bundle)
       apply(bundle)
@@ -1058,6 +1065,15 @@ export default function Explorer({
               </button>
             )}
           </div>
+          {/* Truncation is DATA: a five-year window can hold more than the
+              fetch limit, and a silently clipped list reads as the whole
+              archive. Say so. */}
+          {windowTruncated && listed.length > 0 && (
+            <p className="mono text-[10px] mt-2" style={{ color: 'var(--muted)' }}>
+              a dense window — showing the first {listed.length} events; narrow the
+              years to see the rest
+            </p>
+          )}
           {listed.length === 0 ? (
             <p className="mt-3 text-sm" style={{ color: 'var(--muted)' }}>
               {focusedActor
