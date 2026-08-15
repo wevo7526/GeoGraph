@@ -812,6 +812,7 @@ export interface Scenario {
     steps_priced: number
   }>
   rationale: string
+  tone_label?: string
 }
 
 export interface OpeningMatrix {
@@ -842,6 +843,7 @@ export interface ConceptSolution {
     expected_band: number
   }>
   escalation_probability: number
+  sharp_departure_probability: number
   escalation_propensity: Record<string, number[]>
   paths: Array<{ probability: number; steps: ScenarioStep[] }>
   paths_enumerated: number
@@ -860,9 +862,12 @@ export interface DyadSolution {
   horizon: number
   bands: number
   band_labels: string[]
+  band_semantics?: string
   opening: {
     intensity_band: number
     intensity_label: string
+    tone?: number | null
+    tone_label?: string
     latest_intensity: number
     scale: number
     active_quarters: number
@@ -891,7 +896,11 @@ export interface RegionRanking {
   dyad_name: string
   opening_band: number
   opening_label: string
+  tone?: number | null
+  tone_label?: string
   escalation_probability: number
+  sharp_departure_probability: number
+  sharp_departure_probability_lp?: number | null
   escalation_probability_qre: number | null
   expected_end_band: number | null
   top_scenario: {

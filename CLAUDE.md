@@ -400,3 +400,52 @@ Two consequences worth knowing before touching colour:
   They were chosen by running the dataviz skill's `validate_palette.js`, not
   by eye — the first pick failed the lightness band and chroma floor. Re-run
   it against the `#f2ecdd` ground before changing either.
+
+## The 2026-08-15 rebuild (LP equilibrium, scenario maps, white surface)
+
+- **The game solves under TWO stage concepts** (`core/games/solve.py`
+  `solver="qre"|"lp"`): the fitted quantal response (the estimator's concept,
+  the default for `/games/explore` and the freeze) and the LP correlated
+  equilibrium (`core/games/equilibrium.py`: welfare-maximal CE by
+  `scipy.optimize.linprog`/HiGHS). The LP reports `nash_gap` — total variation
+  of its joint from the product of its marginals; 0 means it sat ON a Nash
+  point, and in practice ~98% of stage games do. That number is what "toward
+  the BNE" means on the surface; it is stated, never assumed. Both concepts
+  share the recursion, the path walk (`paths.py`, which now emits per-step
+  beliefs) and the ML tilt.
+- **The scenario map** (`core/games/scenarios.py`): every active dyad in a
+  region solved at its data-driven opening state under both concepts, courses
+  of play NAMED as scenarios with likelihoods, priced to the measured market
+  map, aggregated to a region future-event map, and EXPLAINED by a template
+  over the payload's own fields (§17 holds — no sentence a number cannot
+  substantiate). One region-context builder (`core/games/context.py`) is
+  shared by the router, the map and `scripts/solve_games.py`.
+- **Solutions persist in Postgres** (`game_solutions`: region aggregate +
+  per-dyad rows, replaced whole per region) written by the opt-in boot step
+  `GEOGRAPH_GAMES_ON_BOOT` (~3 min for three regions × 12 dyads, fingerprint-
+  guarded on events/affected/estimates/forecasts + image). `/api/games/region`
+  and `/api/games/dyad` are persisted-first with a live fallback flagged
+  `persisted: false`. `paper_backtest_runs` keeps each walk's skips and
+  summary — a region whose every quarter was a skip used to read as unrun.
+- **The panel guard is per ticker** (boot `_missing_tickers`): a pack whose
+  markets hold ZERO rows gets them loaded before the global depth/freshness
+  check, and `_panel_edge()` carries ticker breadth so the backtest guard
+  wakes when the panel gains a series. Found because china's `^TWII`/`^HSI`
+  and eurasia's indices were never loaded and 425 quarters per region were
+  "1 of 3 legs" skips.
+- **Registration**: `/api/impact/coverage` registers measured-vs-total events
+  per dyad per pack (the market-movement trace); `/api/dyads` honours
+  `region`; the dyad timeline carries name/score/direction/first mover;
+  `pricing.measured_effects` keeps deep-tier (`region_pack=''`) effects;
+  DGS3MO effects are FRED-sourced; `/api/case-studies/dynamic` composes a
+  study for any dyad or event in the worked-study shape.
+- **The surface is WHITE** (styles.css citation): white ground, black ink,
+  white knowledge-graph plate with a 2px black border; Graph3D's WebGL
+  constants inverted with it and the state-series gold re-validated
+  (`#c48a12`). Six tabs: Explorer, Relationships, Game theory, Markets,
+  Watchlist, Case studies. Chart primitives live in `charts/Charts.tsx` +
+  `charts/Kit.tsx` (inline SVG on the tokens, hover layers, no library).
+- **After a volume reset the GDELT load is alphabetical and window-bound**:
+  the 2026-08-15 `recover` rebuild merged china and eurasia and never
+  reached mena, so mena's wire was corpus-only in the graph and its measured
+  effects empty. `/api/impact/coverage?region=mena` is the check.

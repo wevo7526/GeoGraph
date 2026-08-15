@@ -22,7 +22,7 @@ from pathlib import Path
 from typing import Any
 
 try:
-    from fastapi import FastAPI, HTTPException
+    from fastapi import FastAPI, HTTPException, Response
     from fastapi.responses import FileResponse
     from fastapi.staticfiles import StaticFiles
 except ModuleNotFoundError as exc:
@@ -208,6 +208,33 @@ def create_app() -> FastAPI:
             # Live state when the boot runs behind this API (api-first),
             # else whatever the serialised boot handed over in the env.
             "boot": getattr(app.state, "boot", None) or _boot_status(),
+        }
+
+    @app.get("/api/ready")
+    def ready(response: Response) -> dict[str, Any]:
+        """THE RAILWAY HEALTHCHECK TARGET (railway.json) since 2026-08-15:
+        200 only once the graph is open, 503 while the boot's write steps
+        hold the lock. Railway keeps the PREVIOUS deployment serving until
+        the new one passes its healthcheck, so gating readiness on the graph
+        turns every routine deploy's graph-dark minute — and a measuring
+        deploy's ten — into zero user-visible downtime: the old container
+        answers while the new one boots. /api/health stays 200-always for
+        the UI's own status banner. GEOGRAPH_READY_IGNORES_GRAPH=1 restores
+        the old always-200 readiness for a deploy whose boot cannot open the
+        graph inside the healthcheck window (a bulk GDELT load) — that is
+        the one case where a waiting healthcheck would kill a working boot."""
+        import os
+
+        ignore = os.getenv("GEOGRAPH_READY_IGNORES_GRAPH", "0").strip().lower() in {
+            "1", "true", "yes",
+        }
+        open_ = app.state.graph is not None
+        if not (open_ or ignore):
+            response.status_code = 503
+        return {
+            "ready": open_ or ignore,
+            "graph": "open" if open_ else "unavailable",
+            "graphError": app.state.graph_error,
         }
 
     for router in (graph.router, events.router, case_studies.router, network.router,

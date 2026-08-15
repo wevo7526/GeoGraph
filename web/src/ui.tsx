@@ -123,3 +123,19 @@ export function Disclosure({ label, children }: { label: string; children: React
 export function Empty({ children }: { children: ReactNode }) {
   return <p className="note-empty">{children}</p>
 }
+
+
+/** A state word as a chip: the ABSOLUTE tone of a pair (cooperative … conflictual)
+ *  beside a relative departure band, a solver name, a status. Colour is the
+ *  diverging pair carrying sign; anything neutral wears ink. */
+export function Chip({ label, tone }: { label: string; tone?: 'good' | 'bad' | 'ink' | 'muted' }) {
+  const cls = tone === 'good' ? 'chip chip--good' : tone === 'bad' ? 'chip chip--bad' : tone === 'ink' ? 'chip chip--ink' : 'chip'
+  return <span className={cls}>{label}</span>
+}
+
+export function toneOf(label: string | undefined | null): 'good' | 'bad' | 'muted' {
+  if (!label) return 'muted'
+  if (label === 'cooperative' || label === 'friendly') return 'good'
+  if (label === 'strained' || label === 'hostile' || label === 'conflictual') return 'bad'
+  return 'muted'
+}

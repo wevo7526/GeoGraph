@@ -42,7 +42,37 @@ REGION_DYADS = 12
 #: names it as an implication (the pricing module's own thinness bar).
 _MARKET_MIN = pricing_module.MIN_MEASUREMENTS
 
-BAND_LABELS = ("cooperative", "calm", "tense", "hostile", "open conflict", "war")
+#: INTENSITY BANDS ARE RELATIVE — the quarter's largest escalating departure
+#: from the pair's OWN baseline, banded against the pair's own scale — so the
+#: labels are departure words, never absolute conflict words. "United States
+#: – Japan in the tense band" was the 2026-08-15 finding: a high-baseline
+#: alliance's routine friction wearing a hostility label. The ABSOLUTE read is
+#: the tone (mean Goldstein), carried beside the band as `tone_label`.
+BAND_LABELS = (
+    "at baseline", "mild departure", "notable departure",
+    "sharp departure", "rupture", "extreme rupture",
+)
+BAND_SEMANTICS = (
+    "bands are departures from the pair's own baseline (relative friction, "
+    "banded on the pair's own scale), not absolute hostility; the tone is the "
+    "absolute read"
+)
+
+
+def tone_label(tone: float | None) -> str:
+    if tone is None:
+        return "unread"
+    if tone >= 2.0:
+        return "cooperative"
+    if tone >= 0.5:
+        return "friendly"
+    if tone > -0.5:
+        return "mixed"
+    if tone > -2.0:
+        return "strained"
+    if tone > -5.0:
+        return "hostile"
+    return "conflictual"
 
 BOUNDARY_STATEMENT = (
     "Scenarios are courses of play the solved game puts mass on, priced by "
@@ -192,12 +222,29 @@ def scenarios_for(
 # ── one dyad, both concepts ────────────────────────────────────────────────
 
 
+#: The band that holds the pair's OWN median departure: `intensity_band` maps
+#: value/scale = 1.0 to the band whose lower edge is 1.0 — with the shipped
+#: edges (0, 0.5, 1.0, 1.5, 2.0, 3.0) that is band 2. Above it, a departure is
+#: sharper than this pair's usual friction; that is what the region ranks by.
+TYPICAL_BAND = state_module.intensity_band(1.0, 1.0)
+
+
 def _escalation_probability(marginal: list[dict[str, Any]], opening_band: int) -> float:
-    """P(band at the horizon's end > opening band), off the fan."""
+    """P(band at the horizon's end > opening band), off the fan. Trivially
+    high for a pair opening at baseline — reported, not ranked by."""
     if not marginal:
         return 0.0
     dist = marginal[-1]["distribution"]
     return round(float(sum(dist[opening_band + 1:])), 4)
+
+
+def _sharp_departure_probability(marginal: list[dict[str, Any]]) -> float:
+    """P(band at the horizon's end > the pair's typical band) — sharper than
+    its own usual friction. The ranking metric since 2026-08-15."""
+    if not marginal:
+        return 0.0
+    dist = marginal[-1]["distribution"]
+    return round(float(sum(dist[TYPICAL_BAND + 1:])), 4)
 
 
 def _propensity(equilibrium: dict[str, Any], capability: int) -> dict[str, list[float]]:
@@ -232,7 +279,7 @@ def solve_dyad(
     payoffs: solve_module.Payoffs,
     graph_conn: Any,
     horizon: int = 4,
-    solvers: tuple[str, ...] = ("lp", "qre"),
+    solvers: tuple[str, ...] = ("qre", "lp"),
 ) -> dict[str, Any] | None:
     """The full solved game for one dyad at its data-driven opening state.
 
@@ -249,6 +296,10 @@ def solve_dyad(
     scale = state_module.dyad_scale([float(r["intensity"]) for r in own])
     latest = max(own, key=lambda r: r["q"])
     band = state_module.intensity_band(float(latest["intensity"]), scale)
+    # The absolute read: mean tone over the last four active quarters.
+    recent = sorted(own, key=lambda r: r["q"])[-4:]
+    tones = [float(r["tone"]) for r in recent if r.get("tone") is not None]
+    tone_now = round(sum(tones) / len(tones), 3) if tones else None
     capability = opening_module.capability_state(graph_conn, dyad_id)
     beliefs = opening_module.filtered_beliefs(context["joint"], dyad_id, payoffs)
     cap = int(capability["band"])
@@ -273,6 +324,7 @@ def solve_dyad(
             "nash_gap": equilibrium.get("nash_gap"),
             "marginal": marginal,
             "escalation_probability": _escalation_probability(marginal, band),
+            "sharp_departure_probability": _sharp_departure_probability(marginal),
             "escalation_propensity": _propensity(equilibrium, cap),
             "paths": priced["paths"],
             "paths_enumerated": priced["paths_enumerated"],
@@ -298,9 +350,12 @@ def solve_dyad(
         "horizon": horizon,
         "bands": bands,
         "band_labels": [band_label(b, bands) for b in range(bands)],
+        "band_semantics": BAND_SEMANTICS,
         "opening": {
             "intensity_band": band,
             "intensity_label": band_label(band, bands),
+            "tone": tone_now,
+            "tone_label": tone_label(tone_now),
             "latest_intensity": round(float(latest["intensity"]), 3),
             "scale": round(float(scale or 0.0), 3),
             "active_quarters": len([r for r in own if float(r["intensity"]) > 0]),
@@ -361,11 +416,16 @@ def explain(solution: dict[str, Any]) -> list[str]:
         if bel.get("source") == "bayes_filter"
         else "no observed actions to filter, so the prior on resolve is flat"
     )
+    tone_words = (
+        f"{op.get('tone_label', 'unread')} on balance (mean tone "
+        f"{op['tone']:+.2f})" if op.get("tone") is not None else "of unread tone"
+    )
     out.append(
-        f"{side_a} and {side_b} open in the {op['intensity_label']} band "
-        f"(latest quarterly intensity {op['latest_intensity']:.2f} against this pair's own "
-        f"scale of {op['scale']:.2f}; {op['active_quarters']} active quarters on record), with "
-        f"{cap_words}; {bel_words}."
+        f"{side_a} and {side_b} are {tone_words}, and open at a {op['intensity_label']} "
+        f"from their own baseline (latest quarterly departure {op['latest_intensity']:.2f} "
+        f"against this pair's own scale of {op['scale']:.2f}; {op['active_quarters']} active "
+        f"quarters on record), with {cap_words}; {bel_words}. Bands are relative friction, "
+        "not absolute hostility."
     )
 
     if lp:
@@ -414,9 +474,9 @@ def explain(solution: dict[str, Any]) -> list[str]:
             f"{top['end_label']}"
             + (f" with {top['presser']} pressing" if top.get("presser") else "")
             + f". The fan's expected band moves {fan_start:.2f} → {fan_end:.2f}; "
-            "the chance the pair "
-            f"sits ABOVE its opening band after {horizon} quarters is "
-            f"{_pct(concept['escalation_probability'])}. {concept['paths_enumerated']} "
+            f"the chance of a sharper-than-usual departure after {horizon} quarters is "
+            f"{_pct(concept['sharp_departure_probability'])} (above the opening band: "
+            f"{_pct(concept['escalation_probability'])}). {concept['paths_enumerated']} "
             "courses were "
             f"enumerated and the top {len(concept['paths'])} carry "
             f"{_pct(concept['retained_probability'])} of them."
@@ -481,7 +541,7 @@ def region_map(
     graph_conn: Any,
     dyad_ids: list[str],
     horizon: int = 4,
-    solvers: tuple[str, ...] = ("lp", "qre"),
+    solvers: tuple[str, ...] = ("qre", "lp"),
 ) -> dict[str, Any]:
     """Every dyad solved; the region's future-event map aggregated from them.
 
@@ -515,9 +575,16 @@ def region_map(
             "dyad_id": s["dyad_id"], "dyad_name": s["dyad_name"],
             "opening_band": s["opening"]["intensity_band"],
             "opening_label": s["opening"]["intensity_label"],
+            "tone": s["opening"].get("tone"),
+            "tone_label": s["opening"].get("tone_label"),
             "escalation_probability": c["escalation_probability"],
+            "sharp_departure_probability": c["sharp_departure_probability"],
             "escalation_probability_qre": (
                 s["concepts"]["qre"]["escalation_probability"] if "qre" in s["concepts"] else None
+            ),
+            "sharp_departure_probability_lp": (
+                s["concepts"]["lp"]["sharp_departure_probability"]
+                if "lp" in s["concepts"] else None
             ),
             "expected_end_band": (
                 c["marginal"][-1]["expected_band"] if c["marginal"] else None
@@ -535,13 +602,14 @@ def region_map(
         })
         for sc in c["scenarios"]:
             all_scenarios.append({
-                k: sc[k] for k in (
+                **{k: sc[k] for k in (
                     "scenario_name", "kind", "likelihood", "dyad_id", "dyad_name",
                     "presser", "course", "opening_band", "end_band", "end_label",
                     "delta_band", "market_implications", "rationale",
-                )
+                )},
+                "tone_label": s["opening"].get("tone_label"),
             })
-    ranking.sort(key=lambda r: (-(r["escalation_probability"] or 0), r["dyad_id"]))
+    ranking.sort(key=lambda r: (-(r["sharp_departure_probability"] or 0), r["dyad_id"]))
     escalatory = sorted(
         (sc for sc in all_scenarios if sc["delta_band"] > 0 or sc["kind"] in
          ("mutual_escalation", "one_sided_pressure", "brinkmanship")),
@@ -582,6 +650,7 @@ def region_map(
         "horizon": horizon,
         "bands": bands,
         "band_labels": [band_label(b, bands) for b in range(bands)],
+        "band_semantics": BAND_SEMANTICS,
         "primary_solver": primary,
         "solvers": list(solvers),
         "concepts": {
@@ -618,17 +687,18 @@ def explain_region(aggregate: dict[str, Any]) -> list[str]:
     out: list[str] = []
     if not ranking:
         return ["No dyad in this region cleared the panel's modelling bar; nothing was solved."]
-    hot = [r for r in ranking if (r["escalation_probability"] or 0) >= 0.5]
+    hot = [r for r in ranking if (r["sharp_departure_probability"] or 0) >= 0.5]
     lead = ranking[0]
     out.append(
         f"{aggregate['dyads_solved']} pairs solved under the {aggregate['primary_solver'].upper()} "
         f"and the fitted QRE at their own opening states ({aggregate['dyads_cinc']} with "
         "CINC-measured "
         f"capability, {aggregate['dyads_tilted']} tilted by the frozen model). "
-        f"{len(hot)} of them carry at least even odds of sitting above their opening band after "
-        f"{aggregate['horizon']} quarters; the pair carrying the most escalation mass is "
-        f"{lead['dyad_name']} ({_pct(lead['escalation_probability'] or 0)}, opening "
-        f"{lead['opening_label']}"
+        f"{len(hot)} of them carry at least even odds of a sharper-than-usual departure "
+        f"from their own baseline after {aggregate['horizon']} quarters — friction relative "
+        f"to each pair's own history, read beside its tone; the pair carrying the most is "
+        f"{lead['dyad_name']} ({_pct(lead['sharp_departure_probability'] or 0)}, "
+        f"{lead.get('tone_label') or 'unread'} on balance, opening at a {lead['opening_label']}"
         + (f", most likely course {lead['top_scenario']['kind'].replace('_', ' ')} at "
            f"{_pct(lead['top_scenario']['likelihood'])}" if lead.get("top_scenario") else "")
         + ")."

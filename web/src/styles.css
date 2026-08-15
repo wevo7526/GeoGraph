@@ -490,3 +490,156 @@ input[type='range'].timeline:focus-visible {
   }
   .explorer-main .canvas3d { min-height: 60vh; }
 }
+
+/* ── The front door's tiles and ticker (2026-08-15) ──────────────────────────
+   Three region tiles on a hairline grid — a figure, a kicker, a bar — and the
+   wire running beneath as a ticker. Motion is the ticker alone; the tiles
+   answer hover with a tint, not a lift (paper has no elevation). */
+.tile {
+  background: var(--ground);
+  color: var(--text);
+  min-height: 15rem;
+  transition: background 120ms ease;
+  cursor: pointer;
+}
+.tile:hover,
+.tile:focus-visible {
+  background: var(--panel);
+  outline: none;
+}
+.ticker {
+  overflow: hidden;
+  border-top: 1px solid var(--rule-strong);
+  border-bottom: 1px solid var(--rule-strong);
+  padding: 0.5rem 0;
+  white-space: nowrap;
+}
+.ticker-track {
+  display: inline-flex;
+  gap: 2.5rem;
+  animation: ticker-run 90s linear infinite;
+}
+.ticker:hover .ticker-track {
+  animation-play-state: paused;
+}
+.ticker-item {
+  flex: none;
+}
+@keyframes ticker-run {
+  from { transform: translateX(0); }
+  to { transform: translateX(-50%); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .ticker-track { animation: none; }
+}
+
+/* ── Visual hierarchy pass (2026-08-15) ─────────────────────────────────────
+   The pages had one voice: body text, dotted underlines, more body text. The
+   hierarchy now has four registers, and each element wears exactly one:
+     1. the story head — h1 large, standfirst muted, kicker above;
+     2. the beat — a numbered h2 with a rule, more air above than below;
+     3. the panel — `.boxed`/`.call` tinted plates for the thing to read first;
+     4. the control row — `.toolbar` with `.btn` (outlined) for secondary
+        actions, `.ink-button` for the primary one, `.article-link` ONLY inline
+        in running text, `.chip` for a state word (tone, status, concept).
+   Print's rules, not shadows; ink weight and size carry the order. */
+.story-head h1 {
+  font-size: clamp(2.1rem, 5.5vw, 3.2rem);
+}
+.beat {
+  margin-top: 3.25rem;
+  padding-top: 1.75rem;
+}
+.beat-head h2 {
+  font-size: 1.55rem;
+}
+.beat-head .kicker {
+  font-size: 12px;
+}
+.btn {
+  background: var(--ground);
+  color: var(--text);
+  border: 1px solid var(--rule-strong);
+  padding: 0.35rem 0.9rem;
+  font-size: 0.85rem;
+  cursor: pointer;
+  transition: background 120ms ease, color 120ms ease;
+  white-space: nowrap;
+}
+.btn:hover,
+.btn[aria-pressed='true'],
+.btn--on {
+  background: var(--text);
+  color: var(--ground);
+}
+.btn:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.btn--quiet {
+  border-color: var(--line);
+}
+.toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem 0.75rem;
+  padding: 0.75rem 0;
+  border-top: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+}
+.toolbar .kicker {
+  margin-right: 0.25rem;
+}
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  font-family: ui-monospace, 'Cascadia Code', Consolas, monospace;
+  font-size: 10.5px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  padding: 0.15rem 0.5rem;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  color: var(--muted);
+  white-space: nowrap;
+}
+.chip--good { color: var(--accent); border-color: var(--accent); }
+.chip--bad { color: var(--alert); border-color: var(--alert); }
+.chip--ink { color: var(--text); border-color: var(--rule-strong); }
+.card {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  padding: 1rem 1.15rem;
+}
+.card + .card { margin-top: 0.75rem; }
+.card-title {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.75rem;
+  margin-bottom: 0.5rem;
+}
+.rule-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+.rule-table th {
+  font-weight: normal;
+  color: var(--muted);
+  border-bottom: 1px solid var(--rule-strong);
+  padding: 0.3rem 0.4rem;
+}
+.rule-table td {
+  border-bottom: 1px dotted var(--line);
+  padding: 0.3rem 0.4rem;
+}
+.rule-table tr:hover td {
+  background: var(--panel);
+}
+.lede-figure {
+  font-variant-numeric: tabular-nums;
+  font-size: clamp(2rem, 4vw, 2.6rem);
+  line-height: 1;
+}

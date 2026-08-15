@@ -40,6 +40,9 @@ from core.games import state as state_module
 #: payoffs it is supposed to be revealing.
 PRECISION = 4.0
 
+#: The most certain a filtered belief about the other side's type may get.
+BELIEF_CEILING = 0.9
+
 #: Best-response sweeps per stage game. Logit response is a contraction at
 #: this precision; twenty is well past where the mixtures stop moving.
 _SWEEPS = 20
@@ -155,7 +158,14 @@ def posterior(prior: float, action: int, payoffs: Payoffs) -> float:
     likelihood_irresolute = (min(ratio, 4.0), 1.0, 1.0)[action]
     numerator = prior * likelihood_resolute
     denominator = numerator + (1.0 - prior) * likelihood_irresolute
-    return float(numerator / denominator) if denominator > 0 else prior
+    updated = float(numerator / denominator) if denominator > 0 else prior
+    # NEVER CERTAIN. Twelve quarters of one action at a likelihood ratio of
+    # four drove filtered beliefs to exactly 1.0 (2026-08-15: every busy pair
+    # read "100% resolute"), and a belief at 1.0 collapses the expected
+    # policy onto one type and every course onto one path. A type is a
+    # private thing the archive infers, not observes; the filter keeps a
+    # floor of doubt on both sides.
+    return min(BELIEF_CEILING, max(1.0 - BELIEF_CEILING, updated))
 
 
 SOLVERS = ("qre", "lp")

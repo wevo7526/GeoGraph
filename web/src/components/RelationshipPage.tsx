@@ -336,16 +336,21 @@ export default function RelationshipPage({ region, onNavigate }: { region: strin
             ) : null}
 
             {solution && (
-              <p className="mt-3 text-sm">
-                The solved game (LP correlated equilibrium) puts <strong>{pct(solution.concepts.lp?.escalation_probability ?? 0, 0)}</strong> on this pair
-                sitting above its opening band after {solution.horizon} quarters
-                {solution.concepts.qre ? ` (${pct(solution.concepts.qre.escalation_probability, 0)} under the fitted QRE)` : ''}
-                {solution.opening.tilt ? `, with the learned layer tilting the kernel by η ${solution.opening.tilt.eta >= 0 ? '+' : ''}${solution.opening.tilt.eta.toFixed(3)}` : ', untilted by the learned layer'}.
-                {' '}
-                <button className="article-link" onClick={() => onNavigate(`/games?dyad=${encodeURIComponent(selected)}&region=${encodeURIComponent(region)}`)}>
-                  Open the solved game →
-                </button>
-              </p>
+              <div className="mt-3 text-sm">
+                <p>
+                  The pair is <strong>{solution.opening.tone_label ?? 'unread'}</strong> on balance
+                  {solution.opening.tone != null ? ` (tone ${solution.opening.tone >= 0 ? '+' : ''}${solution.opening.tone.toFixed(2)})` : ''};
+                  the solved game puts <strong>{pct(solution.concepts[solution.primary_solver]?.sharp_departure_probability ?? 0, 0)}</strong> on a
+                  sharper-than-usual departure from its own baseline within {solution.horizon} quarters
+                  {solution.concepts.lp && solution.primary_solver !== 'lp' ? ` (LP benchmark ${pct(solution.concepts.lp.sharp_departure_probability, 0)})` : ''}
+                  {solution.opening.tilt ? `, with the learned layer tilting the kernel by η ${solution.opening.tilt.eta >= 0 ? '+' : ''}${solution.opening.tilt.eta.toFixed(3)}` : ', untilted by the learned layer'}.
+                </p>
+                <p className="mt-2">
+                  <button className="btn" onClick={() => onNavigate(`/games?dyad=${encodeURIComponent(selected)}&region=${encodeURIComponent(region)}`)}>
+                    Open the solved game →
+                  </button>
+                </p>
+              </div>
             )}
 
             {/* Show me why — the trajectory fan behind the one-line call. */}
@@ -473,7 +478,7 @@ export default function RelationshipPage({ region, onNavigate }: { region: strin
             )}
             {selected && (
               <p className="mt-3">
-                <button className="article-link text-sm" onClick={() => onNavigate(`/case/dynamic?dyad=${encodeURIComponent(selected)}&region=${encodeURIComponent(region)}`)}>
+                <button className="btn" onClick={() => onNavigate(`/case/dynamic?dyad=${encodeURIComponent(selected)}&region=${encodeURIComponent(region)}`)}>
                   Compose a case study from this record →
                 </button>
               </p>

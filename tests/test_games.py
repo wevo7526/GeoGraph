@@ -84,14 +84,32 @@ def test_the_state_space_stays_inside_its_solve_budget():
 # ── the counted kernel ───────────────────────────────────────────────────────
 
 
-def test_material_conflict_outranks_a_pile_of_talk():
-    # A quarter with one shooting incident and forty statements is an
-    # escalation; a majority vote over event counts would call it cooperation
-    # because talk is cheap and frequent.
+def test_material_conflict_outranks_talk_by_share_not_by_presence():
+    # THE RULE MOVED ON 2026-08-15, ON EVIDENCE. One shooting among forty
+    # statements used to read as escalation — right for a curated spine, and
+    # on the wire it made allied exercises ("exhibit force posture", quad
+    # material_conflict) turn a 135-event US–Japan quarter into an escalation,
+    # saturate the belief filter and solve the game to escalate/escalate.
+    # A single material event in a quarter that is otherwise talk is a hold;
+    # a quarter that is one shooting and nothing else still escalates; a
+    # material-conflict share above the bar escalates whatever the talk.
     assert transition.action_from_quads(
         {"material_conflict": 1, "verbal_cooperation": 40}
+    ) == "de-escalate"  # cooperation is the clear majority; one record is noise
+    assert transition.action_from_quads(
+        {"material_conflict": 1, "verbal_conflict": 20, "verbal_cooperation": 20}
+    ) == "hold"
+    assert transition.action_from_quads({"material_conflict": 1}) == "escalate"
+    assert transition.action_from_quads(
+        {"material_conflict": 12, "verbal_cooperation": 40}
     ) == "escalate"
+    assert transition.action_from_quads(
+        {"material_conflict": 5, "verbal_cooperation": 95}
+    ) == "escalate"  # the absolute count clears the bar
     assert transition.action_from_quads({"verbal_cooperation": 3}) == "de-escalate"
+    assert transition.action_from_quads(
+        {"verbal_cooperation": 3, "verbal_conflict": 3}
+    ) == "hold"
     assert transition.action_from_quads({}) == "hold"
 
 
@@ -167,8 +185,14 @@ def test_escalation_is_evidence_of_resolve():
     back_down = state.ACTIONS.index("de-escalate")
     assert solve.posterior(0.5, escalate, payoffs) > 0.5
     assert solve.posterior(0.5, back_down, payoffs) < 0.5
-    # Certainty is absorbing — a side already judged resolute stays so.
-    assert solve.posterior(1.0, back_down, payoffs) == pytest.approx(1.0)
+    # NEVER CERTAIN (2026-08-15): the filter keeps a floor of doubt on both
+    # sides, so a run of one action saturates at the ceiling, not at 1.0 —
+    # a belief at exactly 1.0 collapsed every course onto one path.
+    belief = 0.5
+    for _ in range(30):
+        belief = solve.posterior(belief, escalate, payoffs)
+    assert belief == pytest.approx(solve.BELIEF_CEILING)
+    assert solve.posterior(1.0, back_down, payoffs) < 1.0
 
 
 def test_every_policy_row_is_a_distribution():
@@ -655,8 +679,10 @@ def test_beliefs_are_filtered_from_observed_actions():
     hawks = opening.filtered_beliefs(joint, "dyad:hawks", payoffs)
     doves = opening.filtered_beliefs(joint, "dyad:doves", payoffs)
     unseen = opening.filtered_beliefs(joint, "dyad:unseen", payoffs)
-    assert hawks["a"] > 0.9 and hawks["b"] > 0.9
-    assert doves["a"] < 0.1 and doves["b"] < 0.1
+    assert hawks["a"] >= 0.85 and hawks["b"] >= 0.85
+    assert doves["a"] <= 0.15 and doves["b"] <= 0.15
+    # and never certain: the ceiling holds on both sides
+    assert hawks["a"] <= solve.BELIEF_CEILING and doves["a"] >= 1.0 - solve.BELIEF_CEILING
     assert unseen == {
         "a": 0.5, "b": 0.5, "quarters_observed": 0, "source": "default",
     }

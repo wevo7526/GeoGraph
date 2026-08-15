@@ -8,7 +8,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { getDyadSolution, getRegionMap, lastFailureFor } from '../api'
 import { useRegionLabel } from '../regions'
 import type { ConceptSolution, DyadSolution, RegionMap, Scenario } from '../types'
-import { Beat, Disclosure, Empty, StoryHead } from '../ui'
+import { Beat, Chip, Disclosure, Empty, StoryHead, toneOf } from '../ui'
 import { BandHeat, Bars, MultiLine, PayoffMatrix, Tiles, pct } from './charts/Kit'
 
 const KIND_LABEL: Record<string, string> = {
@@ -99,29 +99,34 @@ function RegionGames({ region, onPick }: { region: string; onPick: (dyad: string
         ]} />
       </div>
 
-      <Beat n={1} title="Where the escalation mass sits" major aside="P(above opening band after 4 quarters), LP">
+      <Beat n={1} title="Where sharper-than-usual friction is likeliest" major aside={`P(departure above the pair's own usual band after 4 quarters), ${map.primary_solver.toUpperCase()}`}>
         {lead && (
-          <p className="text-sm mb-4" style={{ maxWidth: '62ch' }}>
-            <b>{lead.dyad_name}</b> carries the most escalation mass ({pct(lead.escalation_probability, 0)} under the LP,
-            {lead.escalation_probability_qre !== null ? ` ${pct(lead.escalation_probability_qre, 0)} under the QRE` : ''}),
-            opening {lead.opening_label}
+          <p className="text-sm mb-4" style={{ maxWidth: '64ch' }}>
+            <b>{lead.dyad_name}</b> — {lead.tone_label ?? 'unread'} on balance — carries the most: {pct(lead.sharp_departure_probability, 0)}
+            {lead.sharp_departure_probability_lp != null ? ` (LP benchmark ${pct(lead.sharp_departure_probability_lp, 0)})` : ''}, opening at a {lead.opening_label}
             {lead.top_scenario ? `; its most likely course is ${kind(lead.top_scenario.kind)} at ${pct(lead.top_scenario.likelihood, 0)}` : ''}.
-            Click a pair to open its solved game.
+            Bands are departures from each pair's own baseline, not absolute hostility — the tone chip is the absolute read. Click a pair to open its solved game.
           </p>
         )}
-        <Bars
-          rows={ranking.map((r) => ({
-            key: r.dyad_id, label: r.dyad_name, value: r.escalation_probability,
-            sub: `${r.opening_label}${r.tilted ? ' · tilted' : ''}${r.capability_source === 'cinc' ? ' · CINC' : ''}`,
-          }))}
-          format={(v) => pct(v, 0)} max={1} onPick={onPick}
-        />
+        <div className="space-y-1">
+          {ranking.map((r) => (
+            <div key={r.dyad_id} className="flex items-center gap-3 text-xs cursor-pointer" onClick={() => onPick(r.dyad_id)}>
+              <span className="w-44 shrink-0 truncate">{r.dyad_name}</span>
+              <span className="w-24 shrink-0"><Chip label={r.tone_label ?? 'unread'} tone={toneOf(r.tone_label)} /></span>
+              <span className="relative flex-1 h-3" style={{ background: 'var(--panel)' }}>
+                <span className="absolute top-0 bottom-0 left-0" style={{ width: `${r.sharp_departure_probability * 100}%`, background: r.sharp_departure_probability >= 0.5 ? 'var(--alert)' : 'var(--accent)' }} />
+              </span>
+              <span className="mono w-12 text-right">{pct(r.sharp_departure_probability, 0)}</span>
+              <span className="mono w-32 text-right truncate" style={{ color: 'var(--muted)' }}>{r.opening_label}{r.tilted ? ' · tilted' : ''}</span>
+            </div>
+          ))}
+        </div>
         <div className="mt-6">
           <div className="kicker mb-2">The region fan — dyad-average mass by band, period by period</div>
           <BandHeat rows={map.region_fan.map((r) => r.distribution)} bandLabels={bands} />
         </div>
         <div className="mt-6">
-          <div className="kicker mb-2">Expected band by pair and quarter (LP)</div>
+          <div className="kicker mb-2">Expected departure band by pair and quarter ({map.primary_solver.toUpperCase()})</div>
           <ExpectedHeat heat={map.heat} bands={bands.length} onPick={onPick} />
         </div>
       </Beat>
@@ -129,11 +134,11 @@ function RegionGames({ region, onPick }: { region: string; onPick: (dyad: string
       <Beat n={2} title="The scenarios" aside={`${map.scenarios_all.length} courses named across ${map.dyads_solved} pairs`}>
         <div className="grid md:grid-cols-2 gap-8">
           <div>
-            <div className="kicker mb-2" style={{ color: 'var(--alert)' }}>Escalatory — most mass first</div>
+            <div className="kicker mb-2" style={{ color: 'var(--alert)' }}>Courses that press — most mass first</div>
             <ScenarioList rows={map.scenarios_escalatory} onPick={onPick} />
           </div>
           <div>
-            <div className="kicker mb-2" style={{ color: 'var(--accent)' }}>Calming</div>
+            <div className="kicker mb-2" style={{ color: 'var(--accent)' }}>Courses that step down</div>
             <ScenarioList rows={map.scenarios_calming.slice(0, 6)} onPick={onPick} />
           </div>
         </div>
@@ -218,6 +223,7 @@ function ScenarioList({ rows, onPick }: { rows: Scenario[]; onPick?: (dyad: stri
               {pct(sc.likelihood, 0)}
             </span>
             <span className="truncate"><b>{sc.dyad_name}</b> — {kind(sc.kind)}</span>
+            {sc.tone_label && <Chip label={sc.tone_label} tone={toneOf(sc.tone_label)} />}
           </div>
           <div className="relative h-1 mt-1 ml-14" style={{ background: 'var(--panel)' }}>
             <div className="absolute inset-y-0 left-0" style={{
@@ -295,34 +301,38 @@ function DyadGame({
                 <option key={r.dyad_id} value={r.dyad_id}>{r.dyad_name}</option>
               ))}
             </select>
-            <span className="mono text-[11px]" style={{ color: 'var(--muted)' }}>
-              <button className="article-link" onClick={onBack}>← the region map</button>
-              {' · '}
-              <button className="article-link" onClick={() => onNavigate(`/relationships?dyad=${encodeURIComponent(dyad)}&region=${encodeURIComponent(region)}`)}>the relationship →</button>
+            <span className="flex gap-2">
+              <button className="btn btn--quiet" onClick={onBack}>← region map</button>
+              <button className="btn btn--quiet" onClick={() => onNavigate(`/relationships?dyad=${encodeURIComponent(dyad)}&region=${encodeURIComponent(region)}`)}>relationship →</button>
             </span>
           </div>
         }
       />
 
-      <div className="mt-6 flex flex-wrap items-center gap-3 mono text-[11px]">
-        <span style={{ color: 'var(--muted)' }}>concept</span>
-        {(['lp', 'qre'] as const).map((s) => (
-          <button key={s} className={s === solver ? 'ink-button' : 'article-link'} onClick={() => setSolver(s)}
-                  style={{ padding: '0.15rem 0.6rem' }}>
-            {s === 'lp' ? 'LP correlated equilibrium' : 'fitted QRE'}
+      <div className="toolbar mt-6">
+        <span className="kicker">concept</span>
+        {(['qre', 'lp'] as const).map((s) => (
+          <button key={s} className="btn" aria-pressed={s === solver} onClick={() => setSolver(s)}>
+            {s === 'qre' ? 'fitted QRE' : 'LP correlated equilibrium'}
           </button>
         ))}
-        <span style={{ color: 'var(--muted)' }}>
+        <span className="kicker" style={{ marginLeft: '0.75rem' }}>tone</span>
+        <Chip label={sol.opening.tone_label ?? 'unread'} tone={toneOf(sol.opening.tone_label)} />
+        <span className="mono text-[11px]" style={{ color: 'var(--muted)', marginLeft: 'auto' }}>
           {sol.persisted ? `solved ${sol.computed_at?.slice(0, 16).replace('T', ' ')} UTC` : 'solved on request'} · as of {sol.as_of}
         </span>
       </div>
 
-      <div className={`call mt-6 ${concept.escalation_probability >= 0.5 ? 'call--rising' : ''}`}>
+      <div className={`call mt-6 ${concept.sharp_departure_probability >= 0.5 ? 'call--rising' : ''}`}>
         <div className="kicker">The call</div>
         <p className="call-lede">
-          {pct(concept.escalation_probability, 0)} that {sol.sides[0]} and {sol.sides[1]} sit above their opening
-          band ({sol.opening.intensity_label}) after {sol.horizon} quarters
-          {lp && qre ? ` — LP ${pct(lp.escalation_probability, 0)}, QRE ${pct(qre.escalation_probability, 0)}` : ''}.
+          {pct(concept.sharp_departure_probability, 0)} that {sol.sides[0]} and {sol.sides[1]} — {sol.opening.tone_label ?? 'unread'} on balance
+          {sol.opening.tone != null ? ` (tone ${sol.opening.tone >= 0 ? '+' : ''}${sol.opening.tone.toFixed(2)})` : ''} — see a sharper-than-usual
+          departure from their own baseline within {sol.horizon} quarters
+          {lp && qre ? ` (QRE ${pct(qre.sharp_departure_probability, 0)}, LP ${pct(lp.sharp_departure_probability, 0)})` : ''}.
+        </p>
+        <p className="mono text-[11px] mt-1" style={{ color: 'var(--muted)' }}>
+          opening at a {sol.opening.intensity_label} · P(above the opening band) {pct(concept.escalation_probability, 0)} · bands are relative friction, not absolute hostility
         </p>
         {top && (
           <p className="text-sm mt-2" style={{ maxWidth: '62ch' }}>
@@ -335,7 +345,7 @@ function DyadGame({
         )}
         <div className="mt-4">
           <Tiles items={[
-            { label: 'opening', value: sol.opening.intensity_label, sub: `intensity ${sol.opening.latest_intensity.toFixed(2)} / scale ${sol.opening.scale.toFixed(2)}` },
+            { label: 'opening departure', value: sol.opening.intensity_label, sub: `latest ${sol.opening.latest_intensity.toFixed(2)} vs the pair's scale ${sol.opening.scale.toFixed(2)}` },
             { label: 'capability', value: `band ${sol.opening.capability.band}`, sub: sol.opening.capability.source === 'cinc' ? `CINC ratio ${(sol.opening.capability.ratio ?? 0.5).toFixed(2)}` : 'default (no CINC)' },
             { label: 'beliefs (resolute)', value: `${pct(sol.opening.beliefs.a, 0)} / ${pct(sol.opening.beliefs.b, 0)}`, sub: sol.opening.beliefs.source === 'bayes_filter' ? `filtered from ${sol.opening.beliefs.quarters_observed} quarters` : 'flat prior' },
             { label: 'ML tilt', value: sol.opening.tilt ? `η ${sol.opening.tilt.eta >= 0 ? '+' : ''}${sol.opening.tilt.eta.toFixed(3)}` : 'none', tone: sol.opening.tilt ? (sol.opening.tilt.eta > 0 ? 'loss' : 'gain') : 'plain', sub: sol.opening.tilt ? sol.opening.tilt.model : 'no gated trajectory' },
@@ -394,15 +404,16 @@ function DyadGame({
       </Beat>
 
       <Beat n={3} title="The stage game at the opening" aside={lp?.nash_gap ? `nash gap: mean ${lp.nash_gap.mean.toFixed(3)}, ${pct(lp.nash_gap.share_product_form, 0)} of stage games at a Nash point` : undefined}>
-        <div className="flex gap-3 mono text-[11px] mb-3">
+        <div className="toolbar mb-3" style={{ borderTop: 'none' }}>
+          <span className="kicker">own type</span>
           {(['resolute', 'irresolute'] as const).map((t) => (
-            <button key={t} className={t === type ? 'ink-button' : 'article-link'} style={{ padding: '0.15rem 0.6rem' }} onClick={() => setType(t)}>{t} type</button>
+            <button key={t} className="btn btn--quiet" aria-pressed={t === type} onClick={() => setType(t)}>{t}</button>
           ))}
         </div>
         <PayoffMatrix matrix={concept.opening_matrix[type]} sides={sol.sides} />
       </Beat>
 
-      <Beat n={4} title="Escalation propensity by band and type" aside={`${solver.toUpperCase()}, period 1, at the opening capability`}>
+      <Beat n={4} title="Propensity to escalate, by departure band and type" aside={`${solver.toUpperCase()}, period 1, at the opening capability`}>
         <MultiLine
           xLabels={bands}
           series={[

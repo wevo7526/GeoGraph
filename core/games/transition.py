@@ -42,18 +42,43 @@ MIN_CELL_OBSERVATIONS = 12
 ALPHA = 0.5
 
 
+#: The share of a side's initiated events that must be material conflict for
+#: the quarter to read as "escalate" (or, below that share, the absolute count
+#: that still does). Read on 2026-08-15 after the US–Japan finding below.
+MATERIAL_SHARE = 0.2
+MATERIAL_COUNT = 5
+#: The share of cooperation (verbal + material) that reads as "de-escalate"
+#: when material conflict is under its bar.
+COOPERATION_SHARE = 0.6
+
+
 def action_from_quads(quad_counts: dict[str, int]) -> str:
     """The action a side's coded events imply for a quarter.
 
-    Material conflict outranks everything: a quarter holding one shooting
-    incident and forty statements is an escalation, and a majority vote over
-    event counts would call it cooperation because talk is cheap and frequent.
+    Material conflict outranks talk — but by SHARE, not by presence. The old
+    rule called a quarter "escalate" on a single material-conflict event,
+    which was right for a curated spine (one shooting among forty statements
+    IS the story) and wrong on the wire: GDELT codes allied military
+    exercises as "exhibit force posture" (CAMEO 15x, quad material_conflict),
+    so a 135-event United States–Japan quarter with three such records read
+    as escalation, the Bayes filter saturated both beliefs at resolute, and
+    the solved game had the two allies escalating every period. A quarter
+    escalates when material conflict is at least MATERIAL_SHARE of the
+    side's initiated events or at least MATERIAL_COUNT events outright — the
+    spine's one-event quarter (share 1.0) still escalates; the noisy
+    cooperative quarter holds. De-escalation needs cooperation to be the
+    clear majority; anything else is a hold.
     """
-    if quad_counts.get("material_conflict"):
-        return "escalate"
-    if quad_counts.get("verbal_conflict"):
+    total = sum(int(v) for v in quad_counts.values())
+    if total <= 0:
         return "hold"
-    if quad_counts.get("material_cooperation") or quad_counts.get("verbal_cooperation"):
+    material = int(quad_counts.get("material_conflict", 0))
+    if material and (material / total >= MATERIAL_SHARE or material >= MATERIAL_COUNT):
+        return "escalate"
+    cooperation = int(quad_counts.get("material_cooperation", 0)) + int(
+        quad_counts.get("verbal_cooperation", 0)
+    )
+    if cooperation / total >= COOPERATION_SHARE:
         return "de-escalate"
     return "hold"
 

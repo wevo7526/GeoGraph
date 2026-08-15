@@ -1,20 +1,17 @@
 {
   "region": "eurasia",
   "payoffs": {
-    "discount": 0.99,
-    "cost_resolute": 0.05,
-    "cost_irresolute": 1.1846,
-    "stake": 1.7154,
-    "audience": 0.5403
+    "discount": 0.9714,
+    "cost_resolute": 0.2137,
+    "cost_irresolute": 1.6561,
+    "stake": 1.2374,
+    "audience": 0.3458
   },
-  "distance": 0.517062,
+  "distance": 0.323806,
   "converged": true,
-  "evaluations": 129,
+  "evaluations": 120,
   "seed": 20260813,
-  "at_bounds": [
-    "discount",
-    "cost_resolute"
-  ],
+  "at_bounds": [],
   "kernel": {
     "cells": 54,
     "measured": 54,
@@ -34,5 +31,5 @@
   ],
   "identification": "discount and cost both flatten the decay and are NOT separately identified from it alone; treat the pair as jointly fitted",
   "method": "indirect inference on ACTION FREQUENCIES by intensity band, counted the same way for the archive and for a simulated panel; Nelder-Mead over five structural parameters at a fixed seed. The ridge decay originally proposed as the moment was measured to have no leverage (46.4-50.4% across the whole parameter space) and was replaced",
-  "hash": "6eec8bd9266b300d"
+  "hash": "f15d741b6efec9b2"
 }
