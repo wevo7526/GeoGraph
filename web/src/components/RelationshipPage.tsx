@@ -16,6 +16,7 @@ import { useEffect, useMemo, useState } from 'react'
 
 import {
   exploreGame,
+  getBacktest,
   getDyadSeries,
   getDyadTimeline,
   getForecast,
@@ -35,6 +36,7 @@ import {
 import { toggle as toggleWatch, useIsWatched } from '../lib/watchlist'
 import { useRegionLabel } from '../regions'
 import type {
+  BacktestLedger,
   DyadSeries,
   DyadTimeline,
   ForecastDetail,
@@ -72,6 +74,7 @@ export default function RelationshipPage({ region }: { region: string; onNavigat
   const [timeline, setTimeline] = useState<DyadTimeline | null | undefined>(undefined)
   const [game, setGame] = useState<GameExplore | null | undefined>(undefined)
   const [outlook, setOutlook] = useState<ForecastDetail | null | undefined>(undefined)
+  const [backtest, setBacktest] = useState<BacktestLedger | null | undefined>(undefined)
 
   useEffect(() => {
     let live = true
@@ -129,6 +132,7 @@ export default function RelationshipPage({ region }: { region: string; onNavigat
   useEffect(() => {
     let live = true
     setOutlook(undefined)
+    setBacktest(undefined)
     getForecasts(region).then((r) => {
       if (!live) return
       const rows = r?.rows ?? []
@@ -139,6 +143,7 @@ export default function RelationshipPage({ region }: { region: string; onNavigat
       }
       getForecast(near.node_id).then((d) => live && setOutlook(d))
     })
+    getBacktest(region).then((r) => live && setBacktest(r))
     return () => {
       live = false
     }
@@ -368,7 +373,7 @@ export default function RelationshipPage({ region }: { region: string; onNavigat
           </Beat>
 
           {/* ── TRACK RECORD (region-wide) ───────────────────────────────── */}
-          {outlook && (outlook.brier_score != null || hasRetro) && (
+          {(hasRetro || outlook?.brier_score != null || backtest?.summary) && (
             <Beat n={3} title="Track record" aside={`${regionLabel} calls`}>
               {hasRetro && retro && (
                 <p className="text-sm">
@@ -377,8 +382,39 @@ export default function RelationshipPage({ region }: { region: string; onNavigat
                   {Math.round(retro.base_rate! * 100)}% for an average period.
                 </p>
               )}
-              {outlook.brier_score != null && (
-                <p className="mono text-[10px] mt-2" style={{ color: 'var(--muted)' }}>
+
+              {/* The paper backtest: the region's frozen calls marked to market
+                  on $1M notional, walked forward quarter by quarter. Measured
+                  outcomes only — the boundary the whole platform holds to. */}
+              {backtest?.summary && (
+                <div className="mt-4">
+                  <div className="kicker mb-1">Paper backtest · ${(backtest.summary.notional_usd / 1e6).toFixed(0)}M notional</div>
+                  <StatLine
+                    items={[
+                      {
+                        label: 'Total return',
+                        value: (
+                          <span style={{ color: backtest.summary.total_return >= 0 ? 'var(--accent)' : 'var(--alert)' }}>
+                            {backtest.summary.total_return >= 0 ? '+' : ''}
+                            {(backtest.summary.total_return * 100).toFixed(1)}%
+                          </span>
+                        ),
+                      },
+                      { label: 'Hit rate', value: `${Math.round(backtest.summary.hit_rate * 100)}%` },
+                      { label: 'Quarters', value: backtest.summary.quarters_traded },
+                      { label: 'Max drawdown', value: `${(backtest.summary.max_drawdown * 100).toFixed(1)}%` },
+                    ]}
+                  />
+                  {backtest.computed_at && (
+                    <p className="mono text-[10px] mt-1" style={{ color: 'var(--muted)' }}>
+                      walk-forward, computed {backtest.computed_at.slice(0, 10)}
+                    </p>
+                  )}
+                </div>
+              )}
+
+              {outlook?.brier_score != null && (
+                <p className="mono text-[10px] mt-3" style={{ color: 'var(--muted)' }}>
                   near-term accuracy score {outlook.brier_score.toFixed(3)} (lower is better)
                 </p>
               )}

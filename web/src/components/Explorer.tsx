@@ -1071,6 +1071,11 @@ export default function Explorer({
               </button>
             )}
           </div>
+          {listed.length > 0 && (
+            <p className="mono text-[10px] mt-1" style={{ color: 'var(--muted)', letterSpacing: '0.1em' }}>
+              {listed.length} EVENT{listed.length === 1 ? '' : 'S'} · NEWEST FIRST
+            </p>
+          )}
           {/* Truncation is DATA: a five-year window can hold more than the
               fetch limit, and a silently clipped list reads as the whole
               archive. Say so. */}
@@ -1260,11 +1265,15 @@ export default function Explorer({
               <div className="mb-3">
                 <Microcaps>{year} in the archive</Microcaps>
               </div>
-              <p className="text-sm" style={{ color: 'var(--muted)' }}>
-                Scrub the slider and watch the network breathe. Click an actor
-                to focus their world, a gold edge to read the patronage behind
-                it, or an event on the left to see how it was coded and what it
-                moved.
+              <p className="text-sm leading-relaxed" style={{ color: 'var(--muted)' }}>
+                Scrub the slider to move through 120 years and watch the network
+                reconfigure. Click an actor to focus their world, an edge to
+                read the relationship behind it, or an event on the left to see
+                how it was coded and what it moved in markets.
+              </p>
+              <p className="text-sm leading-relaxed mt-3" style={{ color: 'var(--muted)' }}>
+                Past “now,” the slider crosses into the forecast horizon — the
+                network there is scenario space, not history.
               </p>
             </>
           )}
