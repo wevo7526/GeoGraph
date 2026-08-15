@@ -711,18 +711,29 @@ def _run_study(pack_names: list[str]) -> dict[str, Any] | None:
         _log(f"event study: {int(budget)}s left in the window — too little to "
              f"be worth starting, deferred")
         return {"ok": True, "skipped": "window spent", "remaining": int(budget)}
-    _log(f"event study: {int(budget)}s of window remaining, "
-         f"{int(_STUDY_TIMEOUT_SECONDS)}s ceiling per pack")
+    _log(f"event study: {int(budget)}s of window remaining, fair share across "
+         f"{len(pack_names)} packs, {int(_STUDY_TIMEOUT_SECONDS)}s ceiling per pack")
+    # FAIR SHARE, not first-come-first-served. The old loop handed each pack
+    # `min(ceiling, whatever-is-left)` IN ORDER, so china took its ceiling, then
+    # eurasia took most of the rest, and mena — always last, alphabetically —
+    # inherited a one-second slice and measured nothing. Every measuring boot
+    # therefore refreshed china's effects and never mena's, so the flagship
+    # region's market dynamics went stale while the arithmetic looked fine.
+    # Now each pack gets an equal cut of the REMAINING budget (so the first pack
+    # cannot eat the whole thing), a pack that finishes under its share leaves
+    # the surplus for the rest, and the last pack inherits whatever is left. The
+    # watermark still makes progress fungible across boots, so a pack that runs
+    # out of its slice resumes next boot where it stopped.
+    packs_left = len(pack_names)
     for name in pack_names:
-        # A FLOOR, not `budget > 0`. With a shared budget the last pack routinely
-        # inherits the rounding — china took 300s and eurasia 299s of 600, which
-        # handed mena a ONE SECOND slice. It ran, hit its timeout instantly, and
-        # `_run_step` correctly called that a failure, so a boot that did exactly
-        # what it was told reported `study: ok=False`. A slice too small to
-        # measure anything is a deferral; saying so keeps the status honest.
-        if budget < _STUDY_MIN_SECONDS:
-            _log(f"event study {name}: {int(budget)}s left of the study budget — "
-                 f"deferred to the next boot")
+        fair = budget / packs_left
+        packs_left -= 1
+        # A FLOOR, not `budget > 0`: a slice too small to measure anything is a
+        # deferral, and saying so keeps `study: ok` honest (a one-second slice
+        # that times out instantly is not a failure of the boot).
+        if fair < _STUDY_MIN_SECONDS:
+            _log(f"event study {name}: {int(fair)}s fair share — too little to "
+                 f"measure, deferred to the next boot")
             results.append({"pack": name, "ok": True, "skipped": "study budget spent"})
             continue
         started = time.monotonic()
@@ -731,7 +742,7 @@ def _run_study(pack_names: list[str]) -> dict[str, Any] | None:
             **_run_step(
                 f"event study {name}",
                 [sys.executable, str(_STUDY_SCRIPT), name, "--all"],
-                timeout=int(min(_STUDY_TIMEOUT_SECONDS, budget)),
+                timeout=int(min(_STUDY_TIMEOUT_SECONDS, fair)),
                 echo=False,
             ),
         })
