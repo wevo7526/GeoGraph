@@ -27,6 +27,8 @@ import Graph3D, {
   type LinkSelection,
 } from './Graph3D'
 import TimeSlider, { YEAR_NOW } from './TimeSlider'
+import { relationshipName } from '../lib/language'
+import { toggle as toggleWatch, useIsWatched } from '../lib/watchlist'
 import { LineBand } from './charts/Charts'
 import type {
   Dyad,
@@ -295,14 +297,68 @@ function EventDetailPanel({ nodeId }: { nodeId: string }) {
   )
 }
 
+/** Open the full Relationship page for a pair, and follow/unfollow it — the
+ *  bridge from browsing the web (Explorer) to the answer-first hero page. The
+ *  region rides along in the link so the destination opens the right lens. */
+function RelationshipControls({
+  dyadId,
+  name,
+  region,
+  onNavigate,
+}: {
+  dyadId: string
+  name: string
+  region: string
+  onNavigate?: (route: string) => void
+}) {
+  const watched = useIsWatched(dyadId)
+  return (
+    <div className="mt-4 flex items-center gap-4">
+      {onNavigate && (
+        <button
+          type="button"
+          onClick={() =>
+            onNavigate(
+              `/relationship?dyad=${encodeURIComponent(dyadId)}` +
+                `&region=${encodeURIComponent(region)}`,
+            )
+          }
+          className="px-4 py-2 text-sm"
+          style={{
+            border: '1px solid var(--accent)',
+            color: 'var(--accent)',
+            background: 'transparent',
+            cursor: 'pointer',
+          }}
+        >
+          Open relationship →
+        </button>
+      )}
+      <button
+        type="button"
+        onClick={() => toggleWatch({ dyadId, name, region, addedAt: Date.now() })}
+        aria-pressed={watched}
+        className="text-sm"
+        style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text)' }}
+      >
+        {watched ? '★ Following' : '☆ Follow'}
+      </button>
+    </div>
+  )
+}
+
 /** A dyad selected from the network: its baseline, its trajectory, and every
  *  event that moved it — each clickable through to its coding. */
 function DyadPanel({
   dyadId,
+  region,
   onSelectEvent,
+  onNavigate,
 }: {
   dyadId: string
+  region: string
   onSelectEvent: (nodeId: string) => void
+  onNavigate?: (route: string) => void
 }) {
   const [trajectory, setTrajectory] = useState<Trajectory | null>(null)
 
@@ -331,6 +387,13 @@ function DyadPanel({
         baseline {num(trajectory.ewma_baseline, 1)}
         {trajectory.ewma_as_of ? ` · as of ${trajectory.ewma_as_of}` : ''}
       </p>
+
+      <RelationshipControls
+        dyadId={dyadId}
+        name={relationshipName(trajectory.name, dyadId)}
+        region={region}
+        onNavigate={onNavigate}
+      />
 
       <Trajectoryline trajectory={trajectory} />
 
@@ -365,11 +428,15 @@ function DyadPanel({
 function RelationPanel({
   relation,
   dyads,
+  region,
   onSelectDyad,
+  onNavigate,
 }: {
   relation: Relation
   dyads: Dyad[]
+  region: string
   onSelectDyad: (id: string) => void
+  onNavigate?: (route: string) => void
 }) {
   const pairDyad = dyads.find(
     (d) =>
@@ -405,19 +472,30 @@ function RelationPanel({
         </div>
       </dl>
       {pairDyad && (
-        <button
-          type="button"
-          onClick={() => onSelectDyad(pairDyad.node_id)}
-          className="mt-5 px-4 py-2 text-sm"
-          style={{
-            border: '1px solid var(--accent)',
-            color: 'var(--accent)',
-            background: 'transparent',
-            cursor: 'pointer',
-          }}
-        >
-          Escalation history of this pair
-        </button>
+        <>
+          <button
+            type="button"
+            onClick={() => onSelectDyad(pairDyad.node_id)}
+            className="mt-5 px-4 py-2 text-sm"
+            style={{
+              border: '1px solid var(--accent)',
+              color: 'var(--accent)',
+              background: 'transparent',
+              cursor: 'pointer',
+            }}
+          >
+            Escalation history of this pair
+          </button>
+          <RelationshipControls
+            dyadId={pairDyad.node_id}
+            name={relationshipName(
+              pairDyad.name,
+              `${relation.a_name} ⇄ ${relation.b_name}`,
+            )}
+            region={region}
+            onNavigate={onNavigate}
+          />
+        </>
       )}
     </div>
   )
@@ -584,9 +662,7 @@ function ForecastPanel({ region }: { region: string }) {
   if (empty) {
     return (
       <p className="text-sm" style={{ color: 'var(--muted)' }}>
-        No forecast has been frozen over this archive yet — run
-        <span className="mono"> scripts/run_forecasts.py</span> (or redeploy;
-        the boot freezes both modes).
+        No outlook has been published for this region yet.
       </p>
     )
   }
@@ -756,7 +832,13 @@ function ForecastPanel({ region }: { region: string }) {
   )
 }
 
-export default function Explorer({ region }: { region: string }) {
+export default function Explorer({
+  region,
+  onNavigate,
+}: {
+  region: string
+  onNavigate?: (route: string) => void
+}) {
   const [regimes, setRegimes] = useState<Segmentation | null>(null)
   const [pack, setPack] = useState<Pack | null>(null)
   const [dyads, setDyads] = useState<Dyad[]>([])
@@ -1008,9 +1090,8 @@ export default function Explorer({ region }: { region: string }) {
           )}
           {offline && (
             <p className="mt-6 text-sm" style={{ color: 'var(--alert)' }}>
-              The graph holds no events at all. If this is a fresh deployment,
-              the seed may not have run — check
-              <span className="mono"> /api/health</span>.
+              The archive is still starting up — no events are loaded yet.
+              Give it a moment and reload.
             </p>
           )}
         </section>
@@ -1035,7 +1116,7 @@ export default function Explorer({ region }: { region: string }) {
           {!pack && (
             <div className="absolute inset-0 grid place-items-center">
               <p className="text-sm" style={{ color: 'var(--muted)' }}>
-                {events === null ? 'Reaching the archive…' : 'The API is not answering — the network needs it.'}
+                {events === null ? 'Reaching the archive…' : 'The archive is still starting up — reload in a moment.'}
               </p>
             </div>
           )}
@@ -1122,12 +1203,19 @@ export default function Explorer({ region }: { region: string }) {
           ) : selection?.kind === 'event' ? (
             <EventDetailPanel nodeId={selection.id} />
           ) : selection?.kind === 'dyad' ? (
-            <DyadPanel dyadId={selection.id} onSelectEvent={selectEvent} />
+            <DyadPanel
+              dyadId={selection.id}
+              region={region}
+              onSelectEvent={selectEvent}
+              onNavigate={onNavigate}
+            />
           ) : selection?.kind === 'relation' ? (
             <RelationPanel
               relation={selection.relation}
               dyads={dyads}
+              region={region}
               onSelectDyad={(id) => setSelection({ kind: 'dyad', id })}
+              onNavigate={onNavigate}
             />
           ) : focusedActor ? (
             <ActorPanel
