@@ -428,6 +428,28 @@ def _image_fingerprint() -> str:
     return digest.hexdigest()
 
 
+def _games_payload_version() -> str:
+    """The shape `scripts/solve_games.py` will WRITE, as a fingerprint input.
+
+    The image fingerprint covers shipped DATA (corpus, models, packs), not
+    `core/` — deliberately, since a code change is not an input to a
+    deterministic re-derivation. A persisted scenario map is the exception:
+    when its payload shape changes, the stored rows stop being servable
+    (`pg_store.game_solution` treats a version mismatch as a miss) and the
+    endpoint falls back to solving live on every request. Measured on
+    2026-08-15: the version was bumped, the graph facets had not moved, and the
+    guard skipped the one step that had to run. The shape a step writes belongs
+    in its fingerprint whenever the reader can reject what is stored.
+    """
+    try:
+        from core.games import scenarios
+
+        return str(scenarios.PAYLOAD_VERSION)
+    except Exception as exc:  # noqa: BLE001 - a fingerprint, not a dependency
+        _log(f"games payload version unreadable ({exc})")
+        return "unknown"
+
+
 #: The graph facets a step can declare as INPUTS. A step's fingerprint must
 #: cover what it READS and exclude what it WRITES, or the guard never sticks:
 #: the freeze writes Forecast nodes, so `frozen` in its own fingerprint would
@@ -1651,7 +1673,7 @@ def _boot_status() -> dict[str, Any]:
             "games",
             lambda: (
                 f"{_graph_fingerprint('events', 'latest', 'affected', 'estimates', 'forecasts')}"
-                f"|{image}"
+                f"|{image}|payload={_games_payload_version()}"
             ),
             _solve_games,
         )),

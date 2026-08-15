@@ -549,6 +549,21 @@ def test_the_curated_spine_is_measured_on_every_boot_not_only_a_measuring_one(
     assert calls == []
 
 
+def test_the_games_guard_re_solves_when_the_payload_shape_changes():
+    # Measured on 2026-08-15: PAYLOAD_VERSION was bumped so the persisted maps
+    # stopped being servable, the graph facets had not moved, and the
+    # fingerprint guard skipped the one step that had to run — leaving every
+    # /api/games request to solve live. The image fingerprint covers shipped
+    # DATA, not core/, so the shape the step WRITES has to be in its own
+    # fingerprint whenever the reader can reject what is stored.
+    from core.games import scenarios
+
+    assert boot._games_payload_version() == scenarios.PAYLOAD_VERSION
+    source = (_ROOT / "scripts" / "boot.py").read_text(encoding="utf-8")
+    games = source.split('("games", lambda: _guarded(')[1].split("_solve_games")[0]
+    assert "_games_payload_version()" in games
+
+
 def test_the_paper_backtest_is_declinable_and_opt_in(monkeypatch):
     # The gate MOVED twice, on evidence: banished from the boot when each cutoff
     # cost a full 1.31M-row pass (the first corpus boot burned its whole 900s
