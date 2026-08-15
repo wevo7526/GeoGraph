@@ -142,8 +142,10 @@ def _props_for(sv: SchemaView, class_name: str, skip: set[str]) -> list[Prop]:
         # without inventing a LinkML vector type.
         override = _ann(slot, "kuzu_type")
         rng = (slot.range or "string").lower()
-        # An enum range is stored as its string value; the closed vocabulary is
-        # enforced by the validator, not by a database type.
+        # An enum range is stored as its string value. The closed vocabulary
+        # is NOT enforced at this boundary — validate_node/validate_edge check
+        # required-presence only; the generated Pydantic models (the ingestion
+        # boundary) are where enum membership is checked.
         kuzu_type = override or _KUZU_TYPE.get(rng, "STRING")
         out.append(
             Prop(

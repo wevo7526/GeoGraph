@@ -20,7 +20,18 @@ function read(): WatchedRelationship[] {
     const raw = localStorage.getItem(KEY)
     if (!raw) return []
     const parsed = JSON.parse(raw)
-    return Array.isArray(parsed) ? (parsed as WatchedRelationship[]) : []
+    if (!Array.isArray(parsed)) return []
+    // Validate each entry rather than casting: entries written before the
+    // region field existed (or a hand-edited store) would otherwise carry
+    // region undefined into the app lens through the watchlist links.
+    return parsed.filter(
+      (w): w is WatchedRelationship =>
+        !!w &&
+        typeof w.dyadId === 'string' &&
+        typeof w.name === 'string' &&
+        typeof w.region === 'string' &&
+        typeof w.addedAt === 'number',
+    )
   } catch {
     return []
   }

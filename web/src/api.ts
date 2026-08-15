@@ -1,6 +1,5 @@
 import type {
   Assessment,
-  BacktestLedger,
   CaseStudy,
   CaseStudyIndexEntry,
   Dyad,
@@ -12,8 +11,6 @@ import type {
   Flow,
   ForecastDetail,
   ForecastSummary,
-  ForwardView,
-  GameDefaults,
   GameExplore,
   GraphActor,
   Health,
@@ -25,8 +22,6 @@ import type {
   Segmentation,
   Stats,
   Trajectory,
-  WhatIfOptions,
-  WhatIfResult,
 } from './types'
 
 /** A recorded API failure — kept so the surface can tell BROKEN from EMPTY.
@@ -63,11 +58,20 @@ export function bannerFailures(): ApiFailure[] {
     .sort((a, b) => b.at - a.at)
 }
 
-/** The most recent recorded failure whose path starts with the prefix. */
-export function lastFailureFor(prefix: string): ApiFailure | null {
+/** The most recent recorded failure whose path starts with the prefix.
+ *  Pass `exact` to match one endpoint precisely — a prefix like
+ *  '/api/panel/dyads' otherwise also matches every '/api/panel/dyads/<id>/series'
+ *  failure, so one dyad's transient series error would wedge a whole page
+ *  behind its collection-level error state. */
+export function lastFailureFor(
+  prefix: string,
+  opts: { exact?: boolean } = {},
+): ApiFailure | null {
   let hit: ApiFailure | null = null
   for (const failure of failures.values()) {
-    if (failure.path.startsWith(prefix) && (!hit || failure.at > hit.at)) hit = failure
+    const bare = failure.path.split('?')[0]
+    const matches = opts.exact ? bare === prefix : failure.path.startsWith(prefix)
+    if (matches && (!hit || failure.at > hit.at)) hit = failure
   }
   return hit
 }
@@ -203,11 +207,6 @@ export const getDyadTimeline = (dyadId: string) =>
 
 // Counterfactuals: re-solved on request, never frozen and never scored. The
 // payload says so itself; the UI must not present one as a forecast.
-export const getGameDefaults = (region?: string) =>
-  get<GameDefaults>(
-    `/api/games/defaults${region ? `?region=${encodeURIComponent(region)}` : ''}`,
-  )
-
 export const exploreGame = (
   region: string,
   dyad: string,
@@ -230,26 +229,6 @@ export const getForecast = (nodeId: string) =>
 
 export const getPaperBook = (nodeId: string) =>
   get<PaperBook>(`/api/forecasts/${encodeURIComponent(nodeId)}/paper`)
-
-export const getBacktest = (region: string) =>
-  get<BacktestLedger>(`/api/trading/backtest?region=${encodeURIComponent(region)}`)
-
-export const getForward = (region: string) =>
-  get<ForwardView>(`/api/trading/forward?region=${encodeURIComponent(region)}`)
-
-export const getWhatIfOptions = (region: string) =>
-  get<WhatIfOptions>(`/api/reasoning/options?region=${encodeURIComponent(region)}`)
-
-export const getWhatIf = (params: {
-  region: string
-  initiator: string
-  target: string
-  cameo: string
-  date: string
-}) => {
-  const query = new URLSearchParams(params)
-  return get<WhatIfResult>(`/api/reasoning/what-if?${query}`)
-}
 
 /** The assess call keeps the error DETAIL: a dark agent answers with a 503
  *  whose message is the page's honest content, not a null to swallow. */

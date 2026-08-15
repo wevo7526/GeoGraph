@@ -43,15 +43,22 @@ def eta_from_trajectory(path: list[dict[str, Any]]) -> float:
     """The tilt strength for one dyad, from its frozen model trajectory.
 
     Each step's predicted deviation is normalised by the model's own
-    held-out residual spread at that horizon ((hi − lo) / 2), clipped to
-    ±1 — a prediction inside its own noise band tilts weakly — then averaged
-    across the horizon and scaled.
+    held-out residual spread at that horizon, clipped to ±1 — a prediction
+    inside its own noise band tilts weakly — then averaged across the horizon
+    and scaled.
     """
     ratios = []
     for step in path:
         deviation = float(step.get("deviation", 0.0))
-        lo, hi = step.get("lo"), step.get("hi")
-        spread = (float(hi) - float(lo)) / 2.0 if lo is not None and hi is not None else 0.0
+        # Prefer the frozen UNCLAMPED spread; fall back to (hi−lo)/2 only for
+        # older payloads that predate the `spread` field. The clamped
+        # reconstruction understates the spread when value < spread, which
+        # over-tilts exactly the low-intensity dyads.
+        spread = step.get("spread")
+        if spread is None:
+            lo, hi = step.get("lo"), step.get("hi")
+            spread = (float(hi) - float(lo)) / 2.0 if lo is not None and hi is not None else 0.0
+        spread = float(spread)
         if spread <= 0:
             continue
         ratios.append(float(np.clip(deviation / spread, -1.0, 1.0)))

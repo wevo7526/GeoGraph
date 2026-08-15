@@ -68,6 +68,10 @@ export default function RelationshipPage({
   const regionLabel = useRegionLabel(region)
   const [dyads, setDyads] = useState<PanelDyad[] | null>(null)
   const [selected, setSelected] = useState('')
+  // Set when a linked dyad is NOT in this region's panel — the page then
+  // shows the most active pair instead, and must say so rather than letting
+  // the substitution pass as the thing the reader clicked.
+  const [linkNote, setLinkNote] = useState<string | null>(null)
   const [series, setSeries] = useState<DyadSeries | null | undefined>(undefined)
   const [precedent, setPrecedent] = useState<Precedent | null | undefined>(undefined)
   const [timeline, setTimeline] = useState<DyadTimeline | null | undefined>(undefined)
@@ -75,6 +79,11 @@ export default function RelationshipPage({
   const [outlook, setOutlook] = useState<ForecastDetail | null | undefined>(undefined)
 
   useEffect(() => {
+    // The live guard matters here as much as in the dyad effect below: switch
+    // regions while the old request is in flight and the stale response would
+    // otherwise land last, putting the old region's dyads under the new
+    // region's header.
+    let live = true
     setDyads(null)
     setSelected('')
     // Clear the dyad-scoped views too, or the header/story render one frame of
@@ -84,13 +93,38 @@ export default function RelationshipPage({
     setTimeline(undefined)
     setGame(undefined)
     getPanelDyads(region).then((r) => {
+      if (!live) return
       const rows = r?.rows ?? []
       setDyads(rows)
       const linked = dyadFromHash()
-      if (linked && rows.some((d) => d.dyad_id === linked)) setSelected(linked)
-      else if (rows.length) setSelected(rows[0].dyad_id)
+      if (linked && rows.some((d) => d.dyad_id === linked)) {
+        setSelected(linked)
+        setLinkNote(null)
+      } else {
+        if (rows.length) setSelected(rows[0].dyad_id)
+        setLinkNote(
+          linked && rows.length
+            ? 'The relationship this link named is not tracked in this region — showing the most active pair instead.'
+            : null,
+        )
+      }
     })
+    return () => {
+      live = false
+    }
   }, [region])
+
+  // A hash that names a different dyad while the page is mounted (a pasted
+  // link, a second watchlist click in the same region) must change what is on
+  // screen — App only re-renders this page, it does not remount it.
+  useEffect(() => {
+    const onHash = () => {
+      const linked = dyadFromHash()
+      if (linked) setSelected((current) => (linked !== current ? linked : current))
+    }
+    window.addEventListener('hashchange', onHash)
+    return () => window.removeEventListener('hashchange', onHash)
+  }, [])
 
   useEffect(() => {
     if (!selected) return
@@ -177,7 +211,11 @@ export default function RelationshipPage({
         0.05
       : null
 
-  const seriesFailed = lastFailureFor('/api/panel/dyads')
+  // EXACT match: the page-level error state answers for the dyad LIST only.
+  // The prefix form also caught every /api/panel/dyads/<id>/series failure,
+  // and one dyad's transient series error then hid the whole loaded page
+  // behind "couldn't reach the archive" for the rest of the session.
+  const dyadsFailed = lastFailureFor('/api/panel/dyads', { exact: true })
 
   return (
     <div className="max-w-4xl mx-auto px-6 py-10">
@@ -188,7 +226,10 @@ export default function RelationshipPage({
           <select
             className="region-select mono text-xs"
             value={selected}
-            onChange={(e) => setSelected(e.target.value)}
+            onChange={(e) => {
+              setSelected(e.target.value)
+              setLinkNote(null)
+            }}
             aria-label="Choose a relationship"
           >
             {dyads.map((d) => (
@@ -202,12 +243,17 @@ export default function RelationshipPage({
 
       {dyads === null ? (
         <Empty note="reading the archive…" />
-      ) : seriesFailed && seriesFailed.status !== 404 ? (
+      ) : dyadsFailed && dyadsFailed.status !== 404 ? (
         <Empty note="couldn't reach the archive — it may still be starting up" />
       ) : !dyads.length ? (
         <Empty note="no relationships in this region yet" />
       ) : (
         <>
+          {linkNote && (
+            <p className="mono text-[11px] mt-2" style={{ color: 'var(--alert)' }}>
+              {linkNote}
+            </p>
+          )}
           <div className="mt-3 flex items-start justify-between gap-4">
             <div>
               <h1 className="text-2xl" style={{ letterSpacing: '-0.01em' }}>
@@ -430,14 +476,19 @@ export default function RelationshipPage({
               <p className="text-xs mb-1" style={{ color: 'var(--muted)' }}>
                 How the {regionLabel} calls have scored against what actually happened.
               </p>
-              {outlook.retrodiction && (
-                <p className="text-sm">
-                  When the system flagged a period as likely to run hot, it did{' '}
-                  <strong>{Math.round((outlook.retrodiction.hit_rate ?? 0) * 100)}%</strong> of the
-                  time — versus{' '}
-                  {Math.round((outlook.retrodiction.base_rate ?? 0) * 100)}% for an average period.
-                </p>
-              )}
+              {/* Both rates must EXIST to make this claim — a null coalesced
+                  to 0 reads as a confident "0% of the time", which is a
+                  fabricated score, not a missing one. */}
+              {outlook.retrodiction &&
+                outlook.retrodiction.hit_rate != null &&
+                outlook.retrodiction.base_rate != null && (
+                  <p className="text-sm">
+                    When the system flagged a period as likely to run hot, it did{' '}
+                    <strong>{Math.round(outlook.retrodiction.hit_rate * 100)}%</strong> of the
+                    time — versus{' '}
+                    {Math.round(outlook.retrodiction.base_rate * 100)}% for an average period.
+                  </p>
+                )}
               {outlook.brier_score != null && (
                 <p className="mono text-[10px] mt-2" style={{ color: 'var(--muted)' }}>
                   near-term accuracy score {outlook.brier_score.toFixed(3)} (lower is better)

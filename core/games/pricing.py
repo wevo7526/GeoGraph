@@ -40,23 +40,58 @@ def measured_effects(conn: Any, *, region_pack: str | None = None) -> list[dict[
     hit the graph once per path per step per market, which for a distribution
     over eight paths is hundreds of round trips for data that fits in memory.
     """
+    # The region predicate binds to the clause it FOLLOWS: placed after the
+    # OPTIONAL MATCH it filters the optional pattern (which cannot drop rows)
+    # and every region's effects flow into every game's pricing. It must sit
+    # on the outer MATCH.
     where = "WHERE e.region_pack = $pack " if region_pack else ""
     return kuzu_store.query(
         conn,
         "MATCH (e:Event)-[a:AFFECTED]->(m:Market) "
+        f"{where}"
         # OPTIONAL: an event with a measured effect but no coded dyad is still
         # a priceable event — dropping it here would quietly shrink the sample
-        # every step is matched against.
+        # every step is matched against. The ACTOR edges (the provenance
+        # invariant, present on every event) reconstruct the dyad where
+        # OF_DYAD is absent — production holds 278k AFFECTED beside 55 OF_DYAD,
+        # so a consumer keying on d.node_id alone sees almost no dyads.
         "OPTIONAL MATCH (e)-[:OF_DYAD]->(d:Dyad) "
-        f"{where}"
+        "OPTIONAL MATCH (e)-[:INITIATED_BY]->(ia:Actor) "
+        "OPTIONAL MATCH (e)-[:DIRECTED_AT]->(ta:Actor) "
         "RETURN e.node_id AS event_id, e.event_time AS event_time, "
         "e.quad_class AS quad_class, "
         "e.escalation_magnitude AS magnitude, d.node_id AS dyad_id, "
+        "ia.node_id AS initiator_id, ta.node_id AS target_id, "
         "m.node_id AS market_id, m.name AS market_name, "
         "a.abnormal_return AS abnormal_return, a.window AS window, "
         "a.resolution AS resolution",
         {"pack": region_pack} if region_pack else {},
     )
+
+
+def dyad_of_event(effects: list[dict[str, Any]]) -> dict[str, str]:
+    """event_id → dyad_id, for the duration-by-dyad report.
+
+    Reconstructs the dyad from the actor edges when OF_DYAD is absent (it
+    almost always is — 278k AFFECTED beside 55 OF_DYAD in production), and
+    OMITS an event whose dyad cannot be determined rather than mapping it to a
+    fabricated key. The old call sites did `str(e.get("dyad_id", ""))`, which
+    returns the string "None" for a present-but-null dyad_id — truthy, so
+    every event collapsed into one bogus "None" dyad and the real ones
+    vanished."""
+    from core.classifier import escalation
+
+    out: dict[str, str] = {}
+    for e in effects:
+        event_id = e.get("event_id")
+        if not event_id:
+            continue
+        dyad = e.get("dyad_id")
+        if not dyad and e.get("initiator_id") and e.get("target_id"):
+            dyad = escalation.dyad_id(e["initiator_id"], e["target_id"])
+        if dyad:
+            out[str(event_id)] = str(dyad)
+    return out
 
 
 def _quantiles(values: list[float]) -> dict[str, float]:

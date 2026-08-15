@@ -21,6 +21,7 @@ serves exactly as before.
 
 from __future__ import annotations
 
+import bisect
 import threading
 from typing import Any
 
@@ -30,7 +31,46 @@ from core.wire import corpus
 _LOCK = threading.Lock()
 _TABLES: dict[str, list[dict[str, Any]]] = {}
 _JOINT: dict[tuple[str, int], tuple[str, str]] = {}
+# The EXPLORER VIEW: per pack, a time-sorted list of tab-joined slim rows
+# (event_time first, so lexical bisect IS the window query), plus per-pack
+# year counts for the coverage strip. Kept compact — one str per event
+# instead of one dict — so holding the whole wire for the explorer costs
+# ~300 MB where the raw rows cost ~1.4 GB. Built at warm() from the same
+# parse the tables come from, BEFORE the raw rows are evicted.
+_EVENTS: dict[str, list[str]] = {}
+_COVERAGE: dict[str, dict[str, int]] = {}
 _WARMED = False
+
+#: Field order inside a slim row. event_time leads for bisect; the rest is
+#: exactly the /api/events row contract (cameo_code is the API's name for
+#: action_cameo_code). Tab-separated: the fields come off a TSV parse, so an
+#: embedded tab is impossible.
+_SLIM_FIELDS = (
+    "event_time", "node_id", "name", "cameo_code", "quad_class", "goldstein",
+    "escalation_direction", "escalation_magnitude", "escalation_baseline",
+    "fidelity_tier", "temporal_resolution", "source_scale", "region_pack",
+    "initiator_id", "target_id", "dyad_id", "source_id",
+)
+_FLOAT_FIELDS = {"goldstein", "escalation_magnitude", "escalation_baseline"}
+
+
+def _slim(row: dict[str, Any]) -> str:
+    parts = []
+    for field in _SLIM_FIELDS:
+        value = row.get("action_cameo_code" if field == "cameo_code" else field)
+        parts.append("" if value is None else str(value))
+    return "\t".join(parts)
+
+
+def _unslim(joined: str) -> dict[str, Any]:
+    values = joined.split("\t")
+    row: dict[str, Any] = {}
+    for field, value in zip(_SLIM_FIELDS, values, strict=True):
+        if field in _FLOAT_FIELDS:
+            row[field] = float(value) if value else None
+        else:
+            row[field] = value or None
+    return row
 
 
 def available() -> bool:
@@ -47,6 +87,8 @@ def reset() -> None:
     with _LOCK:
         _TABLES.clear()
         _JOINT.clear()
+        _EVENTS.clear()
+        _COVERAGE.clear()
         _WARMED = False
 
 
@@ -67,23 +109,51 @@ def warm() -> dict[str, Any]:
 
         from core.games import transition  # local: the API can serve without games
 
-        pooled_panel: list[dict[str, Any]] = []
         for name in corpus.installed():
             panel_rows, game_rows = corpus.views(name)
-            pooled_panel.extend(panel_rows)
             _TABLES[name] = panel_module.build(panel_rows, region_pack=name)
-            # One pooled map rather than one per region: (dyad, quarter) keys
-            # are globally unique because a dyad belongs to one lens.
+            # The explorer view, from the same cached parse: slim rows sorted
+            # by (event_time, node_id) — the joined string starts with those
+            # two fields, so sorting the strings sorts the events.
+            slim = sorted(_slim(row) for row in corpus.load(name))
+            _EVENTS[name] = slim
+            years: dict[str, int] = {}
+            for joined in slim:
+                year = joined[:4]
+                years[year] = years.get(year, 0) + 1
+            _COVERAGE[name] = years
+            # One pooled map rather than one per region. Shared-roster dyads
+            # (RUS–TUR, TUR–USA) appear in more than one lens, so a later
+            # lens's update overwrites the earlier one's keys — harmlessly,
+            # because both lenses carry the same underlying events for a
+            # shared dyad and derive the same joint actions.
             _JOINT.update(
                 transition.joint_actions(
                     game_rows, quarter_of=panel_module.quarter_index
                 )
             )
-        # The no-region view the dyad ledger serves. Built from the pooled
-        # rows rather than by concatenating the per-region tables, so its
-        # ordering is what `panel.build` defines and not an accident of pack
-        # iteration order.
-        _TABLES["*"] = panel_module.build(pooled_panel, region_pack=None)
+        # Pooled coverage, deduped by event id (shared-roster events ship in
+        # more than one lens): computed once here — the transient id set is
+        # freed when warm returns — so the no-pack ask never rescans 1.3M rows.
+        pooled_years: dict[str, int] = {}
+        pooled_seen: set[str] = set()
+        for name in sorted(_EVENTS):
+            for line in _EVENTS[name]:
+                event_id = line.split("\t", 2)[1]
+                if event_id in pooled_seen:
+                    continue
+                pooled_seen.add(event_id)
+                pooled_years[line[:4]] = pooled_years.get(line[:4], 0) + 1
+        _COVERAGE["*"] = pooled_years
+        # The no-region view the dyad ledger serves — through the DEDUPED
+        # pooled reader, so a shared dyad's events count once, and with
+        # `panel.build` defining the ordering rather than pack iteration
+        # order. load() is cached, so this re-projects without re-parsing.
+        _TABLES["*"] = panel_module.build(corpus.all_panel_rows(), region_pack=None)
+        # The derived tables are all the API ever serves; the parsed raw rows
+        # behind them are ~1.4 GB across three lenses and would otherwise sit
+        # in the row cache for the process lifetime.
+        corpus.evict()
         _WARMED = True
         return {"warmed": True, "regions": sorted(k for k in _TABLES if k != "*")}
 
@@ -105,3 +175,72 @@ def joint_actions() -> dict[tuple[str, int], tuple[str, str]] | None:
     if not _WARMED:
         warm()
     return _JOINT
+
+
+# ── the explorer view: window queries over the wire ─────────────────────────
+
+
+def _window_of(pack: str, start: str | None, end: str | None) -> list[str]:
+    slim = _EVENTS.get(pack, [])
+    lo = bisect.bisect_left(slim, start) if start else 0
+    # end is INCLUSIVE and dates sort lexically, so the first row past the
+    # window is the first one whose event_time exceeds `end` at any length —
+    # '\x7f' sorts after every character a date or id contains.
+    hi = bisect.bisect_right(slim, end + "\x7f") if end else len(slim)
+    return slim[lo:hi]
+
+
+def events_window(
+    pack: str | None, start: str | None, end: str | None, limit: int
+) -> tuple[list[dict[str, Any]], bool]:
+    """Wire events inside [start, end], in (event_time, node_id) order —
+    `(rows, truncated)`. No pack = every lens, deduped by event id (shared-
+    roster events ship in more than one lens's artifacts)."""
+    if not available():
+        return [], False
+    if not _WARMED:
+        warm()
+    packs_to_read = [pack] if pack else sorted(_EVENTS)
+    joined: list[str] = []
+    for name in packs_to_read:
+        joined.extend(_window_of(name, start, end))
+    joined.sort()
+    rows: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    truncated = False
+    for line in joined:
+        node_id = line.split("\t", 2)[1]
+        if node_id in seen:
+            continue
+        seen.add(node_id)
+        if len(rows) >= limit:
+            truncated = True
+            break
+        rows.append(_unslim(line))
+    return rows, truncated
+
+
+def coverage(pack: str | None) -> dict[str, int] | None:
+    """Wire events per year for the slider's coverage strip, or None when no
+    corpus backs the ask. No pack = every lens, deduped by event id."""
+    if not available():
+        return None
+    if not _WARMED:
+        warm()
+    return dict(_COVERAGE.get(pack if pack is not None else "*", {}))
+
+
+def event(node_id: str) -> dict[str, Any] | None:
+    """One wire event by id, or None. A linear scan — this backs the detail
+    panel's graph-miss fallback, one user click at a time, and a per-id index
+    would cost ~150 MB to save ~100 ms."""
+    if not available():
+        return None
+    if not _WARMED:
+        warm()
+    needle = f"\t{node_id}\t"
+    for slim in _EVENTS.values():
+        for line in slim:
+            if needle in line and line.split("\t", 2)[1] == node_id:
+                return _unslim(line)
+    return None

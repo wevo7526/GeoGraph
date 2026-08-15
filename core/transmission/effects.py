@@ -8,12 +8,22 @@ money edge deterministic and reproducible.
 
 from __future__ import annotations
 
+import math
 from typing import Any
 
 import kuzu
 
 from core.graph import kuzu_store
 from core.transmission.event_study import EffectResult
+
+
+def _finite(value: float | None) -> float | None:
+    """NaN is not a measurement (a zero-variance estimation window yields
+    t_stat = nan by construction) — it becomes None before the merge, the same
+    rule pg_store applies, so the two stores agree and no JSON boundary 500s."""
+    if value is None or not math.isfinite(value):
+        return None
+    return value
 
 
 def write_effects(
@@ -36,11 +46,11 @@ def write_effects(
             "dst": market_node_ids[result.market_ticker],
             "window": result.window,
             "resolution": result.resolution,
-            "raw_return": result.raw_return,
-            "expected_return": result.expected_return,
-            "abnormal_return": result.abnormal_return,
-            "t_stat": result.t_stat,
-            "p_value": result.p_value,
+            "raw_return": _finite(result.raw_return),
+            "expected_return": _finite(result.expected_return),
+            "abnormal_return": _finite(result.abnormal_return),
+            "t_stat": _finite(result.t_stat),
+            "p_value": _finite(result.p_value),
             "first_mover": result.first_mover,
             "overlapping": result.overlapping,
             "method": result.method,

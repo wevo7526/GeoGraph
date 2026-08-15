@@ -152,9 +152,18 @@ def forecast_rows(pack_names: list[str] | None = None) -> list[dict[str, Any]]:
     state (the old shape) leaked the archive's end into every historical
     cutoff.
     """
+    # DEDUPED ACROSS LENSES: rosters overlap (mena and eurasia share USA, RUS
+    # and TUR), so a RUS–TUR event ships in BOTH packs' artifacts — 627 shared
+    # ids in 2022 alone. Concatenating would count those dyads' every event
+    # twice. First lens wins, in installed() order — the same rule the
+    # Postgres wire's ON CONFLICT DO NOTHING produces, so the stores agree.
     rows: list[dict[str, Any]] = []
+    seen_ids: set[str] = set()
     for name in pack_names if pack_names is not None else installed():
-        rows.extend(load(name))
+        for row in load(name):
+            if row["node_id"] not in seen_ids:
+                seen_ids.add(row["node_id"])
+                rows.append(row)
     rows.sort(key=lambda r: (r["event_time"], r["node_id"]))
     return [
         {
@@ -250,21 +259,39 @@ def installed() -> list[str]:
     return [name for name in packs.available() if artifacts_for(name)]
 
 
+def evict() -> None:
+    """Drop the parsed-row cache. `serving.warm()` calls this once its derived
+    tables are built: the API process never reads the raw rows again, and the
+    cached tuples for three lenses hold ~1.4 GB — most of an 8 GB container —
+    for nothing. Offline fitters and the boot's forecast children run in their
+    own processes, where the cache simply repopulates on first use."""
+    _loaded.cache_clear()
+
+
 def all_panel_rows() -> list[dict[str, Any]]:
     """Every lens's corpus, pooled — what the intensity model trains on.
 
-    SCORED PER PACK, POOLED AFTER. Escalation baselines are per dyad and a dyad
-    belongs to one lens, so folding each pack separately gives the same answer
-    as folding a pooled stream while keeping the sort O(n log n) per pack. The
+    SCORED PER PACK, POOLED AFTER. Escalation baselines are per dyad; a dyad
+    shared by two lenses (overlapping rosters) carries the same event set in
+    both, so folding each pack separately still gives the same answer as
+    folding a pooled stream while keeping the sort O(n log n) per pack. The
     pooled ORDER still matters to the reader, so the result is sorted again.
 
     Pooling is right here and wrong in the gate: the model is trained across
     lenses but scored WITHIN dyad, because 70% of the label's variance is
     within dyad and a pooled score mostly measures which dyad it is looking at.
+
+    DEDUPED BY EVENT: shared-roster dyads (RUS–TUR, TUR–USA) ship in more than
+    one lens's artifacts, and a pooled read must count each event once. First
+    lens wins, in installed() order.
     """
     rows: list[dict[str, Any]] = []
+    seen_ids: set[str] = set()
     for name in installed():
-        rows.extend(_as_panel_row(row) for row in load(name))
+        for row in load(name):
+            if row["node_id"] not in seen_ids:
+                seen_ids.add(row["node_id"])
+                rows.append(_as_panel_row(row))
     rows.sort(key=lambda r: (r["event_time"], r["dyad_id"]))
     return rows
 

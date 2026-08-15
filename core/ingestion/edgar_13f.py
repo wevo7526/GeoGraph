@@ -117,6 +117,17 @@ def load_flows(
 ) -> int:
     """FLOW edges for each pack-declared filer: actor → the US equity market,
     one edge per quarter (`as_of` is identity). Returns edges written."""
+    # Source BEFORE the edges that cite it — self-sufficient, so a graph
+    # seeded without the one pack that happens to declare this source still
+    # satisfies the provenance invariant. Field-identical to the mena pack's
+    # declaration: whichever writes second must not change the description.
+    kuzu_store.merge_nodes(conn, "Source", [{
+        "node_id": SOURCE_EDGAR,
+        "name": "SEC EDGAR 13F filings",
+        "kind": "feed",
+        "url": "https://www.sec.gov/cgi-bin/browse-edgar",
+        "citation": "Quarterly 13F-HR information tables.",
+    }])
     edges: list[dict[str, Any]] = []
     for filer in filers:
         for filing in fetch_filings(int(filer["cik"]), limit=limit_per_filer):

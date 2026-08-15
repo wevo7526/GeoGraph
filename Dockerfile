@@ -44,14 +44,11 @@ WORKDIR /app
 # graph. The dependencies stay; the package must resolve to /app/core (via
 # PYTHONPATH below), not least because core/packs.py locates packs/ RELATIVE
 # to core's own location.
-# pyproject (plus the package skeleton) keys the dependency layer. README.md
-# used to be COPYed here because pyproject references it — but that made a
-# README edit rebuild the most expensive layer in the image, so an empty stub
-# stands in for it (pip only needs the file to exist; the built package is
-# uninstalled below anyway). core/__init__.py still keys this layer — it holds
-# the package invariant and changes about never.
+# pyproject (plus the package skeleton) keys the dependency layer.
+# core/__init__.py still keys this layer — it holds the package invariant and
+# changes about never.
 COPY pyproject.toml ./
-RUN touch README.md && mkdir -p core
+RUN mkdir -p core
 COPY core/__init__.py core/
 # `ingest` and `analysis` are not optional in the image: boot loads the price
 # panel with yfinance/FRED and computes NetworkMetric with networkx before the

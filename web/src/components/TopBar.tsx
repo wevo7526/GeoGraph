@@ -29,7 +29,19 @@ export default function TopBar({
       if (r?.packs?.length) setPacks(r.packs)
       if (r?.labels) setLabels(r.labels)
     })
-    getHealth().then((h) => setHealthy(h?.graph === 'open'))
+    // The dot is LIVE state, not a snapshot: during an API-first boot the
+    // graph opens minutes after the page loads, and a one-shot fetch showed
+    // "offline" until a reload. Poll gently; refresh on tab focus too.
+    let cancelled = false
+    const check = () => getHealth().then((h) => !cancelled && setHealthy(h?.graph === 'open'))
+    check()
+    const timer = window.setInterval(check, 60_000)
+    window.addEventListener('focus', check)
+    return () => {
+      cancelled = true
+      window.clearInterval(timer)
+      window.removeEventListener('focus', check)
+    }
   }, [])
 
   // One coherent front-of-house, organised around the user's question, not the
@@ -83,8 +95,10 @@ export default function TopBar({
         {pages.map(([path, label]) => {
           // The game, reasoning and trading pages folded INTO Relationship, so
           // their old deep links must light the Relationship tab, not nothing.
+          // Reading one case (/case/<slug>) is being IN Case studies.
           const active =
             route.startsWith(path) ||
+            (path === '/cases' && route.startsWith('/case/')) ||
             (path === '/relationship' &&
               ['/games', '/reasoning', '/trading'].some((r) => route.startsWith(r)))
           return (

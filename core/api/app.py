@@ -69,6 +69,17 @@ from core.graph import kuzu_store
 _WEB_DIST = Path(__file__).resolve().parent.parent.parent / "web" / "dist"
 
 
+class _ImmutableStaticFiles(StaticFiles):
+    """The Vite bundles under /assets are content-hashed — a changed file is a
+    changed URL — so they are safe to cache forever. Without this header every
+    page load revalidates every bundle (a 304 per asset per visit)."""
+
+    def file_response(self, *args: Any, **kwargs: Any) -> Any:
+        response = super().file_response(*args, **kwargs)
+        response.headers["Cache-Control"] = "public, max-age=31536000, immutable"
+        return response
+
+
 def _boot_status() -> dict[str, Any] | None:
     """What scripts/boot.py did before exec'ing this process.
 
@@ -163,7 +174,13 @@ def create_app() -> FastAPI:
 
             serving.warm()
         except Exception as exc:  # noqa: BLE001 - see above
-            app.state.graph_error = app.state.graph_error or f"corpus: {exc}"
+            # Its OWN field: in API-first mode graph_error already holds the
+            # truthy boot-in-progress note, so `graph_error or ...` dropped
+            # the corpus failure — and _open_graph later cleared the field
+            # anyway. The corpus is the primary serving path for the dyad,
+            # games and precedent surfaces; its failure must survive to
+            # /api/health.
+            app.state.corpus_error = f"corpus: {exc}"
         try:
             yield
         finally:
@@ -178,6 +195,7 @@ def create_app() -> FastAPI:
     # failed one — reads a defined state instead of raising AttributeError.
     app.state.graph = None
     app.state.graph_error = None
+    app.state.corpus_error = None
 
     @app.get("/api/health")
     def health() -> dict[str, Any]:
@@ -185,6 +203,7 @@ def create_app() -> FastAPI:
             "status": "ok",
             "graph": "unavailable" if app.state.graph is None else "open",
             "graphError": app.state.graph_error,
+            "corpusError": app.state.corpus_error,
             "disabled": settings.missing_capabilities(),
             # Live state when the boot runs behind this API (api-first),
             # else whatever the serialised boot handed over in the env.
@@ -198,19 +217,32 @@ def create_app() -> FastAPI:
         app.include_router(router, prefix="/api")
 
     if _WEB_DIST.exists():
-        app.mount("/assets", StaticFiles(directory=_WEB_DIST / "assets"), name="assets")
+        app.mount("/assets", _ImmutableStaticFiles(directory=_WEB_DIST / "assets"), name="assets")
 
         # SPA catch-all LAST, and never for /api paths: an unknown API route
         # must 404 as JSON, not 200 as index.html — the MarketGraph mount
         # lesson, applied before it bites.
+        #
+        # index.html (and every non-hashed root file) is no-cache: without an
+        # explicit Cache-Control, browsers apply HEURISTIC caching and keep a
+        # stale index.html across deploys — which then references content-hashed
+        # bundles the new container no longer ships, and the page breaks until a
+        # hard refresh. no-cache means revalidate-every-time; the ETag makes
+        # that a 304, so it stays cheap while deploys become visible instantly.
         @app.get("/{path:path}")
         def spa(path: str) -> FileResponse:
             if path.startswith("api/"):
                 raise HTTPException(status_code=404, detail=f"no such API route: /{path}")
-            candidate = _WEB_DIST / path
-            if path and candidate.is_file():
-                return FileResponse(candidate)
-            return FileResponse(_WEB_DIST / "index.html")
+            # Containment check: a percent-encoded '..' (%2e%2e) survives HTTP
+            # normalisation and reaches this handler literally, so a bare
+            # `_WEB_DIST / path` would serve any file the process can read —
+            # source, the graph on /data, secrets. Resolve, then require the
+            # result to still live under dist; anything else is a SPA route.
+            candidate = (_WEB_DIST / path).resolve()
+            inside = candidate.is_relative_to(_WEB_DIST.resolve())
+            if not (path and inside and candidate.is_file()):
+                candidate = _WEB_DIST / "index.html"
+            return FileResponse(candidate, headers={"Cache-Control": "no-cache"})
 
     return app
 

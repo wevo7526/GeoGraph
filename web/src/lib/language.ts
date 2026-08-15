@@ -100,7 +100,13 @@ export function outlookLabel(mode: string): string {
 
 /** A relationship's display name. The surface never shows a dyad id. */
 export function relationshipName(name: string | undefined, fallback: string): string {
-  return name && name.trim() ? name : fallback
+  if (name && name.trim()) return name
+  // The fallback is usually a raw dyad id ('dyad:cow-2--cow-666') — machine
+  // vocabulary. Read it as the pair it names rather than printing the id.
+  const bare = fallback.startsWith('dyad:') ? fallback.slice('dyad:'.length) : fallback
+  const [a, b] = bare.split('--')
+  if (a && b) return `${a} – ${b}`
+  return fallback
 }
 
 // ── the game, in plain words ────────────────────────────────────────────────

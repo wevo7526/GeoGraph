@@ -335,3 +335,115 @@ def test_the_lens_keeps_the_global_backbone(tmp_path, monkeypatch):
         assert "event:test-global" in ids
         body = lens_client.get("/api/events/coverage?pack=mena").json()
         assert body["years"].get("2020", 0) >= 1
+
+
+# ── the static surface: containment and cache discipline ─────────────────────
+
+_DIST = _ROOT / "web" / "dist"
+_needs_dist = pytest.mark.skipif(
+    not (_DIST / "index.html").exists(), reason="web/dist not built"
+)
+
+
+@_needs_dist
+def test_the_spa_never_serves_a_file_outside_dist(client):
+    # A percent-encoded '..' survives HTTP normalisation and reaches the
+    # handler literally; before the containment check it resolved to any file
+    # the process could read — source, the graph on the volume, secrets.
+    secret = _ROOT / "web" / "spa-traversal-canary.txt"
+    secret.write_text("CANARY", encoding="utf-8")
+    try:
+        response = client.get("/%2e%2e/spa-traversal-canary.txt")
+        assert response.status_code == 200
+        assert "CANARY" not in response.text  # served index.html instead
+    finally:
+        secret.unlink()
+
+
+@_needs_dist
+def test_index_html_is_no_cache_and_hashed_assets_are_immutable(client):
+    # index.html without an explicit Cache-Control is heuristically cached by
+    # browsers, so a deploy leaves readers on a stale page pointing at hashed
+    # bundles the new container no longer ships. The bundles themselves are
+    # content-hashed — new content is a new URL — so they cache forever.
+    assert client.get("/").headers["cache-control"] == "no-cache"
+    assert client.get("/relationship").headers["cache-control"] == "no-cache"
+    asset = next((_DIST / "assets").glob("index-*.js")).name
+    assert (
+        client.get(f"/assets/{asset}").headers["cache-control"]
+        == "public, max-age=31536000, immutable"
+    )
+
+
+# ── non-finite measurements never reach a JSON boundary ──────────────────────
+
+
+def test_nan_measurements_become_null_at_both_boundaries(tmp_path):
+    # A zero-variance estimation window yields t_stat = nan by construction.
+    # Starlette renders JSON with allow_nan=False, so ONE NaN on an AFFECTED
+    # edge used to 500 every read touching it. The writer nulls it now; the
+    # read boundary (_plain) covers edges written before the fix.
+    db = tmp_path / "nan.kuzu"
+    pack = packs.load("mena")
+    conn = kuzu_store.connect(db)
+    try:
+        _load_seed().seed(conn, pack)
+        effects_writer.write_effects(
+            conn,
+            [_effect("event:mena-2025-midnight-hammer", "BZ=F", "car_0_1",
+                     t=float("nan"), p=float("nan"))],
+            market_node_ids={m["ticker"]: m["id"] for m in pack.markets},
+            source_id="source:yfinance",
+        )
+        rows = kuzu_store.query(
+            conn,
+            "MATCH (e:Event {node_id: $id})-[a:AFFECTED]->(:Market) "
+            "RETURN a.t_stat AS t, a.p_value AS p",
+            {"id": "event:mena-2025-midnight-hammer"},
+        )
+        assert rows and rows[0]["t"] is None and rows[0]["p"] is None
+        # The read boundary alone, for legacy NaN already on a volume.
+        raw = kuzu_store.query(conn, "RETURN sqrt(-1.0) AS bad")
+        assert raw[0]["bad"] is None
+    finally:
+        kuzu_store.close(conn)
+
+
+# ── the explorer reads the graph ∪ the wire corpus (the post-2022 gap) ────────
+
+_HAS_CORPUS = bool(__import__("core.wire.corpus", fromlist=["installed"]).installed())
+_needs_corpus = pytest.mark.skipif(not _HAS_CORPUS, reason="no wire artifacts in checkout")
+
+
+@_needs_corpus
+def test_events_include_wire_years_the_graph_never_merged(real_corpus, client):
+    # THE BUG THE USER HIT: the graph holds the spine and whatever wire years a
+    # loading boot merged (~through 2022); the corpus runs to the present. A
+    # graph-only read went silent after 2022. The union restores the tail.
+    # (real_corpus opts this test into the shipped artifacts; the suite
+    # otherwise runs corpus-free — see conftest.)
+    body = client.get("/api/events?start=2024-01-01&end=2024-12-31&limit=500&pack=mena").json()
+    assert body["rows"], "no events after 2023 — the corpus tail is missing"
+    assert all(r["event_time"].startswith("2024") for r in body["rows"])
+    # The wire years the graph never held are present too — a 2026 window that
+    # a graph-only read returned nothing for.
+    tail = client.get("/api/events?start=2026-01-01&end=2026-12-31&limit=50&pack=mena").json()
+    assert tail["rows"] and all(r["event_time"].startswith("2026") for r in tail["rows"])
+    # And the coverage strip counts those years, so the slider shows them.
+    years = client.get("/api/events/coverage?pack=mena").json()["years"]
+    assert int(years.get("2025", 0)) > 0 and int(years.get("2026", 0)) > 0
+
+
+@_needs_corpus
+def test_a_wire_only_event_resolves_its_detail_from_the_corpus(real_corpus, client):
+    listed = client.get(
+        "/api/events?start=2025-01-01&end=2025-12-31&limit=5&pack=mena"
+    ).json()["rows"]
+    assert listed, "no 2025 wire events to detail"
+    node_id = listed[0]["node_id"]
+    detail = client.get(f"/api/events/{node_id}").json()
+    assert detail["node_id"] == node_id
+    assert detail["name"] and detail["event_time"].startswith("2025")
+    # Actor names resolve through the pack roster, not left as raw ids.
+    if detail["initiator"]:
+        assert detail["initiator"]["name"] != detail["initiator"]["node_id"]

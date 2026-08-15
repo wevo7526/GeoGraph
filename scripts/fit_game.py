@@ -155,6 +155,9 @@ def main() -> int:
             continue
         target = registry.MODELS_DIR / f"game-{region}.json"
         target.parent.mkdir(parents=True, exist_ok=True)
+        # Stamp the content hash so a hand edit or truncated write is caught
+        # on load, matching the intensity model's integrity guarantee.
+        fitted["hash"] = registry.content_hash(fitted)
         with open(target, "w", encoding="utf-8") as fh:
             json.dump(fitted, fh, indent=2)
             fh.write("\n")

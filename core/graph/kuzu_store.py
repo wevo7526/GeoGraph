@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import contextlib
 import decimal
+import math
 from pathlib import Path
 from typing import Any
 
@@ -132,6 +133,13 @@ def _plain(value: Any) -> Any:
     """
     if isinstance(value, decimal.Decimal):
         return int(value) if value == value.to_integral_value() else float(value)
+    # NaN/Inf round-trip out of Kuzu as real floats, and Starlette's JSON
+    # renderer runs with allow_nan=False — one non-finite value 500s the whole
+    # response. Not-a-measurement is None at this boundary, matching the panel
+    # store's _finite rule. (Edges written before write_effects sanitised its
+    # inputs still carry NaN on the volume; this covers reading them back.)
+    if isinstance(value, float) and not math.isfinite(value):
+        return None
     if isinstance(value, dict):
         return {k: _plain(v) for k, v in value.items()}
     if isinstance(value, list):

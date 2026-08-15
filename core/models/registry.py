@@ -43,6 +43,24 @@ def _digest(payload: dict[str, Any]) -> str:
     ).hexdigest()[:16]
 
 
+def content_hash(payload: dict[str, Any]) -> str:
+    """Public digest, so other artifact families (the game payoffs) hash and
+    verify by the same rule the intensity model does."""
+    return _digest(payload)
+
+
+def verify_hash(payload: dict[str, Any], *, what: str) -> None:
+    """Reject an artifact whose stored hash does not match its content — a
+    hand edit or a truncated write. A payload with NO hash is tolerated (older
+    artifacts predate the field); a present-but-wrong hash raises."""
+    stored = payload.get("hash")
+    if stored is not None and stored != _digest(payload):
+        raise ValueError(
+            f"{what}: content hash {_digest(payload)!r} does not match the "
+            f"stored {stored!r} — the artifact was edited or is corrupt"
+        )
+
+
 def build_artifact(
     *,
     name: str,

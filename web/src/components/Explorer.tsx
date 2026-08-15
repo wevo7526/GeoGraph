@@ -671,7 +671,7 @@ function ForecastPanel({ region }: { region: string }) {
     <div>
       <Microcaps>The forecast</Microcaps>
 
-      {model?.frozen_inputs?.trajectories?.length && (
+      {model?.frozen_inputs?.trajectories && model.frozen_inputs.trajectories.length > 0 && (
         <div className="mt-3">
           <div className="flex items-baseline justify-between gap-2">
             <h3 className="text-sm">Predicted intensity, next four quarters</h3>
@@ -848,27 +848,39 @@ export default function Explorer({
   const [coverage, setCoverage] = useState<Record<string, number> | null>(null)
   const [total, setTotal] = useState<number | null>(null)
   const [events, setEvents] = useState<GraphEvent[] | null>(null)
+  const [windowTruncated, setWindowTruncated] = useState(false)
   const [year, setYear] = useState(YEAR_NOW)
   const [selection, setSelection] = useState<Selection>(null)
   const [focusActor, setFocusActor] = useState<string | null>(null)
   const [hover, setHover] = useState<string | null>(null)
   const graphHandle = useRef<Graph3DHandle>(null)
   const windowCache = useRef<
-    Map<string, { events: GraphEvent[]; actors: GraphActor[]; relations: Relation[] }>
+    Map<
+      string,
+      { events: GraphEvent[]; actors: GraphActor[]; relations: Relation[]; truncated: boolean }
+    >
   >(new Map())
 
   useEffect(() => {
+    // Guarded like the window fetch below: switch regions while the old
+    // region's pack/coverage requests are in flight and the stale responses
+    // would land last, leaving the previous region's roster driving the cast.
+    let active = true
     windowCache.current.clear()
     setSelection(null)
     setFocusActor(null)
-    getRegimes().then(setRegimes)
-    getPack(region).then(setPack)
-    getDyads().then((r) => setDyads(r?.rows ?? []))
-    getFlows().then((r) => setFlows(r?.rows ?? []))
+    getRegimes().then((r) => active && setRegimes(r))
+    getPack(region).then((r) => active && setPack(r))
+    getDyads().then((r) => active && setDyads(r?.rows ?? []))
+    getFlows().then((r) => active && setFlows(r?.rows ?? []))
     getCoverage(region).then((r) => {
+      if (!active) return
       setCoverage(r?.years ?? {})
       setTotal(r?.total ?? 0)
     })
+    return () => {
+      active = false
+    }
   }, [region])
 
   // A five-year trailing window: long enough that the network shows structure,
@@ -889,7 +901,9 @@ export default function Explorer({
       events: GraphEvent[]
       actors: GraphActor[]
       relations: Relation[]
+      truncated: boolean
     }) => {
+      setWindowTruncated(bundle.truncated)
       setEvents((prev) => sameByKey(prev, bundle.events, (e) => e.node_id) ? prev! : bundle.events)
       setActors((prev) => (sameByKey(prev, bundle.actors, (a) => a.node_id) ? prev : bundle.actors))
       setRelations((prev) =>
@@ -914,6 +928,7 @@ export default function Explorer({
         events: eventsRes?.rows ?? [],
         actors: actorsRes?.rows ?? [],
         relations: relationsRes?.rows ?? [],
+        truncated: eventsRes?.truncated ?? false,
       }
       windowCache.current.set(key, bundle)
       apply(bundle)
@@ -1050,6 +1065,15 @@ export default function Explorer({
               </button>
             )}
           </div>
+          {/* Truncation is DATA: a five-year window can hold more than the
+              fetch limit, and a silently clipped list reads as the whole
+              archive. Say so. */}
+          {windowTruncated && listed.length > 0 && (
+            <p className="mono text-[10px] mt-2" style={{ color: 'var(--muted)' }}>
+              a dense window — showing the first {listed.length} events; narrow the
+              years to see the rest
+            </p>
+          )}
           {listed.length === 0 ? (
             <p className="mt-3 text-sm" style={{ color: 'var(--muted)' }}>
               {focusedActor

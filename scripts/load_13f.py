@@ -1,6 +1,7 @@
 """Load SWF 13F flows: EDGAR filings → FLOW edges (build-spec section 5.2).
 
-  python scripts/load_13f.py            # every pack filer, recent quarters
+  python scripts/load_13f.py            # every pack's filers, recent quarters
+  python scripts/load_13f.py eurasia    # one pack's filers
   python scripts/load_13f.py --limit 4  # fewer quarters per filer
 
 Network against SEC EDGAR (no credentials; identified User-Agent, rate
@@ -20,27 +21,41 @@ from core.ingestion import edgar_13f
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("pack", nargs="?", default="mena")
+    # No pack means EVERY pack, matching the docstring the boot relies on: the
+    # boot invokes this script argless, and a mena default silently dropped
+    # eurasia's declared filers (Norges Bank) from every production graph.
+    parser.add_argument("pack", nargs="?", default=None)
     parser.add_argument("--limit", type=int, default=8, help="quarters per filer")
     args = parser.parse_args()
 
-    pack = packs.load(args.pack)
-    filers = pack.data["assets"].get("swf_filers", [])
-    if not filers:
-        sys.exit(f"packs/{pack.name}/assets.yaml declares no swf_filers.")
-    us_equity = next(
-        (m["id"] for m in pack.markets if m["ticker"] == "^GSPC"), None
-    )
-    if us_equity is None:
-        sys.exit("no US equity market in the pack — FLOW needs its destination.")
-
+    names = [args.pack] if args.pack else packs.available()
     settings = settings_module.load()
     conn = kuzu_store.connect(settings.kuzu_db_path)
     try:
-        written = edgar_13f.load_flows(
-            conn, filers, market_node_id=us_equity, limit_per_filer=args.limit
-        )
-        print(f"FLOW edges: {written}")
+        total = 0
+        for name in names:
+            pack = packs.load(name)
+            filers = pack.data["assets"].get("swf_filers", [])
+            if not filers:
+                # A pack with no filers is a skip when sweeping every pack,
+                # and an error when the caller named it explicitly.
+                if args.pack:
+                    sys.exit(f"packs/{pack.name}/assets.yaml declares no swf_filers.")
+                print(f"{pack.name}: no swf_filers — skipped")
+                continue
+            us_equity = next(
+                (m["id"] for m in pack.markets if m["ticker"] == "^GSPC"), None
+            )
+            if us_equity is None:
+                sys.exit(
+                    f"packs/{pack.name}: no US equity market — FLOW needs its destination."
+                )
+            written = edgar_13f.load_flows(
+                conn, filers, market_node_id=us_equity, limit_per_filer=args.limit
+            )
+            print(f"{pack.name}: FLOW edges: {written}")
+            total += written
+        print(f"FLOW edges: {total}")
         violations = kuzu_store.check_provenance(conn)
         if violations:
             sys.exit("PROVENANCE VIOLATIONS:\n" + "\n".join(violations))
