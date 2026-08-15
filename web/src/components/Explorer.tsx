@@ -919,7 +919,13 @@ export default function Explorer({
     }
     let active = true
     Promise.all([
-      getEvents({ start: windowFrom, end: `${year}-12-31`, limit: 500, pack: region }),
+      // NEWEST FIRST: a five-year window holds tens of thousands of wire
+      // events, and the 500-row cap samples one end of it — the oldest 500
+      // are all one early month, which is why the list read as "stuck in
+      // 2022". Show what happened most recently in the window.
+      getEvents({
+        start: windowFrom, end: `${year}-12-31`, limit: 500, pack: region, order: 'desc',
+      }),
       getActors({ start: windowFrom, end: `${year}-12-31` }),
       getRelations({ start: windowFrom, end: `${year}-12-31` }),
     ]).then(([eventsRes, actorsRes, relationsRes]) => {

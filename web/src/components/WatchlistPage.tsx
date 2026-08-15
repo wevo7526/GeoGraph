@@ -11,15 +11,13 @@ import { remove as unwatch, useWatchlist } from '../lib/watchlist'
 import type { WatchedRelationship } from '../lib/watchlist'
 import { useRegionLabel } from '../regions'
 import type { DyadSeries } from '../types'
-import { Empty } from './charts/Charts'
+import { Empty, StoryHead, TensionBadge } from '../ui'
 
-function WatchRow({
-  item,
-  onOpen,
-}: {
-  item: WatchedRelationship
-  onOpen: () => void
-}) {
+function badgeTrend(trend: 'rising' | 'easing' | 'steady'): 'rising' | 'falling' | 'steady' {
+  return trend === 'easing' ? 'falling' : trend
+}
+
+function WatchRow({ item, onOpen }: { item: WatchedRelationship; onOpen: () => void }) {
   const regionLabel = useRegionLabel(item.region)
   const [series, setSeries] = useState<DyadSeries | null | undefined>(undefined)
 
@@ -38,59 +36,67 @@ function WatchRow({
   const name = relationshipName((series || undefined)?.dyad_name, item.name)
 
   return (
-    <div className="boxed flex items-center justify-between gap-4">
-      <button className="text-left" onClick={onOpen}>
-        <div className="text-lg">{name}</div>
-        <div className="text-sm" style={{ color: level && trend === 'rising' ? 'var(--alert)' : 'var(--muted)' }}>
-          {series === undefined
-            ? 'reading…'
-            : level
-              ? `${tensionSentence(level, trend)} · ${regionLabel}`
-              : `${regionLabel}`}
+    <div className="boxed" style={{ padding: '0.85rem 1rem' }}>
+      <div className="flex items-center justify-between gap-3 flex-wrap">
+        <button className="text-left" onClick={onOpen} style={{ minWidth: 0 }}>
+          <div className="text-lg" style={{ letterSpacing: '-0.01em' }}>
+            {name}
+          </div>
+          <div className="mono text-[11px]" style={{ color: 'var(--muted)', letterSpacing: '0.1em' }}>
+            {regionLabel.toUpperCase()}
+          </div>
+        </button>
+        <div className="flex items-center gap-3">
+          {level && <TensionBadge label={level} trend={badgeTrend(trend)} />}
+          <button
+            className="article-link whitespace-nowrap"
+            onClick={() => unwatch(item.dyadId)}
+            aria-label={`Stop following ${name}`}
+          >
+            Remove
+          </button>
         </div>
-      </button>
-      <button
-        className="article-link whitespace-nowrap"
-        onClick={() => unwatch(item.dyadId)}
-        aria-label={`Stop following ${name}`}
-      >
-        Remove
-      </button>
+      </div>
+      {series !== undefined && level && (
+        <p className="text-sm mt-1" style={{ color: trend === 'rising' ? 'var(--alert)' : 'var(--muted)' }}>
+          {tensionSentence(level, trend)}
+        </p>
+      )}
+      {series === undefined && (
+        <p className="text-sm mt-1" style={{ color: 'var(--muted)' }}>
+          reading…
+        </p>
+      )}
     </div>
   )
 }
 
-export default function WatchlistPage({
-  onNavigate,
-}: {
-  region: string
-  onNavigate: (r: string) => void
-}) {
+export default function WatchlistPage({ onNavigate }: { region: string; onNavigate: (r: string) => void }) {
   const items = useWatchlist()
 
   return (
-    <div className="max-w-3xl mx-auto px-6 py-10">
-      <div className="kicker mb-1">Watchlist</div>
-      <h1 className="text-2xl mb-6">Relationships you follow</h1>
-
-      {!items.length ? (
-        <Empty note="Nothing saved yet — open a relationship and press ☆ Follow to add it here." />
-      ) : (
-        <div className="space-y-3">
-          {items.map((item) => (
-            <WatchRow
-              key={item.dyadId}
-              item={item}
-              onOpen={() =>
-                onNavigate(
-                  `/relationship?dyad=${encodeURIComponent(item.dyadId)}` +
-                    `&region=${encodeURIComponent(item.region)}`,
-                )
-              }
-            />
-          ))}
-        </div>
-      )}
+    <div className="reading-column">
+      <StoryHead kicker="Watchlist" title="Relationships you follow" />
+      <div className="mt-8">
+        {!items.length ? (
+          <Empty>Nothing saved yet — open a relationship and press ☆ Follow to add it here.</Empty>
+        ) : (
+          <div className="space-y-3">
+            {items.map((item) => (
+              <WatchRow
+                key={item.dyadId}
+                item={item}
+                onOpen={() =>
+                  onNavigate(
+                    `/relationship?dyad=${encodeURIComponent(item.dyadId)}` +
+                      `&region=${encodeURIComponent(item.region)}`,
+                  )
+                }
+              />
+            ))}
+          </div>
+        )}
+      </div>
     </div>
   )
 }

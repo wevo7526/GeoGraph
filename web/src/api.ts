@@ -135,13 +135,20 @@ export const getRegimes = () => get<Segmentation>('/api/regimes')
 export const getPack = (name: string) => get<Pack>(`/api/packs/${name}`)
 
 export const getEvents = (
-  params: { start?: string; end?: string; limit?: number; pack?: string } = {},
+  params: {
+    start?: string
+    end?: string
+    limit?: number
+    pack?: string
+    order?: 'asc' | 'desc'
+  } = {},
 ) => {
   const query = new URLSearchParams()
   if (params.start) query.set('start', params.start)
   if (params.end) query.set('end', params.end)
   if (params.limit) query.set('limit', String(params.limit))
   if (params.pack) query.set('pack', params.pack)
+  if (params.order) query.set('order', params.order)
   const suffix = query.toString() ? `?${query}` : ''
   return get<EventList>(`/api/events${suffix}`)
 }

@@ -1,13 +1,14 @@
 import { useEffect, useState } from 'react'
 import { getCaseStudies } from '../api'
 import { useRegionLabel } from '../regions'
+import { Empty, StoryHead } from '../ui'
+import type { CaseStudyIndexEntry } from '../types'
 
 /** Card footers show the pack's CAPTION, not its key — 'china' reads ASIA. */
 function PackTag({ pack }: { pack: string }) {
   const label = useRegionLabel(pack)
   return <>{label.toUpperCase()}</>
 }
-import type { CaseStudyIndexEntry } from '../types'
 
 /** Every narrated episode the archive carries, one card each — the pack's
  *  curated studies today, generated analyses beside them once the reasoning
@@ -29,16 +30,12 @@ export default function CasesPage({
   const visible = (studies ?? []).filter((s) => !s.pack || s.pack === region)
 
   return (
-    <div className="max-w-3xl mx-auto px-6 py-10">
-      <p className="mono text-xs uppercase tracking-widest" style={{ color: 'var(--muted)' }}>
-        Case studies · {regionLabel.toUpperCase()}
-      </p>
+    <div className="reading-column">
+      <StoryHead kicker={`Case studies · ${regionLabel.toUpperCase()}`} title="Worked episodes" />
       {studies === null ? (
-        <p className="mt-6 text-sm" style={{ color: 'var(--muted)' }}>
-          Reaching the archive…
-        </p>
+        <Empty>reaching the archive…</Empty>
       ) : visible.length === 0 ? (
-        <p className="mt-6 text-sm leading-relaxed" style={{ color: 'var(--muted)' }}>
+        <p className="mt-8 text-sm leading-relaxed" style={{ color: 'var(--muted)', maxWidth: '58ch' }}>
           No narrated episode in this region's pack yet. A case study is the
           pack's worked story — events coded, effects measured, prose beside
           the numbers — and this page will also carry analyses the reasoning

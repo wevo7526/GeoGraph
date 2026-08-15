@@ -60,13 +60,26 @@ def list_events(
     end: str | None = Query(None, description="ISO date, inclusive"),
     pack: str | None = None,
     limit: int = Query(200, ge=1, le=MAX_ROWS),
+    order: str = Query(
+        "asc", pattern="^(asc|desc)$",
+        description="asc = oldest first; desc = MOST RECENT first (what a "
+        "dense window wants — the wire holds ~15-20k events/year, so the "
+        "oldest 500 of a five-year window are all one early month).",
+    ),
 ) -> dict[str, Any]:
-    """The spine in time order.
+    """The archive in time order, `limit` rows deep.
 
     Dates are compared as STRINGS on purpose: every date in the archive is
     ISO-8601, which sorts lexically, so a range filter is correct whether the
     event is known to the day or only to the year.
+
+    ORDER MATTERS AT SCALE. The wire corpus made a five-year window hold tens
+    of thousands of events, so `limit` no longer covers a window — it samples
+    one end of it. `order=desc` returns the newest `limit`, which is what the
+    explorer's "what's happening lately" list wants; the rows still come back
+    in the requested order.
     """
+    desc = order == "desc"
     # THE UNION READ (the 55-event trap, applied to the explorer): the graph
     # holds the spine, the deep tier and whatever wire years a loading boot
     # merged before the corpus move — which is why the explorer went quiet
@@ -107,6 +120,7 @@ def list_events(
         # event whose actors failed to code still lists, with nulls, rather
         # than disappearing from the archive. Events are dyadic (CAMEO), so
         # the optional matches cannot fan a row out.
+        direction = "DESC" if desc else "ASC"
         graph_rows = kuzu_store.query(
             conn,
             f"MATCH (e:Event) {where}"
@@ -115,17 +129,19 @@ def list_events(
             "OPTIONAL MATCH (e)-[:OF_DYAD]->(d:Dyad) "
             f"RETURN {_EVENT_COLUMNS}, ia.node_id AS initiator_id, "
             "ta.node_id AS target_id, d.node_id AS dyad_id "
-            "ORDER BY e.event_time, e.node_id LIMIT $limit",
+            f"ORDER BY e.event_time {direction}, e.node_id {direction} LIMIT $limit",
             params,
         )
         graph_truncated = len(graph_rows) > limit
         graph_rows = graph_rows[:limit]
 
-    wire_rows, wire_truncated = wire_serving.events_window(pack, start, end, limit)
+    wire_rows, wire_truncated = wire_serving.events_window(
+        pack, start, end, limit, newest_first=desc
+    )
 
     seen = {row["node_id"] for row in graph_rows}
     merged = graph_rows + [row for row in wire_rows if row["node_id"] not in seen]
-    merged.sort(key=lambda row: (row["event_time"] or "", row["node_id"]))
+    merged.sort(key=lambda row: (row["event_time"] or "", row["node_id"]), reverse=desc)
     truncated = graph_truncated or wire_truncated or len(merged) > limit
     return {"rows": merged[:limit], "truncated": truncated}
 

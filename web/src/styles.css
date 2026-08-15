@@ -307,3 +307,190 @@ input[type='range'].timeline:focus-visible {
   outline-offset: 6px;
 }
 
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   THE APP-PAGE REBUILD (2026-08-15) — the broadsheet vocabulary, extended.
+   The landing set the language (masthead, ledger, ink, dot-leaders); these are
+   the working-page primitives built in the SAME language so the app reads as
+   later pages of the one paper, not a separate product. Paper has no
+   elevation: depth is rules and tint, never shadow. One accent, and the
+   accent/alert pair carries the SIGN of a number.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* The reading column every app page centres on — a newspaper measure, wide
+   enough for a two-column ledger, narrow enough to read. */
+.reading-column {
+  width: 100%;
+  max-width: 56rem;
+  margin: 0 auto;
+  padding: 2rem 1.5rem 5rem;
+}
+@media (max-width: 640px) {
+  .reading-column { padding: 1.25rem 1rem 4rem; }
+}
+
+/* A page header set as a story head: kicker, headline, standfirst, and a
+   right-hand slot for one action. Wraps to stack on narrow screens. */
+.story-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem 1.5rem;
+  flex-wrap: wrap;
+}
+.story-head h1 {
+  font-size: clamp(1.9rem, 5vw, 2.9rem);
+  line-height: 1.05;
+  letter-spacing: -0.015em;
+  margin: 0.35rem 0 0;
+}
+
+/* A numbered section, ruled off from the last — the working-paper beat. */
+.beat {
+  margin-top: 2.75rem;
+  padding-top: 1.5rem;
+  border-top: 1px solid var(--line);
+}
+.beat--major { border-top: 2px solid var(--rule-strong); }
+.beat-head {
+  display: flex;
+  align-items: baseline;
+  gap: 0.75rem;
+  margin-bottom: 1rem;
+}
+.beat-head h2 {
+  font-size: 1.35rem;
+  letter-spacing: -0.01em;
+  margin: 0;
+}
+
+/* THE CALL — the forecast hero. A ruled plate, tinted, that leads the page:
+   where tension is heading, the forecasted move, and what it does to markets. */
+.call {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--accent);
+  padding: 1.5rem 1.5rem 1.25rem;
+}
+.call--rising { border-left-color: var(--alert); }
+.call-lede {
+  font-size: clamp(1.15rem, 3vw, 1.5rem);
+  line-height: 1.3;
+  margin: 0.25rem 0 0;
+}
+
+/* A market-move ledger row: name, dot leader, signed tabular figure. The
+   figure takes accent for a gain, alert for a loss — the diverging pair. */
+.move-row {
+  display: flex;
+  align-items: baseline;
+  gap: 0.6rem;
+  padding: 0.3rem 0;
+}
+.move-row + .move-row { border-top: 1px dotted var(--line); }
+.move-name { flex: 0 1 auto; }
+.move-leader {
+  flex: 1;
+  border-bottom: 1px dotted color-mix(in srgb, var(--text) 30%, transparent);
+  transform: translateY(-0.28em);
+  min-width: 1.5rem;
+}
+.move-figure {
+  font-family: ui-monospace, 'Cascadia Code', Consolas, monospace;
+  font-variant-numeric: tabular-nums;
+  font-size: 1.05rem;
+  flex: none;
+}
+.move-figure--gain { color: var(--accent); }
+.move-figure--loss { color: var(--alert); }
+.move-sub { flex: none; font-size: 0.75rem; color: var(--muted); }
+
+/* A tension badge: a word (calm…open conflict) with a trend arrow, its colour
+   the sign of where it is heading. */
+.badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-family: ui-monospace, 'Cascadia Code', Consolas, monospace;
+  font-size: 0.72rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  padding: 0.2rem 0.55rem;
+  border: 1px solid currentColor;
+}
+.badge--calm { color: var(--accent); }
+.badge--hot { color: var(--alert); }
+.badge--neutral { color: var(--muted); }
+
+/* A compact stat, tabular, for a row of figures under a header. */
+.statline {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem 1.75rem;
+}
+.statline > div { display: flex; flex-direction: column; }
+.statline dt {
+  font-family: ui-monospace, 'Cascadia Code', Consolas, monospace;
+  font-size: 0.65rem;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.statline dd {
+  font-variant-numeric: tabular-nums;
+  font-size: 1.25rem;
+  margin: 0;
+}
+
+/* A quiet disclosure — "show me why" — that folds evidence under a claim. */
+.disclosure summary {
+  cursor: pointer;
+  color: var(--accent);
+  text-decoration: underline;
+  text-underline-offset: 4px;
+  list-style: none;
+  font-size: 0.85rem;
+}
+.disclosure summary::-webkit-details-marker { display: none; }
+.disclosure summary::before { content: '▸ '; }
+.disclosure[open] summary::before { content: '▾ '; }
+
+/* An event in the timeline: date, what happened, what markets did. */
+.event-row {
+  padding: 0.85rem 0;
+  border-top: 1px solid var(--line);
+}
+.event-row:first-child { border-top: none; }
+
+/* Horizontal-scroll wrapper so a wide fan/table never scrolls the page body. */
+.scroll-x { overflow-x: auto; }
+
+/* An empty/loading state — italic, muted, never a fabricated zero. */
+.note-empty {
+  color: var(--muted);
+  font-style: italic;
+  padding: 1.5rem 0;
+}
+
+/* ── Shell responsiveness ────────────────────────────────────────────────────
+   The masthead wraps its region/nav onto a second line on narrow screens
+   rather than crushing them; the explorer's three-column workspace collapses
+   to a single scrolling column on phones (the 3D canvas keeps a usable height
+   above the panels). */
+@media (max-width: 720px) {
+  .topbar {
+    flex-wrap: wrap;
+    padding: 0.5rem 1rem;
+    min-height: 0;
+    gap: 0.5rem 1rem;
+  }
+  .topbar nav { gap: 1rem; flex-wrap: wrap; }
+}
+@media (max-width: 900px) {
+  .explorer-main {
+    grid-template-columns: 1fr;
+    grid-auto-rows: min-content;
+    overflow-y: auto;
+  }
+  .explorer-main .canvas3d { min-height: 60vh; }
+}

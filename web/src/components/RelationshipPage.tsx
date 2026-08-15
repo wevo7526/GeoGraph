@@ -1,7 +1,16 @@
-// The Relationship page — the hero surface. One relationship (US <> Russia),
-// one spine: where it's been (events + what markets did), now, where it's
-// going (what has followed before + the regional outlook). Plain language
-// throughout; the machine's names never reach the surface.
+// The Relationship page — the product's hero, rebuilt (2026-08-15).
+//
+// One relationship, answer-first, in the broadsheet language:
+//   THE CALL      where tension is heading, the forecasted next move and its
+//                 TYPE, and the market movement associated with it — the whole
+//                 point of the machine, on one plate.
+//   WHERE IT'S BEEN   the relationship's market-moving events, what markets did.
+//   TRACK RECORD  how the region's calls have scored.
+//
+// Plain language throughout (lib/language); the solver's vocabulary — bands,
+// quads, joint actions — never reaches the reader. Measured, never asserted:
+// every market figure is a median of real abnormal returns, never a model
+// price, and an absent number is an honest silence, never a zero.
 
 import { useEffect, useMemo, useState } from 'react'
 
@@ -12,11 +21,11 @@ import {
   getForecast,
   getForecasts,
   getPanelDyads,
-  getPrecedent,
   lastFailureFor,
 } from '../api'
 import {
-  marketMove,
+  bandLabel,
+  jointAction,
   relationshipName,
   tensionLevel,
   tensionSentence,
@@ -31,11 +40,11 @@ import type {
   ForecastDetail,
   GameExplore,
   PanelDyad,
-  Precedent,
+  SequenceStep,
 } from '../types'
-import { BoxRow, Empty, Fan, LineBand } from './charts/Charts'
+import { LineBand } from './charts/Charts'
 import type { Point } from './charts/Charts'
-import { BandFan, Step } from './GameViz'
+import { Beat, Disclosure, Empty, MoveRow, StatLine, StoryHead, TensionBadge } from '../ui'
 
 function dyadFromHash(): string {
   const q = window.location.hash.split('?')[1]
@@ -43,53 +52,32 @@ function dyadFromHash(): string {
   return new URLSearchParams(q).get('dyad') ?? ''
 }
 
-function prettyScenario(name: string): string {
-  return name
-    .split(':')[0]
-    .replace(/_/g, ' ')
-    .replace(/^\w/, (c) => c.toUpperCase())
+/** The predicted step's markets, as signed percent moves worth showing — the
+ *  measured median abnormal return for comparable events, thin cells dropped. */
+function stepMoves(step: SequenceStep | undefined) {
+  if (!step) return []
+  return step.market
+    .filter((m) => !m.thin && m.n > 0)
+    .map((m) => ({ name: m.market_name, pct: m.median * 100, n: m.n }))
+    .sort((a, b) => Math.abs(b.pct) - Math.abs(a.pct))
+    .slice(0, 6)
 }
 
-function Section({ title, children }: { title: string; children: React.ReactNode }) {
-  return (
-    <section className="mt-10 pt-6 border-t" style={{ borderColor: 'var(--rule-strong)' }}>
-      <div className="kicker mb-3">{title}</div>
-      {children}
-    </section>
-  )
-}
-
-export default function RelationshipPage({
-  region,
-}: {
-  region: string
-  onNavigate: (r: string) => void
-}) {
+export default function RelationshipPage({ region }: { region: string; onNavigate: (r: string) => void }) {
   const regionLabel = useRegionLabel(region)
   const [dyads, setDyads] = useState<PanelDyad[] | null>(null)
   const [selected, setSelected] = useState('')
-  // Set when a linked dyad is NOT in this region's panel — the page then
-  // shows the most active pair instead, and must say so rather than letting
-  // the substitution pass as the thing the reader clicked.
   const [linkNote, setLinkNote] = useState<string | null>(null)
   const [series, setSeries] = useState<DyadSeries | null | undefined>(undefined)
-  const [precedent, setPrecedent] = useState<Precedent | null | undefined>(undefined)
   const [timeline, setTimeline] = useState<DyadTimeline | null | undefined>(undefined)
   const [game, setGame] = useState<GameExplore | null | undefined>(undefined)
   const [outlook, setOutlook] = useState<ForecastDetail | null | undefined>(undefined)
 
   useEffect(() => {
-    // The live guard matters here as much as in the dyad effect below: switch
-    // regions while the old request is in flight and the stale response would
-    // otherwise land last, putting the old region's dyads under the new
-    // region's header.
     let live = true
     setDyads(null)
     setSelected('')
-    // Clear the dyad-scoped views too, or the header/story render one frame of
-    // the previous region's relationship under the new region's name.
     setSeries(undefined)
-    setPrecedent(undefined)
     setTimeline(undefined)
     setGame(undefined)
     getPanelDyads(region).then((r) => {
@@ -114,13 +102,11 @@ export default function RelationshipPage({
     }
   }, [region])
 
-  // A hash that names a different dyad while the page is mounted (a pasted
-  // link, a second watchlist click in the same region) must change what is on
-  // screen — App only re-renders this page, it does not remount it.
+  // A hash naming a different dyad while mounted must change what is shown.
   useEffect(() => {
     const onHash = () => {
       const linked = dyadFromHash()
-      if (linked) setSelected((current) => (linked !== current ? linked : current))
+      if (linked) setSelected((cur) => (linked !== cur ? linked : cur))
     }
     window.addEventListener('hashchange', onHash)
     return () => window.removeEventListener('hashchange', onHash)
@@ -130,11 +116,9 @@ export default function RelationshipPage({
     if (!selected) return
     let live = true
     setSeries(undefined)
-    setPrecedent(undefined)
     setTimeline(undefined)
     setGame(undefined)
     getDyadSeries(selected, region).then((r) => live && setSeries(r))
-    getPrecedent(selected, region).then((r) => live && setPrecedent(r))
     getDyadTimeline(selected).then((r) => live && setTimeline(r))
     exploreGame(region, selected).then((r) => live && setGame(r))
     return () => {
@@ -160,344 +144,296 @@ export default function RelationshipPage({
     }
   }, [region])
 
-  const selectedDyad = useMemo(
-    () => dyads?.find((d) => d.dyad_id === selected) ?? null,
-    [dyads, selected],
-  )
+  const selectedDyad = useMemo(() => dyads?.find((d) => d.dyad_id === selected) ?? null, [dyads, selected])
   const watched = useIsWatched(selected)
+  const name = relationshipName(selectedDyad?.dyad_name ?? (series || undefined)?.dyad_name, selected || 'a relationship')
 
-  const name = relationshipName(
-    selectedDyad?.dyad_name ?? (series || undefined)?.dyad_name,
-    selected || 'a relationship',
-  )
-
-  // Header read from the trajectory.
   const rows = series ? series.rows : []
   const level = rows.length ? tensionLevel(rows[rows.length - 1].intensity, series?.peak ?? 0) : null
   const trend = tensionTrend(rows)
   const linePoints: Point[] = rows.map((r) => ({ x: r.q, y: r.intensity }))
 
-  // Measured market moves, as percent, from this relationship's flare-ups.
-  const marketRows = (precedent && precedent.markets) || []
-  const pctRow = (m: Precedent['markets'][number]) => ({
-    market_name: m.market_name,
-    n: m.n,
-    min: m.min * 100,
-    p25: m.p25 * 100,
-    median: m.median * 100,
-    p75: m.p75 * 100,
-    max: m.max * 100,
-  })
-  const domain: [number, number] = marketRows.length
-    ? [
-        Math.min(...marketRows.map((m) => m.min * 100)),
-        Math.max(...marketRows.map((m) => m.max * 100)),
-      ]
-    : [-1, 1]
+  // ── THE CALL: where tension heads, the forecasted move + type, its markets ──
+  const bands = game && game.marginal[0] ? game.marginal[0].distribution.length : 5
+  const marginal = game?.marginal ?? []
+  const expectedStart = marginal[0]?.expected_band ?? null
+  const expectedEnd = marginal.length ? marginal[marginal.length - 1].expected_band : null
+  const drift = expectedStart != null && expectedEnd != null ? expectedEnd - expectedStart : null
+  const forwardTrend: 'rising' | 'falling' | 'steady' =
+    drift == null ? 'steady' : drift > 0.1 ? 'rising' : drift < -0.1 ? 'falling' : 'steady'
+  const topPath = game?.paths?.[0]
+  const nextStep = topPath?.steps?.[0]
+  const nextType = nextStep ? bandLabel(nextStep.intensity_band, bands) : null
+  const nextMove = nextStep ? jointAction(nextStep.action_a, nextStep.action_b) : null
+  // The badge tracks where the relationship is HEADING (the trajectory
+  // endpoint), so it agrees with the lede rather than the immediate step —
+  // a near-term escalation inside a medium-term easing read as a contradiction.
+  const headingType = expectedEnd != null ? bandLabel(Math.round(expectedEnd), bands) : nextType
+  const moves = stepMoves(nextStep)
+  const horizonQuarters = marginal.length
 
-  const scenarios = (outlook?.scenarios ?? [])
-    .filter((s) => s.likelihood != null)
-    .sort((a, b) => (b.likelihood ?? 0) - (a.likelihood ?? 0))
-    .slice(0, 3)
+  const callLede = (() => {
+    if (game === undefined) return null
+    if (!game || !marginal.length) return null
+    const dir =
+      forwardTrend === 'rising'
+        ? 'building toward escalation'
+        : forwardTrend === 'falling'
+          ? 'easing back toward calm'
+          : 'holding roughly where it is'
+    const span = horizonQuarters ? `Over the next ${horizonQuarters} quarters, ` : ''
+    return `${span}the balance of play is ${dir}.`
+  })()
 
-  // Story pieces — the one-paragraph synthesis at the top: the strongest
-  // measured market move (most-evidenced first), and where the game sees the
-  // balance of play heading (expected band rising over the horizon).
-  const topMarket = marketRows.length ? marketRows[0] : null
-  const forwardRising =
-    game && game.marginal.length >= 2
-      ? game.marginal[game.marginal.length - 1].expected_band -
-          game.marginal[0].expected_band >
-        0.05
-      : null
+  // ── Track record (region-wide) ──
+  const retro = outlook?.retrodiction
+  const hasRetro = retro && retro.hit_rate != null && retro.base_rate != null
 
-  // EXACT match: the page-level error state answers for the dyad LIST only.
-  // The prefix form also caught every /api/panel/dyads/<id>/series failure,
-  // and one dyad's transient series error then hid the whole loaded page
-  // behind "couldn't reach the archive" for the rest of the session.
   const dyadsFailed = lastFailureFor('/api/panel/dyads', { exact: true })
 
   return (
-    <div className="max-w-4xl mx-auto px-6 py-10">
-      {/* Header */}
-      <div className="flex items-baseline justify-between gap-4 flex-wrap">
-        <div className="kicker">Relationship · {regionLabel.toUpperCase()}</div>
-        {dyads && dyads.length > 0 && (
-          <select
-            className="region-select mono text-xs"
-            value={selected}
-            onChange={(e) => {
-              setSelected(e.target.value)
-              setLinkNote(null)
-            }}
-            aria-label="Choose a relationship"
-          >
-            {dyads.map((d) => (
-              <option key={d.dyad_id} value={d.dyad_id}>
-                {relationshipName(d.dyad_name, d.dyad_id)}
-              </option>
-            ))}
-          </select>
-        )}
-      </div>
+    <div className="reading-column">
+      {linkNote && (
+        <p className="mono text-[11px] mb-3" style={{ color: 'var(--alert)' }}>
+          {linkNote}
+        </p>
+      )}
 
-      {dyads === null ? (
-        <Empty note="reading the archive…" />
-      ) : dyadsFailed && dyadsFailed.status !== 404 ? (
-        <Empty note="couldn't reach the archive — it may still be starting up" />
-      ) : !dyads.length ? (
-        <Empty note="no relationships in this region yet" />
-      ) : (
-        <>
-          {linkNote && (
-            <p className="mono text-[11px] mt-2" style={{ color: 'var(--alert)' }}>
-              {linkNote}
-            </p>
-          )}
-          <div className="mt-3 flex items-start justify-between gap-4">
-            <div>
-              <h1 className="text-2xl" style={{ letterSpacing: '-0.01em' }}>
-                {name}
-              </h1>
-              {level && (
-                <p className="mt-1" style={{ color: trend === 'rising' ? 'var(--alert)' : 'var(--muted)' }}>
-                  {tensionSentence(level, trend)}
-                  {series ? ` · ${yearOf(series.span[0])}–${yearOf(series.span[1])}` : ''}
-                </p>
-              )}
-            </div>
+      <StoryHead
+        kicker={`Relationship · ${regionLabel.toUpperCase()}`}
+        title={name}
+        standfirst={
+          level ? (
+            <span>
+              {tensionSentence(level, trend)}
+              {series ? ` · ${yearOf(series.span[0])}–${yearOf(series.span[1])}` : ''}
+            </span>
+          ) : dyads === null ? (
+            'Reading the archive…'
+          ) : undefined
+        }
+        action={
+          <div className="flex flex-col items-end gap-2">
+            {dyads && dyads.length > 0 && (
+              <select
+                className="region-select mono text-xs"
+                value={selected}
+                onChange={(e) => {
+                  setSelected(e.target.value)
+                  setLinkNote(null)
+                }}
+                aria-label="Choose a relationship"
+              >
+                {dyads.map((d) => (
+                  <option key={d.dyad_id} value={d.dyad_id}>
+                    {relationshipName(d.dyad_name, d.dyad_id)}
+                  </option>
+                ))}
+              </select>
+            )}
             {selected && (
               <button
                 className="article-link whitespace-nowrap"
-                onClick={() =>
-                  toggleWatch({ dyadId: selected, name, region, addedAt: Date.now() })
-                }
+                onClick={() => toggleWatch({ dyadId: selected, name, region, addedAt: Date.now() })}
                 aria-pressed={watched}
               >
                 {watched ? '★ Following' : '☆ Follow'}
               </button>
             )}
           </div>
+        }
+      />
 
-          {/* The story, in one paragraph */}
-          {level && (topMarket || (game && forwardRising !== null)) && (
-            <p className="mt-5 text-base leading-relaxed" style={{ maxWidth: '44rem' }}>
-              {topMarket && (
-                <>
-                  When {name} has flared before,{' '}
-                  <span className="whitespace-nowrap">
-                    {topMarket.market_name}{' '}
-                    <span
-                      style={{ color: topMarket.median >= 0 ? 'var(--accent)' : 'var(--alert)' }}
-                    >
-                      {marketMove(topMarket.median)}
-                    </span>
-                  </span>{' '}
-                  was the typical move across {topMarket.n} comparable episodes.{' '}
-                </>
-              )}
-              {game &&
-                forwardRising !== null &&
-                (forwardRising
-                  ? 'Looking forward, the solved game sees the balance of play building toward escalation.'
-                  : 'Looking forward, the solved game sees pressure easing.')}
-            </p>
-          )}
+      {dyads === null ? (
+        <Empty>reading the archive…</Empty>
+      ) : dyadsFailed && dyadsFailed.status !== 404 ? (
+        <Empty>couldn’t reach the archive — it may still be starting up</Empty>
+      ) : !dyads.length ? (
+        <Empty>no relationships in this region yet</Empty>
+      ) : (
+        <>
+          {/* ── THE CALL — the forecast hero ─────────────────────────────── */}
+          <section className={`call mt-8 ${forwardTrend === 'rising' ? 'call--rising' : ''}`}>
+            <div className="flex items-center justify-between gap-3 flex-wrap">
+              <span className="kicker">The call · where it’s going</span>
+              {headingType && <TensionBadge label={headingType} trend={forwardTrend} />}
+            </div>
 
-          {/* Where it's been */}
-          <Section title="Where it's been">
-            {series === undefined ? (
-              <Empty note="reading the archive…" />
-            ) : !series || !series.rows.length ? (
-              <Empty note="too little history to chart" />
+            {callLede ? (
+              <p className="call-lede">{callLede}</p>
+            ) : game === undefined ? (
+              <p className="call-lede" style={{ color: 'var(--muted)' }}>
+                solving the game for this relationship…
+              </p>
             ) : (
-              <LineBand points={linePoints} label="Tension over time" color="var(--alert)" />
+              <p className="call-lede" style={{ color: 'var(--muted)' }}>
+                Not enough comparable play to solve this relationship’s game yet.
+              </p>
             )}
 
-            <div className="kicker mt-6 mb-2">What markets did after its flare-ups</div>
-            {precedent === undefined ? (
-              <Empty note="reading the archive…" />
-            ) : !precedent ? (
-              <Empty note="not enough comparable history to measure" />
-            ) : !marketRows.length ? (
-              <Empty note={precedent.markets_note ?? 'no market moves measured yet in comparable periods'} />
-            ) : (
-              <div className="space-y-3">
-                {marketRows.map((m) => (
-                  <div key={m.market_id}>
-                    <div className="text-sm">
-                      {m.market_name} —{' '}
-                      <span style={{ color: m.median >= 0 ? 'var(--accent)' : 'var(--alert)' }}>
-                        typically {marketMove(m.median)}
-                      </span>{' '}
-                      <span style={{ color: 'var(--muted)' }}>across {m.n} comparable moves</span>
-                    </div>
-                    <BoxRow row={pctRow(m)} domain={domain} />
-                  </div>
+            {nextMove && (
+              <p className="mt-3 text-base">
+                The most likely next move: <strong>{nextMove}</strong>
+                {nextType ? <> — a <strong>{nextType}</strong> turn.</> : '.'}
+              </p>
+            )}
+
+            {/* THE FEATURE: the market movement ASSOCIATED with that move. */}
+            {moves.length > 0 ? (
+              <div className="mt-4">
+                <div className="kicker mb-1">If it plays out, markets have moved</div>
+                {moves.map((m) => (
+                  <MoveRow key={m.name} name={m.name} pct={m.pct} sub={`${m.n} comparable`} />
                 ))}
-                <p className="mono text-[10px]" style={{ color: 'var(--muted)' }}>
-                  measured market moves after comparable flare-ups — the range, not a single number
+                <p className="mt-2 text-xs" style={{ color: 'var(--muted)' }}>
+                  Median abnormal return across comparable past moves in this regime — measured, not modelled.
                 </p>
               </div>
-            )}
+            ) : game && marginal.length ? (
+              <p className="mt-4 text-sm" style={{ color: 'var(--muted)' }}>
+                No comparable market moves are measured for the predicted turn yet.
+              </p>
+            ) : null}
 
-            {timeline && timeline.events.length > 0 && (
-              <div className="mt-6">
-                <div className="kicker mb-2">Recent events, and what markets did</div>
-                <div className="space-y-1">
-                  {timeline.events.slice(0, 8).map((ev) => (
-                    <div key={ev.event_id} className="flex items-baseline gap-3 text-sm">
-                      <span className="mono text-xs shrink-0" style={{ color: 'var(--muted)' }}>
+            {/* Show me why — the trajectory fan behind the one-line call. */}
+            {marginal.length > 1 && (
+              <Disclosure label="show me the trajectory">
+                <TrajectoryStrip marginal={marginal} bands={bands} />
+                {game?.boundary_statement && (
+                  <p className="mono text-[10px] mt-3" style={{ color: 'var(--muted)' }}>
+                    {game.boundary_statement}
+                  </p>
+                )}
+              </Disclosure>
+            )}
+          </section>
+
+          {/* ── NOW — the tension trajectory ─────────────────────────────── */}
+          <Beat n={1} title="Where it stands" aria-label="now">
+            {series === undefined ? (
+              <Empty>reading the trajectory…</Empty>
+            ) : series && rows.length ? (
+              <>
+                <StatLine
+                  items={[
+                    { label: 'Tension now', value: level ?? '—' },
+                    { label: 'Trend', value: <span style={{ textTransform: 'capitalize' }}>{trend}</span> },
+                    { label: 'Peak', value: (series.peak ?? 0).toFixed(1) },
+                    { label: 'Active quarters', value: series.active_quarters },
+                  ]}
+                />
+                <div className="mt-4 scroll-x">
+                  <LineBand points={linePoints} width={720} height={140} />
+                </div>
+              </>
+            ) : (
+              <Empty>no quarterly trajectory for this relationship yet</Empty>
+            )}
+          </Beat>
+
+          {/* ── WHERE IT'S BEEN — the event timeline ─────────────────────── */}
+          <Beat
+            n={2}
+            title="Where it’s been"
+            aside={timeline && timeline.total ? `${timeline.total} market-moving events` : undefined}
+          >
+            {timeline === undefined ? (
+              <Empty>reading the record…</Empty>
+            ) : timeline && timeline.events.length ? (
+              <div>
+                {timeline.events.slice(0, 12).map((ev) => (
+                  <div key={ev.event_id} className="event-row">
+                    <div className="flex items-baseline justify-between gap-3">
+                      <span className="mono text-xs" style={{ color: 'var(--muted)' }}>
                         {ev.date}
                       </span>
-                      <span className="flex flex-wrap gap-x-4 gap-y-0.5">
-                        {ev.markets.slice(0, 3).map((m) => (
-                          <span key={m.market_id}>
-                            {m.market_name}{' '}
-                            <span style={{ color: m.car >= 0 ? 'var(--accent)' : 'var(--alert)' }}>
-                              {marketMove(m.car)}
-                            </span>
-                          </span>
+                    </div>
+                    {ev.markets.length ? (
+                      <div className="mt-1">
+                        {ev.markets.slice(0, 4).map((m) => (
+                          <MoveRow key={m.market_id} name={m.market_name} pct={m.car * 100} />
                         ))}
-                      </span>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-          </Section>
-
-          {/* Now */}
-          {level && (
-            <Section title="Now">
-              <p>
-                {name} sits at <strong>{level}</strong> tension, {trend}.{' '}
-                {series && series.rows.length
-                  ? `Last read ${yearOf(series.span[1])}.`
-                  : ''}
-              </p>
-            </Section>
-          )}
-
-          {/* Where it's going */}
-          <Section title="Where it's going">
-            <div className="kicker mb-2" style={{ color: 'var(--muted)' }}>
-              What has followed, historically
-            </div>
-            {precedent === undefined ? (
-              <Empty note="reading the archive…" />
-            ) : !precedent || !precedent.fan.length ? (
-              <Empty note="no comparable episodes to project from yet" />
-            ) : (
-              <Fan rows={precedent.fan} label="Tension over the quarters that followed" />
-            )}
-
-            <div className="kicker mt-6 mb-1" style={{ color: 'var(--muted)' }}>
-              Regional outlook · {regionLabel}
-            </div>
-            <p className="text-xs mb-2" style={{ color: 'var(--muted)' }}>
-              A read across the whole {regionLabel} region, not this pair alone.
-            </p>
-            {outlook === undefined ? (
-              <Empty note="reading the outlook…" />
-            ) : !outlook || !scenarios.length ? (
-              <Empty note="no published outlook for this region yet" />
-            ) : (
-              <div className="space-y-3">
-                {scenarios.map((s) => (
-                  <div key={s.scenario_name} className="boxed">
-                    <div className="flex items-baseline justify-between gap-3">
-                      <span className="text-sm">{prettyScenario(s.scenario_name)}</span>
-                      <span className="mono figure text-sm" style={{ color: 'var(--muted)' }}>
-                        {Math.round((s.likelihood ?? 0) * 100)}%
-                      </span>
-                    </div>
-                    {s.market_implication && (
-                      <p className="mt-1 text-sm" style={{ color: 'var(--muted)' }}>
-                        {s.market_implication}
+                      </div>
+                    ) : (
+                      <p className="text-xs mt-1" style={{ color: 'var(--muted)' }}>
+                        no measured market move
                       </p>
                     )}
                   </div>
                 ))}
-                {outlook.boundary_statement && (
-                  <p className="mono text-[10px]" style={{ color: 'var(--muted)' }}>
-                    {outlook.boundary_statement}
-                  </p>
-                )}
               </div>
-            )}
-          </Section>
-
-          {/* How it plays out — the game toward equilibrium */}
-          <Section title="How it plays out">
-            <p className="text-sm mb-4" style={{ color: 'var(--muted)' }}>
-              We solve the escalation game each side is playing — their incentives, and
-              what they currently believe about each other — and let it run forward. This
-              is where the balance of play settles, and how the odds of escalation spread
-              over the coming quarters.
-            </p>
-            {game === undefined ? (
-              <Empty note="solving the game…" />
-            ) : !game ? (
-              <Empty note="couldn't solve the game for this relationship yet" />
             ) : (
-              <>
-                <BandFan
-                  marginal={game.marginal}
-                  bands={game.marginal[0]?.distribution.length ?? 5}
-                />
-                {game.paths[0] && game.paths[0].steps.length > 0 && (
-                  <div className="mt-5">
-                    <div className="kicker mb-2" style={{ color: 'var(--muted)' }}>
-                      The most likely sequence, priced to markets
-                    </div>
-                    <div className="space-y-3">
-                      {game.paths[0].steps.map((s) => (
-                        <Step
-                          key={s.period}
-                          step={s}
-                          bands={game.marginal[0]?.distribution.length ?? 5}
-                        />
-                      ))}
-                    </div>
-                  </div>
-                )}
-                <p className="mono text-[10px] mt-4" style={{ color: 'var(--muted)' }}>
-                  {game.boundary_statement}
-                </p>
-              </>
+              <Empty>no market-moving events measured for this relationship yet</Empty>
             )}
-          </Section>
+          </Beat>
 
-          {/* Track record — has this system's calls held up? Credibility, in
-              plain terms, for the whole region; the exact score sits behind it. */}
-          {outlook && (outlook.brier_score != null || outlook.retrodiction) && (
-            <Section title="Track record">
-              <p className="text-xs mb-1" style={{ color: 'var(--muted)' }}>
-                How the {regionLabel} calls have scored against what actually happened.
-              </p>
-              {/* Both rates must EXIST to make this claim — a null coalesced
-                  to 0 reads as a confident "0% of the time", which is a
-                  fabricated score, not a missing one. */}
-              {outlook.retrodiction &&
-                outlook.retrodiction.hit_rate != null &&
-                outlook.retrodiction.base_rate != null && (
-                  <p className="text-sm">
-                    When the system flagged a period as likely to run hot, it did{' '}
-                    <strong>{Math.round(outlook.retrodiction.hit_rate * 100)}%</strong> of the
-                    time — versus{' '}
-                    {Math.round(outlook.retrodiction.base_rate * 100)}% for an average period.
-                  </p>
-                )}
+          {/* ── TRACK RECORD (region-wide) ───────────────────────────────── */}
+          {outlook && (outlook.brier_score != null || hasRetro) && (
+            <Beat n={3} title="Track record" aside={`${regionLabel} calls`}>
+              {hasRetro && retro && (
+                <p className="text-sm">
+                  When the system flagged a period as likely to run hot, it did{' '}
+                  <strong>{Math.round(retro.hit_rate! * 100)}%</strong> of the time — versus{' '}
+                  {Math.round(retro.base_rate! * 100)}% for an average period.
+                </p>
+              )}
               {outlook.brier_score != null && (
                 <p className="mono text-[10px] mt-2" style={{ color: 'var(--muted)' }}>
                   near-term accuracy score {outlook.brier_score.toFixed(3)} (lower is better)
                 </p>
               )}
-            </Section>
+            </Beat>
           )}
         </>
       )}
+    </div>
+  )
+}
+
+/** A compact per-period band-mass strip — the forecast fan, small, behind the
+ *  one-line call. Rows are periods; each cell's ink weight is its probability
+ *  mass; the alert hue climbs with the band (escalation is the alert
+ *  direction). */
+function TrajectoryStrip({
+  marginal,
+  bands,
+}: {
+  marginal: GameExplore['marginal']
+  bands: number
+}) {
+  return (
+    <div className="scroll-x">
+      <table className="text-xs" style={{ borderCollapse: 'collapse' }}>
+        <tbody>
+          {marginal.map((m) => (
+            <tr key={m.period}>
+              <td className="mono pr-2" style={{ color: 'var(--muted)', whiteSpace: 'nowrap' }}>
+                +{m.period + 1}Q
+              </td>
+              {Array.from({ length: bands }, (_, b) => {
+                const p = m.distribution[b] ?? 0
+                const share = bands > 1 ? b / (bands - 1) : 0
+                return (
+                  <td key={b} style={{ padding: '2px' }} title={`${bandLabel(b, bands)} · ${Math.round(p * 100)}%`}>
+                    <span
+                      style={{
+                        display: 'block',
+                        width: 26,
+                        height: 12,
+                        background: share > 0.5 ? 'var(--alert)' : 'var(--accent)',
+                        opacity: Math.max(0.06, Math.min(1, p * 2.2)),
+                      }}
+                    />
+                  </td>
+                )
+              })}
+              <td className="mono pl-2" style={{ color: 'var(--muted)', whiteSpace: 'nowrap' }}>
+                {bandLabel(Math.round(m.expected_band), bands)}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
     </div>
   )
 }
