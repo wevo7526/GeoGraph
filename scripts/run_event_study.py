@@ -21,6 +21,7 @@ import argparse
 import bisect
 import datetime as dt
 import json
+import os
 import sys
 from typing import Any
 
@@ -194,8 +195,34 @@ def main() -> None:
         return rows[bisect.bisect_left(dates, start) : bisect.bisect_right(dates, end)]
 
     written = 0
+    # BATCHED FLUSH — the convergence fix. record_runs (one Postgres commit)
+    # and write_effects (one Kuzu merge) used to run PER EVENT: ~130k commits
+    # + ~130k merge transactions per region, 400-700s of pure round-trip
+    # latency, which is why each metered pack slice timed out without
+    # finishing. Accumulate across a chunk and flush once — identical rows,
+    # ~500x fewer round trips. A truncated boot loses only the current
+    # unflushed chunk (re-measured next boot, idempotent), so the
+    # measured-events watermark's resumability is preserved.
+    chunk = int(os.getenv("GEOGRAPH_STUDY_CHUNK", "500"))
+    pending_results: list[event_study.EffectResult] = []
+    pending_skips: list[Any] = []
+    pending_by_source: dict[str, list[event_study.EffectResult]] = {}
+
+    def _flush() -> None:
+        nonlocal written
+        if pending_results or pending_skips:
+            pg_store.record_runs(panel, pending_results, pending_skips)
+        if not args.dry_run:
+            for source_id, group in pending_by_source.items():
+                written += effects_writer.write_effects(
+                    graph, group, market_node_ids=market_node_ids, source_id=source_id
+                )
+        pending_results.clear()
+        pending_skips.clear()
+        pending_by_source.clear()
+
     try:
-        for event in chosen:
+        for index, event in enumerate(chosen, 1):
             event_date = all_dates[event["id"]]
             # Each market reads AT ITS OWN ERA'S FREQUENCY, looking back far
             # enough for that resolution's estimation window — the fidelity
@@ -240,22 +267,19 @@ def main() -> None:
             for skip in skips:
                 print(f"  {skip.market_ticker:>10} {skip.window:<8} {skip.status}: {skip.reason}")
 
-            pg_store.record_runs(panel, results, skips)
+            pending_results.extend(results)
+            pending_skips.extend(skips)
             if not args.dry_run:
                 # PROVENANCE FOLLOWS THE PANEL ROWS the number came from: a
                 # monthly abnormal return is Shiller's era, a daily yield move
                 # is FRED's, everything else is yfinance. Attributing a 1911
                 # measurement to a feed founded a century later would be a
                 # lie the graph faithfully preserved.
-                by_source: dict[str, list[event_study.EffectResult]] = {}
                 for result in results:
-                    by_source.setdefault(_effect_source(result), []).append(result)
-                for source_id, group in by_source.items():
-                    written += effects_writer.write_effects(
-                        graph, group,
-                        market_node_ids=market_node_ids,
-                        source_id=source_id,
-                    )
+                    pending_by_source.setdefault(_effect_source(result), []).append(result)
+            if index % chunk == 0:
+                _flush()
+        _flush()  # the final partial chunk
     finally:
         panel.close()
 
