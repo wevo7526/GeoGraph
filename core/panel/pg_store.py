@@ -227,14 +227,35 @@ def record_runs(conn: Any, effects: list[Any], skips: list[Any]) -> int:
     return len(rows)
 
 
-def measured_events(conn: Any) -> set[str]:
-    """Event ids with ANY recorded study attempt — the study's watermark.
+def measured_events(conn: Any, market_tickers: list[str] | None = None) -> set[str]:
+    """Event ids already measured — the study's watermark.
 
-    An attempt (computed OR skipped) means the engine already looked with
-    the panel it had; determinism makes re-looking a no-op, so the watermark
-    is what lets a hundred-thousand-event archive boot in seconds."""
+    An attempt (computed OR skipped) means the engine already looked with the
+    panel it had; determinism makes re-looking a no-op, so the watermark is what
+    lets a hundred-thousand-event archive boot in seconds.
+
+    PER-MARKET, when `market_tickers` is given. The watermark used to be a bare
+    `DISTINCT event_node_id`, which let packs SHADOW each other: packs seed
+    alphabetically, so china measured an event against China's markets and
+    entered it into the watermark, and mena/eurasia then skipped it entirely —
+    so a US–Russia event was never measured against Tadawul or MOEX, and those
+    pack-unique markets served no effect for shadowed events. Now a pack asks
+    "is this event measured against ALL of MY markets?" (an attempt, computed or
+    skipped, for every ticker in its set); only then is it skipped. Each pack
+    fills its own market coverage, and re-measuring a fully-covered event is the
+    idempotent no-op it always was."""
     with conn.cursor() as cur:
-        cur.execute("SELECT DISTINCT event_node_id FROM event_study_runs")
+        if not market_tickers:
+            cur.execute("SELECT DISTINCT event_node_id FROM event_study_runs")
+            return {row[0] for row in cur.fetchall()}
+        wanted = sorted(set(market_tickers))
+        cur.execute(
+            "SELECT event_node_id FROM event_study_runs "
+            "WHERE market_ticker = ANY(%s) "
+            "GROUP BY event_node_id "
+            "HAVING COUNT(DISTINCT market_ticker) >= %s",
+            (wanted, len(wanted)),
+        )
         return {row[0] for row in cur.fetchall()}
 
 

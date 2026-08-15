@@ -152,7 +152,11 @@ def main() -> None:
         sys.exit(str(exc))
 
     if not args.refresh:
-        measured = pg_store.measured_events(panel)
+        # PER-MARKET watermark: skip an event only once it is measured against
+        # ALL of THIS pack's markets, so packs stop shadowing each other's
+        # measurements (a US–Russia event must reach Tadawul under mena even if
+        # china measured it against SSE first).
+        measured = pg_store.measured_events(panel, [m["ticker"] for m in pack.markets])
         before = len(chosen)
         chosen = [e for e in chosen if e["id"] not in measured]
         if before != len(chosen):
