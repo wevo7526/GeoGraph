@@ -52,8 +52,14 @@ class Settings:
             out["reasoning"] = (
                 "ANTHROPIC_API_KEY unset — agent, coder and analogy narration disabled"
             )
+        # NOT a GDELT-disabled signal: the wire loads credential-free from the
+        # raw files (Phase 4), and production serves 1.33M events with
+        # BIGQUERY_PROJECT unset. Only the optional BigQuery TRANSPORT is off.
         if not self.bigquery_project:
-            out["gdelt"] = "BIGQUERY_PROJECT unset — GDELT ingestion disabled"
+            out["bigquery"] = (
+                "BIGQUERY_PROJECT unset — optional BigQuery transport off "
+                "(the GDELT raw-file path needs no credential and is the default)"
+            )
         if not self.fred_api_key:
             out["fred"] = "FRED_API_KEY unset — Treasury yield ingestion disabled"
         return out

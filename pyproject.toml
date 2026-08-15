@@ -46,13 +46,18 @@ analysis = [
 ingest = [
     "yfinance>=0.2.40",
     "fredapi>=0.5",
-    "google-cloud-bigquery>=3.25",
     "lxml>=5.2",
     # The deep-tier flat files: Shiller ships a legacy .xls (xlrd), JST a
     # Stata .dta (pandas reads natively).
     "xlrd>=2.0",
     "pandas>=2.2",
 ]
+# The BigQuery GDELT transport is DESIGNED but not built (docs/build-spec.md):
+# the wire loads credential-free from the raw files, and nothing under core/
+# or scripts/ imports google.cloud. Parked in its own extra so the ~50MB
+# client and its transitive grpc/protobuf stack stay out of the runtime
+# image until the transport actually exists.
+bigquery = ["google-cloud-bigquery>=3.25"]
 # The reasoning layer's LLM: CAMEO coding of non-GDELT text, the agent, and
 # analogy retrieval. NEVER for numbers — see docs/build-spec.md section 17.
 reasoning = ["anthropic>=0.40"]
