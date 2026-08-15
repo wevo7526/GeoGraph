@@ -110,8 +110,22 @@ async function get<T>(path: string): Promise<T | null> {
 export const getHealth = () => get<Health>('/api/health')
 // `packs` are the KEYS every region= parameter takes; `labels` is what a
 // reader is shown. Never send a label back to the API.
-export const getPacks = () =>
-  get<{ packs: string[]; labels?: Record<string, string> }>('/api/packs')
+//
+// Memoised: the pack list is immutable for the session, and TopBar, regions.ts
+// and Landing each asked for it independently (2-3 fetches per page). One
+// shared promise dedups them; a failed fetch is NOT cached, so it still
+// retries on the next call.
+type PacksPayload = { packs: string[]; labels?: Record<string, string> }
+let _packsPromise: Promise<PacksPayload | null> | null = null
+export const getPacks = (): Promise<PacksPayload | null> => {
+  if (!_packsPromise) {
+    _packsPromise = get<PacksPayload>('/api/packs').then((r) => {
+      if (r === null) _packsPromise = null
+      return r
+    })
+  }
+  return _packsPromise
+}
 export const getStats = () => get<Stats>('/api/stats')
 export const getRegimes = () => get<Segmentation>('/api/regimes')
 export const getPack = (name: string) => get<Pack>(`/api/packs/${name}`)
