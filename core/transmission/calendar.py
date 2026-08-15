@@ -13,6 +13,7 @@ business day before it reaches New York.
 from __future__ import annotations
 
 import datetime as dt
+import functools
 import json
 from collections.abc import Mapping
 from typing import Any
@@ -45,11 +46,24 @@ def calendar_for(market: Mapping[str, Any], date: dt.date) -> str:
     raw = market.get("calendar_eras")
     if not raw:
         return base
-    table = json.loads(raw) if isinstance(raw, str) else dict(raw)
-    applicable = [(int(year), name) for year, name in table.items() if int(year) <= date.year]
+    eras = (
+        _parse_calendar_eras(raw)
+        if isinstance(raw, str)
+        else tuple((int(year), name) for year, name in dict(raw).items())
+    )
+    applicable = [(year, name) for year, name in eras if year <= date.year]
     if not applicable:
         return base
     return str(max(applicable)[1])
+
+
+@functools.lru_cache(maxsize=512)
+def _parse_calendar_eras(raw: str) -> tuple[tuple[int, str], ...]:
+    """Parse the era-keyed calendar table once per distinct string — the same
+    hot-loop memoization as event_study._parse_era_table: calendar_for runs per
+    alive market per event over a hundred-thousand-event study."""
+    table = json.loads(raw)
+    return tuple((int(year), name) for year, name in table.items())
 
 
 def is_trading_day(calendar: str, date: dt.date) -> bool:

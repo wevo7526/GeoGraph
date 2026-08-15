@@ -40,6 +40,7 @@ core.transmission.effects — the one direction numbers cross.
 from __future__ import annotations
 
 import datetime as dt
+import functools
 import json
 import math
 import statistics
@@ -134,6 +135,16 @@ class StudyError(RuntimeError):
     """The study cannot run. The message names the fix."""
 
 
+@functools.lru_cache(maxsize=512)
+def _parse_era_table(raw: str) -> tuple[tuple[int, str], ...]:
+    """Parse an era-keyed JSON table ONCE per distinct string. The table is
+    stable per market, but `native_resolution` is called ~3x per event×market
+    over a hundred-thousand-event study — 3.5M redundant json.loads without
+    this cache. Returns an immutable, hashable tuple so lru_cache is safe."""
+    table = json.loads(raw)
+    return tuple((int(year), res) for year, res in table.items())
+
+
 def native_resolution(market: dict[str, Any], event_date: dt.date) -> str:
     """The finest resolution this market's data supports at this date.
 
@@ -144,12 +155,16 @@ def native_resolution(market: dict[str, Any], event_date: dt.date) -> str:
     raw = market.get("native_frequency")
     if not raw:
         return "day"
-    table = json.loads(raw) if isinstance(raw, str) else dict(raw)
-    applicable = [(int(year), res) for year, res in table.items() if int(year) <= event_date.year]
+    eras = (
+        _parse_era_table(raw)
+        if isinstance(raw, str)
+        else tuple((int(year), res) for year, res in dict(raw).items())
+    )
+    applicable = [(year, res) for year, res in eras if year <= event_date.year]
     if not applicable:
         raise StudyError(
             f"{market['ticker']} has no native frequency at {event_date}: its "
-            f"eras start at {min(int(y) for y in table)}. An event before a "
+            f"eras start at {min(year for year, _ in eras)}. An event before a "
             "market's data exists is a skip, not a measurement."
         )
     return str(max(applicable)[1])
