@@ -113,16 +113,18 @@ def coverage(request: Request, pack: str | None = None) -> dict[str, Any]:
         if pack else ""
     )
     params: dict[str, Any] = {"pack": pack} if pack else {}
+    # Aggregate in Cypher, not in Python: the archive is hundreds of thousands
+    # of events, and this strip is fetched on load and on every region change.
+    # substring(event_time,1,4) is the year; ~120 rows come back instead of the
+    # whole Event table streamed one dict per event.
     rows = kuzu_store.query(
         conn,
-        f"MATCH (e:Event) {where}RETURN e.event_time AS event_time",
+        f"MATCH (e:Event) {where}RETURN substring(e.event_time, 1, 4) AS year, "
+        "count(e) AS n",
         params,
     )
-    years: dict[str, int] = {}
-    for row in rows:
-        year = str(row["event_time"])[:4]
-        years[year] = years.get(year, 0) + 1
-    return {"years": years, "total": len(rows)}
+    years: dict[str, int] = {str(row["year"]): int(row["n"]) for row in rows}
+    return {"years": years, "total": sum(years.values())}
 
 
 @router.get("/events/{node_id:path}/effects")
