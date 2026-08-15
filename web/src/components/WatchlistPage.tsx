@@ -81,7 +81,12 @@ export default function WatchlistPage({
             <WatchRow
               key={item.dyadId}
               item={item}
-              onOpen={() => onNavigate(`/relationship?dyad=${encodeURIComponent(item.dyadId)}`)}
+              onOpen={() =>
+                onNavigate(
+                  `/relationship?dyad=${encodeURIComponent(item.dyadId)}` +
+                    `&region=${encodeURIComponent(item.region)}`,
+                )
+              }
             />
           ))}
         </div>

@@ -102,3 +102,51 @@ export function outlookLabel(mode: string): string {
 export function relationshipName(name: string | undefined, fallback: string): string {
   return name && name.trim() ? name : fallback
 }
+
+// ── the game, in plain words ────────────────────────────────────────────────
+// The solver speaks in intensity bands (0…N), joint actions and quad classes.
+// None of that reaches the reader: a band becomes a temperature word, a joint
+// action becomes a sentence, and the match/thin flags become a confidence note.
+
+/** An intensity band (0 = lowest) as a temperature word, scaled to the number
+ *  of bands so the vocabulary holds whether the solver uses five bands or three.
+ *  Escalation is the alert direction, so the ladder climbs to "open conflict". */
+export function bandLabel(band: number, bands: number): string {
+  const share = bands > 1 ? band / (bands - 1) : 0
+  if (share <= 0) return 'cooperative'
+  if (share < 0.3) return 'calm'
+  if (share < 0.55) return 'tense'
+  if (share < 0.8) return 'hostile'
+  return 'open conflict'
+}
+
+/** The expected band — a float — read as the same temperature ladder, so the
+ *  fan's right-hand summary is a word ("tense"), never "E 2.35". */
+export function expectedTension(expectedBand: number, bands: number): string {
+  return bandLabel(expectedBand, bands)
+}
+
+/** A joint move (both sides' actions) as one plain sentence. The solver's
+ *  actions are already words — de-escalate / hold / escalate — but "escalate /
+ *  hold" reads as a machine tuple; this reads as English. */
+export function jointAction(a: string, b: string): string {
+  if (a === b) {
+    if (a === 'escalate') return 'both sides escalate'
+    if (a === 'de-escalate') return 'both sides step back'
+    return 'both sides hold'
+  }
+  const set = new Set([a, b])
+  if (set.has('escalate') && set.has('hold')) return 'one side escalates, the other holds'
+  if (set.has('escalate') && set.has('de-escalate')) return 'one escalates as the other steps back'
+  if (set.has('de-escalate') && set.has('hold')) return 'one steps back, the other holds'
+  return `${a} / ${b}`
+}
+
+/** How much comparable history stands behind a predicted market move — a plain
+ *  confidence note in place of the raw `n=… thin loose` flags. */
+export function evidenceNote(n: number, thin: boolean, looseMatch: boolean): string {
+  const base = `${n} comparable move${n === 1 ? '' : 's'}`
+  if (thin) return `${base} · thin evidence`
+  if (looseMatch) return `${base} · loose match`
+  return base
+}

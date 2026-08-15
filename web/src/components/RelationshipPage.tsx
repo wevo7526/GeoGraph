@@ -77,6 +77,12 @@ export default function RelationshipPage({
   useEffect(() => {
     setDyads(null)
     setSelected('')
+    // Clear the dyad-scoped views too, or the header/story render one frame of
+    // the previous region's relationship under the new region's name.
+    setSeries(undefined)
+    setPrecedent(undefined)
+    setTimeline(undefined)
+    setGame(undefined)
     getPanelDyads(region).then((r) => {
       const rows = r?.rows ?? []
       setDyads(rows)
@@ -183,10 +189,11 @@ export default function RelationshipPage({
             className="region-select mono text-xs"
             value={selected}
             onChange={(e) => setSelected(e.target.value)}
+            aria-label="Choose a relationship"
           >
             {dyads.map((d) => (
               <option key={d.dyad_id} value={d.dyad_id}>
-                {d.dyad_name}
+                {relationshipName(d.dyad_name, d.dyad_id)}
               </option>
             ))}
           </select>
@@ -339,13 +346,16 @@ export default function RelationshipPage({
               <Fan rows={precedent.fan} label="Tension over the quarters that followed" />
             )}
 
-            <div className="kicker mt-6 mb-2" style={{ color: 'var(--muted)' }}>
+            <div className="kicker mt-6 mb-1" style={{ color: 'var(--muted)' }}>
               Regional outlook · {regionLabel}
             </div>
+            <p className="text-xs mb-2" style={{ color: 'var(--muted)' }}>
+              A read across the whole {regionLabel} region, not this pair alone.
+            </p>
             {outlook === undefined ? (
               <Empty note="reading the outlook…" />
             ) : !outlook || !scenarios.length ? (
-              <Empty note="no frozen outlook for this region yet" />
+              <Empty note="no published outlook for this region yet" />
             ) : (
               <div className="space-y-3">
                 {scenarios.map((s) => (
@@ -397,7 +407,11 @@ export default function RelationshipPage({
                     </div>
                     <div className="space-y-3">
                       {game.paths[0].steps.map((s) => (
-                        <Step key={s.period} step={s} />
+                        <Step
+                          key={s.period}
+                          step={s}
+                          bands={game.marginal[0]?.distribution.length ?? 5}
+                        />
                       ))}
                     </div>
                   </div>
@@ -409,21 +423,26 @@ export default function RelationshipPage({
             )}
           </Section>
 
-          {/* Track record */}
+          {/* Track record — has this system's calls held up? Credibility, in
+              plain terms, for the whole region; the exact score sits behind it. */}
           {outlook && (outlook.brier_score != null || outlook.retrodiction) && (
             <Section title="Track record">
-              <p className="text-sm" style={{ color: 'var(--muted)' }}>
-                {outlook.brier_score != null
-                  ? `Near-term accuracy score: ${outlook.brier_score.toFixed(3)} (lower is better).`
-                  : ''}
-                {outlook.retrodiction
-                  ? ` Of flagged periods, ${Math.round(
-                      (outlook.retrodiction.hit_rate ?? 0) * 100,
-                    )}% ran hot against a ${Math.round(
-                      (outlook.retrodiction.base_rate ?? 0) * 100,
-                    )}% base rate.`
-                  : ''}
+              <p className="text-xs mb-1" style={{ color: 'var(--muted)' }}>
+                How the {regionLabel} calls have scored against what actually happened.
               </p>
+              {outlook.retrodiction && (
+                <p className="text-sm">
+                  When the system flagged a period as likely to run hot, it did{' '}
+                  <strong>{Math.round((outlook.retrodiction.hit_rate ?? 0) * 100)}%</strong> of the
+                  time — versus{' '}
+                  {Math.round((outlook.retrodiction.base_rate ?? 0) * 100)}% for an average period.
+                </p>
+              )}
+              {outlook.brier_score != null && (
+                <p className="mono text-[10px] mt-2" style={{ color: 'var(--muted)' }}>
+                  near-term accuracy score {outlook.brier_score.toFixed(3)} (lower is better)
+                </p>
+              )}
             </Section>
           )}
         </>

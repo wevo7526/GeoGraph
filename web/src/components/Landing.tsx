@@ -86,12 +86,12 @@ export default function Landing({ onEnter }: { onEnter: (route: string) => void 
             <p className="mt-5 text-sm leading-relaxed" style={{ color: 'var(--muted)', maxWidth: '62ch' }}>
               {live ? (
                 <>
-                  The record runs from the Correlates-of-War deep tier through
-                  the GDELT wire (1979–2005), read through {packs.length || 'its'}{' '}
-                  regional lens{packs.length === 1 ? '' : 'es'}
+                  The record runs from the Correlates-of-War deep tier (1905)
+                  through the present-day GDELT wire, read through{' '}
+                  {packs.length || 'its'} regional lens{packs.length === 1 ? '' : 'es'}
                   {packs.length ? ` (${packs.map((p) => p.toUpperCase()).join(', ')})` : ''}.
-                  The daily wire era and further lenses are later phases —
-                  absence here is not evidence that nothing happened.
+                  Coverage is uneven by design — absence here is not evidence
+                  that nothing happened.
                 </>
               ) : (
                 <>

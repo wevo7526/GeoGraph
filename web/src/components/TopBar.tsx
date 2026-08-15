@@ -81,7 +81,12 @@ export default function TopBar({
 
       <nav className="flex items-baseline gap-5 text-sm">
         {pages.map(([path, label]) => {
-          const active = route.startsWith(path)
+          // The game, reasoning and trading pages folded INTO Relationship, so
+          // their old deep links must light the Relationship tab, not nothing.
+          const active =
+            route.startsWith(path) ||
+            (path === '/relationship' &&
+              ['/games', '/reasoning', '/trading'].some((r) => route.startsWith(r)))
           return (
             <button
               key={path}

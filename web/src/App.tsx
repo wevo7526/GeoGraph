@@ -55,6 +55,17 @@ export default function App() {
     setRegion(next)
   }
 
+  // A relationship can be linked WITH its region (from the Watchlist, or from a
+  // shared URL). The lens follows what you opened: without this, opening a saved
+  // China relationship while the lens is on MENA silently shows a MENA pair,
+  // because its dyad id is not in the MENA list.
+  useEffect(() => {
+    const q = window.location.hash.split('?')[1]
+    if (!q) return
+    const linkedRegion = new URLSearchParams(q).get('region')
+    if (linkedRegion && linkedRegion !== region) chooseRegion(linkedRegion)
+  }, [route, region])
+
   if (route === '/' || route === '') {
     return <Landing onEnter={navigate} />
   }
@@ -81,7 +92,7 @@ export default function App() {
     page = <WatchlistPage region={region} onNavigate={navigate} />
     scrollPage = true
   } else {
-    page = <Explorer region={region} />
+    page = <Explorer region={region} onNavigate={navigate} />
   }
 
   return (
