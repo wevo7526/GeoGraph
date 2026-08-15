@@ -155,6 +155,7 @@ def _load_game_artifact(region_pack: str) -> dict[str, Any] | None:
         return None
     with open(target, encoding="utf-8") as fh:
         artifact: dict[str, Any] = json.load(fh)
+    registry.verify_hash(artifact, what=target.name)
     return artifact
 
 
@@ -306,13 +307,7 @@ def _sequence_forecast(
             # last — the second moment §2.2 wants for identification. Reports
             # its own absence until FRED yields reach the panel, and carries
             # the uncalibrated-mapping caveat either way.
-            "duration": duration.report(
-                effects,
-                {
-                    str(e["event_id"]): str(e.get("dyad_id", ""))
-                    for e in effects if e.get("event_id")
-                },
-            ),
+            "duration": duration.report(effects, pricing.dyad_of_event(effects)),
             "bands": list(state.INTENSITY_EDGES),
         }),
         "boundary_statement": (

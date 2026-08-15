@@ -201,3 +201,28 @@ def test_both_views_come_from_one_parse(real_corpus):
     assert [r["dyad_id"] for r in panel_view[:50]] == [
         r["dyad_id"] for r in game_view[:50]
     ]
+
+
+def test_pooled_reads_dedupe_shared_roster_events(real_corpus):
+    # Overlapping rosters (mena and eurasia both hold USA/RUS/TUR) ship the
+    # same wire event in two packs' artifacts — 627 shared ids in 2022 alone.
+    # forecast_rows and all_panel_rows must count each event ONCE, or the
+    # all-region ledger and the training pool double-count those dyads.
+    installed = corpus.installed()
+    if len(installed) < 2:
+        pytest.skip("need at least two lenses to exercise the overlap")
+
+    fr_ids = [r["event_id"] for r in corpus.forecast_rows()]
+    assert len(fr_ids) == len(set(fr_ids)), "forecast_rows returned duplicate event ids"
+
+    # all_panel_rows carries no id, so prove the dedupe by count: the pooled
+    # length must be strictly less than the naive per-pack concatenation when
+    # any id is shared.
+    naive = sum(len(corpus.load(name)) for name in installed)
+    pooled = len(corpus.all_panel_rows())
+    per_pack_ids: set[str] = set()
+    for name in installed:
+        per_pack_ids.update(r["node_id"] for r in corpus.load(name))
+    assert pooled == len(per_pack_ids), "all_panel_rows did not dedupe to distinct ids"
+    if naive != len(per_pack_ids):
+        assert pooled < naive, "shared ids exist but the pool did not shrink"

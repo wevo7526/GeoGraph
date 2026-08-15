@@ -144,7 +144,9 @@ def _defaults(region: str) -> dict[str, float]:
             "audience": base.audience,
         }
     with open(target, encoding="utf-8") as fh:
-        return dict(json.load(fh)["payoffs"])
+        artifact = json.load(fh)
+    registry.verify_hash(artifact, what=target.name)
+    return dict(artifact["payoffs"])
 
 
 @router.get("/games/defaults")
@@ -168,11 +170,7 @@ def defaults(request: Request, region: str = "mena") -> dict[str, Any]:
         # NOWHERE the games surface could reach; bonds are part of the ask.
         "duration": duration_module.report(
             context["effects"],
-            {
-                str(e["event_id"]): str(e.get("dyad_id", ""))
-                for e in context["effects"]
-                if isinstance(e, dict) and e.get("event_id")
-            },
+            pricing_module.dyad_of_event(context["effects"]),
         ),
     }
 

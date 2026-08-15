@@ -333,6 +333,10 @@ def forecast_trajectory(
             "date": _quarter_date(latest["q"] + horizon),
             "intensity": round(value, 4),
             "deviation": round(deviation, 4),
+            # The UNCLAMPED residual spread, for the tilt bridge: lo/hi are
+            # clamped to [0, ∞) for display, so recovering the spread as
+            # (hi−lo)/2 understates it whenever value < spread and inflates η.
+            "spread": round(float(spread), 4),
             "lo": round(max(0.0, value - spread), 4),
             "hi": round(value + spread, 4),
         })

@@ -201,9 +201,14 @@ def solve(
                                 stage_payoff(b, a, x, k, own, payoffs)
                                 + payoffs.discount * future
                             )
-                    mix_a, _mix_b = solve_stage(matrix_a, matrix_b, precision=precision)
+                    mix_a, mix_b = solve_stage(matrix_a, matrix_b, precision=precision)
                     policy[period, x, k, own] = mix_a
-                    value[x, k, own] = float(mix_a @ (matrix_a @ mix_a))
+                    # A's expected value is mix_a @ payoff_a @ mix_b — the
+                    # OPPONENT'S equilibrium mixture, not A's own. Using mix_a
+                    # on both sides is exact only for a symmetric stage game,
+                    # and the counted kernel is not symmetrized, so it biased
+                    # every continuation value.
+                    value[x, k, own] = float(mix_a @ (matrix_a @ mix_b))
     return {
         "policy": policy,
         "value": value,
