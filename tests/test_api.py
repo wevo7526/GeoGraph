@@ -407,3 +407,43 @@ def test_nan_measurements_become_null_at_both_boundaries(tmp_path):
         assert raw[0]["bad"] is None
     finally:
         kuzu_store.close(conn)
+
+
+# ── the explorer reads the graph ∪ the wire corpus (the post-2022 gap) ────────
+
+_HAS_CORPUS = bool(__import__("core.wire.corpus", fromlist=["installed"]).installed())
+_needs_corpus = pytest.mark.skipif(not _HAS_CORPUS, reason="no wire artifacts in checkout")
+
+
+@_needs_corpus
+def test_events_include_wire_years_the_graph_never_merged(real_corpus, client):
+    # THE BUG THE USER HIT: the graph holds the spine and whatever wire years a
+    # loading boot merged (~through 2022); the corpus runs to the present. A
+    # graph-only read went silent after 2022. The union restores the tail.
+    # (real_corpus opts this test into the shipped artifacts; the suite
+    # otherwise runs corpus-free — see conftest.)
+    body = client.get("/api/events?start=2024-01-01&end=2024-12-31&limit=500&pack=mena").json()
+    assert body["rows"], "no events after 2023 — the corpus tail is missing"
+    assert all(r["event_time"].startswith("2024") for r in body["rows"])
+    # The wire years the graph never held are present too — a 2026 window that
+    # a graph-only read returned nothing for.
+    tail = client.get("/api/events?start=2026-01-01&end=2026-12-31&limit=50&pack=mena").json()
+    assert tail["rows"] and all(r["event_time"].startswith("2026") for r in tail["rows"])
+    # And the coverage strip counts those years, so the slider shows them.
+    years = client.get("/api/events/coverage?pack=mena").json()["years"]
+    assert int(years.get("2025", 0)) > 0 and int(years.get("2026", 0)) > 0
+
+
+@_needs_corpus
+def test_a_wire_only_event_resolves_its_detail_from_the_corpus(real_corpus, client):
+    listed = client.get(
+        "/api/events?start=2025-01-01&end=2025-12-31&limit=5&pack=mena"
+    ).json()["rows"]
+    assert listed, "no 2025 wire events to detail"
+    node_id = listed[0]["node_id"]
+    detail = client.get(f"/api/events/{node_id}").json()
+    assert detail["node_id"] == node_id
+    assert detail["name"] and detail["event_time"].startswith("2025")
+    # Actor names resolve through the pack roster, not left as raw ids.
+    if detail["initiator"]:
+        assert detail["initiator"]["name"] != detail["initiator"]["node_id"]
