@@ -463,8 +463,29 @@ def _graph_fingerprint(*facets: str) -> str:
 
 
 def _panel_edge() -> str:
+    """The panel's newest close AND its ticker breadth. Breadth joined the
+    facet on 2026-08-15: loading a pack's never-loaded tickers moves no date,
+    and the backtest/study guards would have slept through the panel gaining
+    the very series their books trade."""
     reachable, latest = _panel_latest_observation()
-    return f"panel={latest if reachable else 'unreachable'}"
+    if not reachable:
+        return "panel=unreachable"
+    from core import settings as settings_module
+    from core.panel import pg_store
+
+    breadth = "?"
+    try:
+        conn = pg_store.connect(settings_module.load())
+        try:
+            with conn.cursor() as cur:
+                cur.execute("SELECT count(DISTINCT market_ticker) FROM market_observations")
+                row = cur.fetchone()
+            breadth = str(row[0] if row else "?")
+        finally:
+            conn.close()
+    except pg_store.PanelUnavailable:
+        pass
+    return f"panel={latest};tickers={breadth}"
 
 
 def _raw_listing() -> str:
@@ -563,6 +584,35 @@ def _panel_latest_observation() -> tuple[bool, str | None]:
         conn.close()
 
 
+def _missing_tickers(pack_names: list[str]) -> dict[str, list[str]]:
+    """pack → its declared tickers with ZERO panel rows (any frequency)."""
+    from core import packs
+    from core import settings as settings_module
+    from core.panel import pg_store
+
+    settings = settings_module.load()
+    try:
+        conn = pg_store.connect(settings)
+    except pg_store.PanelUnavailable:
+        return {}
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT DISTINCT market_ticker FROM market_observations")
+            held = {row[0] for row in cur.fetchall()}
+    finally:
+        conn.close()
+    out: dict[str, list[str]] = {}
+    for name in pack_names:
+        try:
+            pack = packs.load(name)
+        except Exception:  # noqa: BLE001 - a broken pack is the seed step's report
+            continue
+        missing = [m["ticker"] for m in pack.markets if m["ticker"] not in held]
+        if missing:
+            out[name] = missing
+    return out
+
+
 def _spine_needs_from(pack_names: list[str]) -> str | None:
     """The panel depth the SPINE requires: the earliest marquee event across
     the packs, minus the estimation lookback. None if no pack loads."""
@@ -601,6 +651,23 @@ def _load_panel_if_shallow(pack_names: list[str]) -> dict[str, Any] | None:
     if not reachable:
         return None
     needed = _spine_needs_from(pack_names)
+    # A THIRD FAILURE, FOUND 2026-08-15: A PACK WHOSE TICKERS WERE NEVER LOADED.
+    # Depth and freshness are measured over the WHOLE table, so a panel that
+    # reaches 1871 on mena's tickers and is current on them passed both halves
+    # while ^TWII, ^HSI, ^GDAXI and every other pack-unique ticker held zero
+    # rows — china's and eurasia's paper books marked one leg of three, and
+    # 425 quarters each were recorded skips ("1 of 3 legs have panel closes").
+    # Coverage is per ticker: any declared market with no rows gets its full
+    # history, once, before the depth/freshness guard is consulted.
+    missing = _missing_tickers(pack_names)
+    loaded_missing: list[dict[str, Any]] = []
+    for name, tickers in missing.items():
+        _log(f"panel holds no rows for {name}'s {', '.join(tickers)} — loading them")
+        loaded_missing.append(_run_step(
+            f"load panel {name} ({len(tickers)} missing tickers)",
+            [sys.executable, str(_LOAD_PANEL_SCRIPT), name, "--tickers", ",".join(tickers)],
+            timeout=_LOAD_TIMEOUT_SECONDS,
+        ))
     if first is not None and (needed is None or first <= needed):
         # DEEP ENOUGH IS ONLY HALF THE GUARD. The other failure is STALENESS,
         # and it took the paper book down on 2026-08-14: the panel reached
@@ -620,6 +687,9 @@ def _load_panel_if_shallow(pack_names: list[str]) -> dict[str, Any] | None:
         )
         if latest is not None and stale_days is not None and stale_days <= _PANEL_STALE_DAYS:
             _log(f"panel reaches {first} and is current to {latest} — nothing to load")
+            if loaded_missing:
+                return {"ok": all(r["ok"] for r in loaded_missing),
+                        "missing_loaded": loaded_missing}
             return {"ok": True, "skipped": f"panel reaches {first}, current to {latest}"}
         if latest is not None:
             _log(f"panel is deep but STALE — newest close {latest} "
@@ -633,9 +703,12 @@ def _load_panel_if_shallow(pack_names: list[str]) -> dict[str, Any] | None:
                 )
                 for name in pack_names
             ]
-            return {"ok": all(r["ok"] for r in results),
-                    "refreshed_from": start, "packs": results}
+            return {"ok": all(r["ok"] for r in results + loaded_missing),
+                    "refreshed_from": start, "packs": results,
+                    "missing_loaded": loaded_missing}
         _log(f"panel reaches {first} — deep enough for the spine ({needed})")
+        if loaded_missing:
+            return {"ok": all(r["ok"] for r in loaded_missing), "missing_loaded": loaded_missing}
         return {"ok": True, "skipped": f"panel reaches {first}"}
     if first is not None:
         _log(f"panel starts {first} but the spine needs {needed} — deepening")

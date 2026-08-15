@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { getCaseStudy } from '../api'
+import { getCaseStudy, getDynamicCaseStudy } from '../api'
 import { useRegionLabel } from '../regions'
 import type { CaseStudy, CaseStudyEpisode, Effect } from '../types'
 
@@ -196,7 +196,14 @@ export default function CaseStudyView({
 
   useEffect(() => {
     let active = true
-    getCaseStudy(slug).then((result) => {
+    // `dynamic?dyad=…` (or `?event=…`) composes a study on request from the
+    // measured record — same shape as a worked one, so this view renders both.
+    const [bare, query] = slug.split('?')
+    const fetcher =
+      bare === 'dynamic'
+        ? getDynamicCaseStudy(Object.fromEntries(new URLSearchParams(query ?? '')))
+        : getCaseStudy(bare)
+    fetcher.then((result) => {
       if (!active) return
       setStudy(result)
       setMissing(result === null)

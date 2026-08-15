@@ -1,0 +1,445 @@
+/** The game-theory page: a region's future-event map from solved games, and
+ *  the drill-in for one dyad's solved game — both concepts (the LP correlated
+ *  equilibrium with its nash_gap, and the fitted quantal response), the ML
+ *  tilt, the priced courses of play, and an explanation written from the
+ *  numbers (core/games/scenarios.py). Persisted-first: the payload says when
+ *  it was solved and whether it was persisted or solved on request. */
+import { useEffect, useMemo, useState } from 'react'
+import { getDyadSolution, getRegionMap, lastFailureFor } from '../api'
+import { useRegionLabel } from '../regions'
+import type { ConceptSolution, DyadSolution, RegionMap, Scenario } from '../types'
+import { Beat, Disclosure, Empty, StoryHead } from '../ui'
+import { BandHeat, Bars, MultiLine, PayoffMatrix, Tiles, pct } from './charts/Kit'
+
+const KIND_LABEL: Record<string, string> = {
+  mutual_escalation: 'mutual escalation',
+  one_sided_pressure: 'one-sided pressure',
+  brinkmanship: 'brinkmanship',
+  probe_and_retreat: 'probe and retreat',
+  step_down: 'step-down',
+  drift_up: 'drift up',
+  drift_down: 'drift down',
+  holding_pattern: 'holding pattern',
+}
+const kind = (k: string) => KIND_LABEL[k] ?? k.replace(/_/g, ' ')
+
+function dyadFromRoute(): string | null {
+  const q = window.location.hash.split('?')[1]
+  return q ? new URLSearchParams(q).get('dyad') : null
+}
+
+export default function GamesPage({
+  region,
+  onNavigate,
+}: {
+  region: string
+  onNavigate: (route: string) => void
+}) {
+  const [dyad, setDyad] = useState<string | null>(dyadFromRoute)
+  useEffect(() => {
+    const sync = () => setDyad(dyadFromRoute())
+    window.addEventListener('hashchange', sync)
+    return () => window.removeEventListener('hashchange', sync)
+  }, [])
+  const open = (id: string | null) =>
+    onNavigate(id ? `/games?dyad=${encodeURIComponent(id)}&region=${encodeURIComponent(region)}` : '/games')
+  return dyad ? (
+    <DyadGame region={region} dyad={dyad} onBack={() => open(null)} onPick={open} onNavigate={onNavigate} />
+  ) : (
+    <RegionGames region={region} onPick={open} />
+  )
+}
+
+// ── the region map ────────────────────────────────────────────────────────
+
+function RegionGames({ region, onPick }: { region: string; onPick: (dyad: string) => void }) {
+  const label = useRegionLabel(region)
+  const [map, setMap] = useState<RegionMap | null | undefined>(undefined)
+  useEffect(() => {
+    let live = true
+    setMap(undefined)
+    getRegionMap(region).then((m) => live && setMap(m))
+    return () => { live = false }
+  }, [region])
+
+  if (map === undefined) return <div className="reading-column py-10"><Empty>Solving the region…</Empty></div>
+  if (map === null) {
+    const f = lastFailureFor('/api/games/region')
+    return (
+      <div className="reading-column py-10">
+        <StoryHead kicker={`Game theory · ${label.toUpperCase()}`} title="No solved games for this region"
+                   standfirst={f?.detail ?? 'The API did not answer.'} />
+      </div>
+    )
+  }
+  const bands = map.band_labels
+  const ranking = map.ranking
+  const lead = ranking[0]
+
+  return (
+    <div className="reading-column py-8">
+      <StoryHead
+        kicker={`Game theory · ${label.toUpperCase()} · ${map.primary_solver.toUpperCase()} + QRE`}
+        title="The next four quarters, solved"
+        standfirst={map.explanation[0]}
+        action={
+          <span className="mono text-[11px] text-right" style={{ color: 'var(--muted)' }}>
+            as of {map.as_of}<br />
+            {map.persisted ? `solved ${map.computed_at?.slice(0, 16).replace('T', ' ')} UTC` : 'solved on request · not persisted'}
+          </span>
+        }
+      />
+
+      <div className="mt-8">
+        <Tiles items={[
+          { label: 'pairs solved', value: String(map.dyads_solved), sub: `${map.dyads_cinc} with CINC capability` },
+          { label: 'tilted by the model', value: String(map.dyads_tilted), sub: map.model ? `${map.model.name}@${map.model.hash.slice(0, 8)}` : 'no frozen model' },
+          { label: 'LP nash gap (mean)', value: map.nash_gap.mean !== null ? map.nash_gap.mean.toFixed(3) : '—', sub: map.nash_gap.max !== null ? `worst dyad ${map.nash_gap.max.toFixed(3)}` : undefined },
+          { label: 'kernel measured', value: pct(map.kernel.share_measured, 0), sub: `${map.kernel.observations.toLocaleString('en-US')} dyad-quarters` },
+        ]} />
+      </div>
+
+      <Beat n={1} title="Where the escalation mass sits" major aside="P(above opening band after 4 quarters), LP">
+        {lead && (
+          <p className="text-sm mb-4" style={{ maxWidth: '62ch' }}>
+            <b>{lead.dyad_name}</b> carries the most escalation mass ({pct(lead.escalation_probability, 0)} under the LP,
+            {lead.escalation_probability_qre !== null ? ` ${pct(lead.escalation_probability_qre, 0)} under the QRE` : ''}),
+            opening {lead.opening_label}
+            {lead.top_scenario ? `; its most likely course is ${kind(lead.top_scenario.kind)} at ${pct(lead.top_scenario.likelihood, 0)}` : ''}.
+            Click a pair to open its solved game.
+          </p>
+        )}
+        <Bars
+          rows={ranking.map((r) => ({
+            key: r.dyad_id, label: r.dyad_name, value: r.escalation_probability,
+            sub: `${r.opening_label}${r.tilted ? ' · tilted' : ''}${r.capability_source === 'cinc' ? ' · CINC' : ''}`,
+          }))}
+          format={(v) => pct(v, 0)} max={1} onPick={onPick}
+        />
+        <div className="mt-6">
+          <div className="kicker mb-2">The region fan — dyad-average mass by band, period by period</div>
+          <BandHeat rows={map.region_fan.map((r) => r.distribution)} bandLabels={bands} />
+        </div>
+        <div className="mt-6">
+          <div className="kicker mb-2">Expected band by pair and quarter (LP)</div>
+          <ExpectedHeat heat={map.heat} bands={bands.length} onPick={onPick} />
+        </div>
+      </Beat>
+
+      <Beat n={2} title="The scenarios" aside={`${map.scenarios_all.length} courses named across ${map.dyads_solved} pairs`}>
+        <div className="grid md:grid-cols-2 gap-8">
+          <div>
+            <div className="kicker mb-2" style={{ color: 'var(--alert)' }}>Escalatory — most mass first</div>
+            <ScenarioList rows={map.scenarios_escalatory} onPick={onPick} />
+          </div>
+          <div>
+            <div className="kicker mb-2" style={{ color: 'var(--accent)' }}>Calming</div>
+            <ScenarioList rows={map.scenarios_calming.slice(0, 6)} onPick={onPick} />
+          </div>
+        </div>
+      </Beat>
+
+      <Beat n={3} title="How it was solved">
+        {map.explanation.slice(1).map((p, i) => (
+          <p key={i} className="text-sm leading-relaxed mb-3" style={{ maxWidth: '68ch' }}>{p}</p>
+        ))}
+        <Disclosure label="the concepts, the payoffs, the kernel">
+          <dl className="statline mt-2">
+            {Object.entries(map.payoffs ?? {}).map(([k, v]) => (
+              <div key={k}><dt>{k.replace('_', ' ')}</dt><dd>{v.toFixed(3)}</dd></div>
+            ))}
+          </dl>
+          <ul className="mt-3 text-xs space-y-1" style={{ color: 'var(--muted)' }}>
+            {Object.entries(map.concepts).map(([k, v]) => <li key={k}><b>{k.toUpperCase()}</b>: {v}</li>)}
+            <li>kernel: {map.kernel.measured} of {map.kernel.cells} cells measured, {map.kernel.fallback} fallback</li>
+          </ul>
+        </Disclosure>
+        <p className="mt-4 text-xs italic" style={{ color: 'var(--muted)', maxWidth: '68ch' }}>{map.boundary_statement}</p>
+      </Beat>
+    </div>
+  )
+}
+
+function ExpectedHeat({
+  heat, bands, onPick,
+}: { heat: RegionMap['heat']; bands: number; onPick: (dyad: string) => void }) {
+  return (
+    <div className="scroll-x">
+      <table className="text-[11px] mono" style={{ borderCollapse: 'separate', borderSpacing: 2 }}>
+        <thead>
+          <tr>
+            <th className="font-normal text-left pr-2" style={{ color: 'var(--muted)' }}>pair</th>
+            <th className="font-normal px-2" style={{ color: 'var(--muted)' }}>opening</th>
+            {heat[0]?.expected_band.map((_, i) => (
+              <th key={i} className="font-normal px-2" style={{ color: 'var(--muted)' }}>+{i + 1}q</th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {heat.map((h) => (
+            <tr key={h.dyad_id} className="cursor-pointer" onClick={() => onPick(h.dyad_id)}>
+              <td className="pr-2 whitespace-nowrap">{h.dyad_name}</td>
+              <td className="text-center">{h.opening_band}</td>
+              {h.expected_band.map((v, i) => {
+                const share = v / Math.max(bands - 1, 1)
+                const up = v > h.opening_band + 0.15
+                const down = v < h.opening_band - 0.15
+                return (
+                  <td key={i} className="text-center" style={{
+                    minWidth: 52, height: 24,
+                    background: `color-mix(in srgb, ${up ? 'var(--alert)' : down ? 'var(--accent)' : 'var(--muted)'} ${Math.round(20 + share * 60)}%, var(--ground))`,
+                    color: share > 0.5 ? 'var(--ground)' : 'var(--text)',
+                  }} title={`expected band ${v.toFixed(2)}`}>
+                    {v.toFixed(2)}
+                  </td>
+                )
+              })}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      <p className="mono text-[11px] mt-1" style={{ color: 'var(--muted)' }}>
+        oxblood: above the opening band · blue: below · grey: holding. Ink weight = level.
+      </p>
+    </div>
+  )
+}
+
+function ScenarioList({ rows, onPick }: { rows: Scenario[]; onPick?: (dyad: string) => void }) {
+  if (!rows.length) return <Empty>none named</Empty>
+  const top = Math.max(...rows.map((r) => r.likelihood), 1e-9)
+  return (
+    <ol className="space-y-3">
+      {rows.map((sc) => (
+        <li key={sc.scenario_name + sc.course} className={`text-sm ${onPick ? 'cursor-pointer' : ''}`}
+            onClick={onPick ? () => onPick(sc.dyad_id) : undefined}>
+          <div className="flex items-baseline gap-2">
+            <span className="figure w-12 shrink-0" style={{ color: sc.delta_band > 0 ? 'var(--alert)' : sc.delta_band < 0 ? 'var(--accent)' : 'var(--text)' }}>
+              {pct(sc.likelihood, 0)}
+            </span>
+            <span className="truncate"><b>{sc.dyad_name}</b> — {kind(sc.kind)}</span>
+          </div>
+          <div className="relative h-1 mt-1 ml-14" style={{ background: 'var(--panel)' }}>
+            <div className="absolute inset-y-0 left-0" style={{
+              width: `${(sc.likelihood / top) * 100}%`,
+              background: sc.delta_band > 0 ? 'var(--alert)' : sc.delta_band < 0 ? 'var(--accent)' : 'var(--muted)',
+            }} />
+          </div>
+          <div className="ml-14 mono text-[11px] mt-1" style={{ color: 'var(--muted)' }}>
+            {sc.course} → {sc.end_label}{sc.presser ? ` · ${sc.presser} presses` : ''}
+            {sc.market_implications.length ? ` · ${sc.market_implications.slice(0, 2).map((m) => `${m.market_name} ${(m.median * 100).toFixed(2)}%`).join(', ')}` : ' · unpriced'}
+          </div>
+        </li>
+      ))}
+    </ol>
+  )
+}
+
+// ── one dyad's solved game ────────────────────────────────────────────────
+
+function DyadGame({
+  region, dyad, onBack, onPick, onNavigate,
+}: {
+  region: string
+  dyad: string
+  onBack: () => void
+  onPick: (dyad: string) => void
+  onNavigate: (route: string) => void
+}) {
+  const label = useRegionLabel(region)
+  const [sol, setSol] = useState<DyadSolution | null | undefined>(undefined)
+  const [map, setMap] = useState<RegionMap | null>(null)
+  const [solver, setSolver] = useState<'lp' | 'qre'>('lp')
+  const [type, setType] = useState<'resolute' | 'irresolute'>('resolute')
+  useEffect(() => {
+    let live = true
+    setSol(undefined)
+    getDyadSolution(region, dyad).then((s) => live && setSol(s))
+    getRegionMap(region).then((m) => live && setMap(m))
+    return () => { live = false }
+  }, [region, dyad])
+
+  const concept: ConceptSolution | null = useMemo(
+    () => (sol ? sol.concepts[solver] ?? sol.concepts[sol.primary_solver] : null),
+    [sol, solver],
+  )
+
+  if (sol === undefined) return <div className="reading-column py-10"><Empty>Solving the game…</Empty></div>
+  if (sol === null || !concept) {
+    const f = lastFailureFor('/api/games/dyad')
+    return (
+      <div className="reading-column py-10">
+        <StoryHead kicker={`Solved game · ${label.toUpperCase()}`} title="This pair could not be solved"
+                   standfirst={f?.detail ?? 'The API did not answer.'}
+                   action={<button className="article-link" onClick={onBack}>← the region</button>} />
+      </div>
+    )
+  }
+  const bands = sol.band_labels
+  const lp = sol.concepts.lp
+  const qre = sol.concepts.qre
+  const top = concept.scenarios[0]
+  const beliefSteps = top?.steps ?? []
+  const propensity = concept.escalation_propensity
+
+  return (
+    <div className="reading-column py-8">
+      <StoryHead
+        kicker={`Solved game · ${label.toUpperCase()} · ${solver.toUpperCase()}`}
+        title={sol.dyad_name}
+        standfirst={sol.explanation[0]}
+        action={
+          <div className="flex flex-col items-end gap-2">
+            <select className="region-select text-sm" value={dyad} onChange={(e) => onPick(e.target.value)}>
+              {(map?.ranking ?? [{ dyad_id: dyad, dyad_name: sol.dyad_name }]).map((r) => (
+                <option key={r.dyad_id} value={r.dyad_id}>{r.dyad_name}</option>
+              ))}
+            </select>
+            <span className="mono text-[11px]" style={{ color: 'var(--muted)' }}>
+              <button className="article-link" onClick={onBack}>← the region map</button>
+              {' · '}
+              <button className="article-link" onClick={() => onNavigate(`/relationships?dyad=${encodeURIComponent(dyad)}&region=${encodeURIComponent(region)}`)}>the relationship →</button>
+            </span>
+          </div>
+        }
+      />
+
+      <div className="mt-6 flex flex-wrap items-center gap-3 mono text-[11px]">
+        <span style={{ color: 'var(--muted)' }}>concept</span>
+        {(['lp', 'qre'] as const).map((s) => (
+          <button key={s} className={s === solver ? 'ink-button' : 'article-link'} onClick={() => setSolver(s)}
+                  style={{ padding: '0.15rem 0.6rem' }}>
+            {s === 'lp' ? 'LP correlated equilibrium' : 'fitted QRE'}
+          </button>
+        ))}
+        <span style={{ color: 'var(--muted)' }}>
+          {sol.persisted ? `solved ${sol.computed_at?.slice(0, 16).replace('T', ' ')} UTC` : 'solved on request'} · as of {sol.as_of}
+        </span>
+      </div>
+
+      <div className={`call mt-6 ${concept.escalation_probability >= 0.5 ? 'call--rising' : ''}`}>
+        <div className="kicker">The call</div>
+        <p className="call-lede">
+          {pct(concept.escalation_probability, 0)} that {sol.sides[0]} and {sol.sides[1]} sit above their opening
+          band ({sol.opening.intensity_label}) after {sol.horizon} quarters
+          {lp && qre ? ` — LP ${pct(lp.escalation_probability, 0)}, QRE ${pct(qre.escalation_probability, 0)}` : ''}.
+        </p>
+        {top && (
+          <p className="text-sm mt-2" style={{ maxWidth: '62ch' }}>
+            Most likely course: <b>{kind(top.kind)}</b> ({top.course}) at {pct(top.likelihood, 0)} of the retained mass, ending {top.end_label}
+            {top.presser ? `, ${top.presser} pressing` : ''}.
+            {top.market_implications.length
+              ? ` Historically such courses moved ${top.market_implications.slice(0, 3).map((m) => `${m.market_name} ${(m.median * 100).toFixed(2)}% (n=${m.n})`).join(', ')}.`
+              : ' No measured market implication clears the evidence bar for this course.'}
+          </p>
+        )}
+        <div className="mt-4">
+          <Tiles items={[
+            { label: 'opening', value: sol.opening.intensity_label, sub: `intensity ${sol.opening.latest_intensity.toFixed(2)} / scale ${sol.opening.scale.toFixed(2)}` },
+            { label: 'capability', value: `band ${sol.opening.capability.band}`, sub: sol.opening.capability.source === 'cinc' ? `CINC ratio ${(sol.opening.capability.ratio ?? 0.5).toFixed(2)}` : 'default (no CINC)' },
+            { label: 'beliefs (resolute)', value: `${pct(sol.opening.beliefs.a, 0)} / ${pct(sol.opening.beliefs.b, 0)}`, sub: sol.opening.beliefs.source === 'bayes_filter' ? `filtered from ${sol.opening.beliefs.quarters_observed} quarters` : 'flat prior' },
+            { label: 'ML tilt', value: sol.opening.tilt ? `η ${sol.opening.tilt.eta >= 0 ? '+' : ''}${sol.opening.tilt.eta.toFixed(3)}` : 'none', tone: sol.opening.tilt ? (sol.opening.tilt.eta > 0 ? 'loss' : 'gain') : 'plain', sub: sol.opening.tilt ? sol.opening.tilt.model : 'no gated trajectory' },
+          ]} />
+        </div>
+      </div>
+
+      <Beat n={1} title="The fan" major aside={`${concept.paths_enumerated} courses enumerated · top ${concept.paths.length} carry ${pct(concept.retained_probability, 0)}`}>
+        <BandHeat rows={concept.marginal.map((m) => m.distribution)} bandLabels={bands}
+                  markers={concept.marginal.map((m) => m.modal_band)} />
+        <p className="mono text-[11px] mt-2" style={{ color: 'var(--muted)' }}>
+          expected band by quarter: {concept.marginal.map((m) => m.expected_band.toFixed(2)).join(' → ')} · outlined cell = modal band
+        </p>
+      </Beat>
+
+      <Beat n={2} title="The courses of play" aside="each course is a scenario; the band at each step is a distribution">
+        <ol className="space-y-4">
+          {concept.scenarios.map((sc, i) => (
+            <li key={sc.course + i} className="text-sm">
+              <div className="flex items-baseline gap-3">
+                <span className="figure w-12 shrink-0" style={{ color: sc.delta_band > 0 ? 'var(--alert)' : sc.delta_band < 0 ? 'var(--accent)' : 'var(--text)' }}>{pct(sc.likelihood, 0)}</span>
+                <span><b>{kind(sc.kind)}</b> — {sc.rationale}</span>
+              </div>
+              <div className="ml-15 mt-2 scroll-x" style={{ marginLeft: '3.75rem' }}>
+                <table className="mono text-[11px]" style={{ borderCollapse: 'separate', borderSpacing: '8px 2px' }}>
+                  <thead>
+                    <tr style={{ color: 'var(--muted)' }}>
+                      <th className="font-normal text-left">q</th><th className="font-normal text-left">{sol.sides[0]}</th>
+                      <th className="font-normal text-left">{sol.sides[1]}</th><th className="font-normal text-left">band</th>
+                      <th className="font-normal text-left">P(band)</th><th className="font-normal text-left">beliefs a/b</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {(sc.steps ?? []).map((st) => (
+                      <tr key={st.period}>
+                        <td>+{st.period}</td>
+                        <td style={{ color: st.action_a === 'escalate' ? 'var(--alert)' : st.action_a === 'de-escalate' ? 'var(--accent)' : 'var(--text)' }}>{st.action_a}</td>
+                        <td style={{ color: st.action_b === 'escalate' ? 'var(--alert)' : st.action_b === 'de-escalate' ? 'var(--accent)' : 'var(--text)' }}>{st.action_b}</td>
+                        <td>{bands[st.intensity_band]}</td>
+                        <td>{pct(st.band_probability ?? 0, 0)}</td>
+                        <td>{st.belief_a !== undefined ? `${pct(st.belief_a, 0)} / ${pct(st.belief_b ?? 0, 0)}` : '—'}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              {sc.market_implications.length > 0 && (
+                <div className="mt-2" style={{ marginLeft: '3.75rem' }}>
+                  <Bars rows={sc.market_implications.map((m) => ({ key: m.market_id, label: m.market_name, value: m.median, sub: `n=${m.n}` }))}
+                        signed format={(v) => `${(v * 100).toFixed(2)}%`} />
+                </div>
+              )}
+            </li>
+          ))}
+        </ol>
+      </Beat>
+
+      <Beat n={3} title="The stage game at the opening" aside={lp?.nash_gap ? `nash gap: mean ${lp.nash_gap.mean.toFixed(3)}, ${pct(lp.nash_gap.share_product_form, 0)} of stage games at a Nash point` : undefined}>
+        <div className="flex gap-3 mono text-[11px] mb-3">
+          {(['resolute', 'irresolute'] as const).map((t) => (
+            <button key={t} className={t === type ? 'ink-button' : 'article-link'} style={{ padding: '0.15rem 0.6rem' }} onClick={() => setType(t)}>{t} type</button>
+          ))}
+        </div>
+        <PayoffMatrix matrix={concept.opening_matrix[type]} sides={sol.sides} />
+      </Beat>
+
+      <Beat n={4} title="Escalation propensity by band and type" aside={`${solver.toUpperCase()}, period 1, at the opening capability`}>
+        <MultiLine
+          xLabels={bands}
+          series={[
+            { name: 'resolute', values: propensity.resolute ?? [], color: 'var(--alert)' },
+            { name: 'irresolute', values: propensity.irresolute ?? [], color: 'var(--accent)', dash: '4 3' },
+          ]}
+        />
+      </Beat>
+
+      {beliefSteps.length > 0 && (
+        <Beat n={5} title="Beliefs along the most likely course" aside="P(resolute) after each step, by the game's own Bayes rule">
+          <MultiLine
+            xLabels={['open', ...beliefSteps.map((s) => `+${s.period}q`)]}
+            series={[
+              { name: `${sol.sides[0]} resolute`, values: [sol.opening.beliefs.a, ...beliefSteps.map((s) => s.belief_a ?? 0)], color: 'var(--alert)' },
+              { name: `${sol.sides[1]} resolute`, values: [sol.opening.beliefs.b, ...beliefSteps.map((s) => s.belief_b ?? 0)], color: 'var(--accent)', dash: '4 3' },
+            ]}
+          />
+        </Beat>
+      )}
+
+      <Beat n={6} title="Explanation" aside="written from the numbers above — every figure is a field">
+        {sol.explanation.slice(1).map((p, i) => (
+          <p key={i} className="text-sm leading-relaxed mb-3" style={{ maxWidth: '68ch' }}>{p}</p>
+        ))}
+        <Disclosure label="payoffs, kernel and pricing evidence">
+          <dl className="statline mt-2">
+            {Object.entries(sol.payoffs).map(([k, v]) => (<div key={k}><dt>{k.replace('_', ' ')}</dt><dd>{v.toFixed(3)}</dd></div>))}
+          </dl>
+          <p className="mono text-[11px] mt-2" style={{ color: 'var(--muted)' }}>
+            kernel {sol.kernel.measured}/{sol.kernel.cells} measured ({pct(sol.kernel.share_measured, 0)}) over {sol.kernel.observations.toLocaleString('en-US')} dyad-quarters
+            {concept.pricing ? ` · pricing over ${concept.pricing.measurements} measured effects in ${concept.pricing.cells} cells` : ' · no pricing evidence'}
+          </p>
+          <p className="mono text-[11px] mt-1" style={{ color: 'var(--muted)' }}>{concept.concept}</p>
+        </Disclosure>
+        <p className="mt-4 text-xs italic" style={{ color: 'var(--muted)', maxWidth: '68ch' }}>{sol.boundary_statement}</p>
+      </Beat>
+    </div>
+  )
+}

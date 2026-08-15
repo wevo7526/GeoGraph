@@ -10,6 +10,8 @@ const Explorer = lazy(() => import('./components/Explorer'))
 const RelationshipPage = lazy(() => import('./components/RelationshipPage'))
 const WatchlistPage = lazy(() => import('./components/WatchlistPage'))
 const CasesPage = lazy(() => import('./components/CasesPage'))
+const GamesPage = lazy(() => import('./components/GamesPage'))
+const MarketsPage = lazy(() => import('./components/MarketsPage'))
 
 // Hash routing rather than a router dependency: a handful of views, and the
 // hash keeps URLs shareable — a reader can send someone the case study, which
@@ -83,13 +85,17 @@ export default function App() {
   } else if (route.startsWith('/cases')) {
     page = <CasesPage region={region} onNavigate={navigate} />
     scrollPage = true
+  } else if (route.startsWith('/games')) {
+    page = <GamesPage region={region} onNavigate={navigate} />
+    scrollPage = true
+  } else if (route.startsWith('/markets') || route.startsWith('/trading')) {
+    page = <MarketsPage region={region} onNavigate={navigate} />
+    scrollPage = true
   } else if (
-    // Reasoning, the game and trading folded into the Relationship page; old
-    // deep links (e.g. #/games?dyad=…) land there, dyad carried over.
+    // /relationships (plural, 2026-08-15) with the old singular and the
+    // retired /reasoning deep links landing there, dyad carried over.
     route.startsWith('/relationship') ||
-    route.startsWith('/games') ||
-    route.startsWith('/reasoning') ||
-    route.startsWith('/trading')
+    route.startsWith('/reasoning')
   ) {
     page = <RelationshipPage region={region} onNavigate={navigate} />
     scrollPage = true

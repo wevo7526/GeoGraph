@@ -457,14 +457,85 @@ export interface Precedent {
 /** A relationship's market-moving events, most recent first — the Relationship
  *  page's past→now timeline. Each event carries the measured moves of its
  *  markets (AFFECTED abnormal returns), never a modelled number. */
+export interface TimelineEvent {
+  event_id: string
+  date: string
+  name?: string | null
+  goldstein?: number | null
+  escalation_direction?: string | null
+  escalation_magnitude?: number | null
+  fidelity_tier?: string | null
+  initiator_id?: string | null
+  target_id?: string | null
+  first_mover?: string | null
+  markets: Array<{
+    market_id: string
+    market_name: string
+    car: number
+    window: string
+    p_value?: number | null
+    first_mover?: boolean
+  }>
+}
+
 export interface DyadTimeline {
   dyad: string
   total: number
-  events: Array<{
-    event_id: string
+  events: TimelineEvent[]
+}
+
+/** GET /api/impact/{event_id} — measured beside expected, with the surprise. */
+export interface EventImpact {
+  mode: 'historical' | 'hypothetical'
+  event: {
+    id: string
     date: string
-    markets: Array<{ market_id: string; market_name: string; car: number; window: string }>
+    dyad: string
+    actors: { initiator: string; target: string }
+    region?: string
+    escalation?: { direction: string | null; magnitude: number | null }
+    goldstein?: number | null
+  }
+  markets: Array<{
+    market_id: string
+    market_name: string
+    measured: {
+      car: number
+      window: string
+      first_mover: boolean
+      resolution: string
+    } | null
+    expected: {
+      mean_car: number
+      median_car: number
+      lo: number
+      hi: number
+      n_precedents: number
+    } | null
+    surprise: number | null
   }>
+  precedents: { n: number; as_of: string; regime_gated: boolean }
+  boundary_statement: string
+}
+
+/** GET /api/impact/coverage — the market-movement trace registered per dyad. */
+export interface ImpactCoverage {
+  region: string
+  dyads: Array<{
+    dyad_id: string
+    events: number
+    measured: number
+    share_measured: number
+    status: 'measured' | 'unmeasured' | 'no_events'
+  }>
+  summary: {
+    dyads: number
+    dyads_measured: number
+    events: number
+    events_measured: number
+    share_measured: number
+  }
+  note: string
 }
 
 export interface PaperPosition {
@@ -521,11 +592,34 @@ export interface BacktestLedger {
   summary: {
     notional_usd: number
     quarters_traded: number
+    quarters_skipped?: number | null
     final_equity_usd: number
     total_return: number
     hit_rate: number
     max_drawdown: number
+    best_quarter?: string
+    worst_quarter?: string
+    first_quarter?: string
+    last_quarter?: string
   } | null
+  drawdown?: Array<{ quarter_end: string; drawdown: number }>
+  attribution?: Array<{
+    ticker: string
+    pnl_usd: number
+    quarters: number
+    hit_rate: number | null
+    mean_abs_weight: number | null
+  }>
+  skipped?: Array<{ quarter_end: string; reason: string }>
+  skip_reasons?: Array<{
+    reason: string
+    quarters: number
+    example: string
+    first?: string
+    last?: string
+  }>
+  quarters_skipped?: number
+  books?: { escalation: Record<string, number>; reversion: Record<string, number> }
   note?: string
   method?: string
 }
@@ -686,4 +780,171 @@ export interface GameExplore {
   kernel: { share_measured: number }
   frozen: false
   boundary_statement: string
+}
+
+
+// ── the solved-game surface (core/games/scenarios.py, 2026-08-15) ─────────
+
+export interface ScenarioStep extends SequenceStep {
+  belief_a?: number
+  belief_b?: number
+}
+
+export interface Scenario {
+  scenario_name: string
+  kind: string
+  likelihood: number
+  dyad_id: string
+  dyad_name: string
+  presser: string | null
+  course: string
+  steps?: ScenarioStep[]
+  opening_band: number
+  end_band: number
+  end_label: string
+  delta_band: number
+  beliefs_end?: { a: number | null; b: number | null } | null
+  market_implications: Array<{
+    market_id: string
+    market_name: string
+    median: number
+    n: number
+    steps_priced: number
+  }>
+  rationale: string
+}
+
+export interface OpeningMatrix {
+  a: number[][]
+  b: number[][]
+  actions: string[]
+  type: string
+  mix_a: number[]
+  mix_b: number[]
+  value: number
+}
+
+export interface NashGap {
+  mean: number
+  max: number
+  share_product_form: number
+  stage_games: number
+  all_optimal: boolean
+}
+
+export interface ConceptSolution {
+  concept: string
+  nash_gap: NashGap | null
+  marginal: Array<{
+    period: number
+    distribution: number[]
+    modal_band: number
+    expected_band: number
+  }>
+  escalation_probability: number
+  escalation_propensity: Record<string, number[]>
+  paths: Array<{ probability: number; steps: ScenarioStep[] }>
+  paths_enumerated: number
+  retained_probability: number
+  pricing: { measurements: number; cells: number; note?: string } | null
+  opening_matrix: Record<string, OpeningMatrix>
+  scenarios: Scenario[]
+}
+
+export interface DyadSolution {
+  region: string
+  dyad_id: string
+  dyad_name: string
+  sides: [string, string]
+  as_of: string
+  horizon: number
+  bands: number
+  band_labels: string[]
+  opening: {
+    intensity_band: number
+    intensity_label: string
+    latest_intensity: number
+    scale: number
+    active_quarters: number
+    capability: { band: number; ratio?: number; source: string }
+    beliefs: { a: number; b: number; quarters_observed?: number; source: string }
+    tilt: { eta: number; scale: number; model: string; method: string } | null
+  }
+  payoffs: Record<string, number>
+  primary_solver: 'lp' | 'qre'
+  concepts: Record<'lp' | 'qre', ConceptSolution>
+  kernel: {
+    cells: number
+    measured: number
+    fallback: number
+    share_measured: number
+    observations: number
+  }
+  explanation: string[]
+  boundary_statement: string
+  computed_at?: string
+  persisted?: boolean
+}
+
+export interface RegionRanking {
+  dyad_id: string
+  dyad_name: string
+  opening_band: number
+  opening_label: string
+  escalation_probability: number
+  escalation_probability_qre: number | null
+  expected_end_band: number | null
+  top_scenario: {
+    scenario_name: string
+    kind: string
+    likelihood: number
+    course: string
+    end_label: string
+    presser: string | null
+  } | null
+  nash_gap_mean: number | null
+  tilted: boolean
+  capability_source: string
+  beliefs_source: string
+}
+
+export interface RegionMap {
+  region: string
+  as_of: string
+  horizon: number
+  bands: number
+  band_labels: string[]
+  primary_solver: 'lp' | 'qre'
+  solvers: string[]
+  concepts: Record<string, string>
+  payoffs: Record<string, number> | null
+  kernel: {
+    cells: number
+    measured: number
+    fallback: number
+    share_measured: number
+    observations: number
+  }
+  model: { name: string; hash: string } | null
+  dyads_solved: number
+  dyads_tilted: number
+  dyads_cinc: number
+  nash_gap: { mean: number | null; max: number | null }
+  ranking: RegionRanking[]
+  heat: Array<{
+    dyad_id: string
+    dyad_name: string
+    opening_band: number
+    expected_band: number[]
+    modal_band: number[]
+  }>
+  region_fan: Array<{ period: number; distribution: number[]; expected_band: number | null }>
+  scenarios_escalatory: Scenario[]
+  scenarios_calming: Scenario[]
+  scenarios_all: Scenario[]
+  explanation: string[]
+  boundary_statement: string
+  computed_at?: string
+  persisted?: boolean
+  note?: string
 }

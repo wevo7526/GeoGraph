@@ -36,7 +36,7 @@
      against the WHITE PLATE, the surface they are drawn on. The UI tokens
      above are inks and surfaces; they fail as series colors by design —
      never encode identity with --text/--muted. */
-  --series-state: #a8731f;
+  --series-state: #c48a12;
   --series-person: #b04a5c;
   --series-org: #4a82d4;
   --series-swf: #2f9960;

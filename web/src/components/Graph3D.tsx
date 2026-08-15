@@ -12,7 +12,7 @@ import type { Dyad, Flow, GraphEvent, PackActor, Relation } from '../types'
  * lesson). These are the validated categorical steps from styles.css, NOT the
  * UI inks: --text/--muted fail as series colors by design. */
 export const ACTOR_COLOR: Record<PackActor['actor_type'], string> = {
-  state: '#a8731f',
+  state: '#c48a12',
   person: '#b04a5c',
   org: '#4a82d4',
   swf: '#2f9960',

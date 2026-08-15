@@ -23,6 +23,11 @@ import type {
   Segmentation,
   Stats,
   Trajectory,
+  RegionMap,
+  DyadSolution,
+  ForwardView,
+  EventImpact,
+  ImpactCoverage,
 } from './types'
 
 /** A recorded API failure — kept so the surface can tell BROKEN from EMPTY.
@@ -263,6 +268,40 @@ export async function postAssess(
   } catch {
     return { ok: false, detail: 'the API is unreachable' }
   }
+}
+
+// The solved-game surface: persisted-first region map and dyad solution.
+export const getRegionMap = (region: string) =>
+  get<RegionMap>(`/api/games/region?region=${encodeURIComponent(region)}`)
+
+export const getDyadSolution = (region: string, dyad: string) =>
+  get<DyadSolution>(
+    `/api/games/dyad?region=${encodeURIComponent(region)}&dyad=${encodeURIComponent(dyad)}`,
+  )
+
+// The standing book: the latest frozen near-term call marked at the latest close.
+export const getForward = (region: string) =>
+  get<ForwardView>(`/api/trading/forward?region=${encodeURIComponent(region)}`)
+
+// One event's measured vs expected vs surprise — the north-star object.
+export const getEventImpact = (eventId: string) =>
+  get<EventImpact>(`/api/impact/${encodeURIComponent(eventId)}`)
+
+// The market-movement trace registered per dyad for a pack.
+export const getImpactCoverage = (region: string) =>
+  get<ImpactCoverage>(`/api/impact/coverage?region=${encodeURIComponent(region)}`)
+
+// A case study composed on request for any dyad or event.
+export const getDynamicCaseStudy = (params: {
+  dyad?: string
+  event?: string
+  region?: string
+}) => {
+  const query = new URLSearchParams()
+  if (params.dyad) query.set('dyad', params.dyad)
+  if (params.event) query.set('event', params.event)
+  if (params.region) query.set('region', params.region)
+  return get<CaseStudy>(`/api/case-studies/dynamic?${query}`)
 }
 
 export const getCaseStudies = () =>

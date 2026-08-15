@@ -49,9 +49,15 @@ export default function TopBar({
   // answer, past→now→forward), follow it (Watchlist), read the worked cases.
   // Reasoning, the game and trading folded INTO the Relationship page as its
   // evidence, its "how it plays out", and its track record — no longer tabs.
+  // Six pages since 2026-08-15: the game-theory map and the markets page are
+  // tabs again (a solved-game region map and a per-region paper backtest are
+  // destinations, not evidence folded under a pair), beside the explorer, the
+  // relationship, the watchlist and the case studies.
   const pages: Array<[string, string]> = [
     ['/explore', 'Explorer'],
-    ['/relationship', 'Relationship'],
+    ['/relationships', 'Relationships'],
+    ['/games', 'Game theory'],
+    ['/markets', 'Markets'],
     ['/watchlist', 'Watchlist'],
     ['/cases', 'Case studies'],
   ]
@@ -99,8 +105,9 @@ export default function TopBar({
           const active =
             route.startsWith(path) ||
             (path === '/cases' && route.startsWith('/case/')) ||
-            (path === '/relationship' &&
-              ['/games', '/reasoning', '/trading'].some((r) => route.startsWith(r)))
+            (path === '/relationships' &&
+              ['/relationship', '/reasoning'].some((r) => route.startsWith(r))) ||
+            (path === '/markets' && route.startsWith('/trading'))
           return (
             <button
               key={path}

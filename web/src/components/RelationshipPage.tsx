@@ -23,6 +23,10 @@ import {
   getForecasts,
   getPanelDyads,
   lastFailureFor,
+  getPrecedent,
+  getEventImpact,
+  getImpactCoverage,
+  getDyadSolution,
 } from '../api'
 import {
   bandLabel,
@@ -43,9 +47,15 @@ import type {
   GameExplore,
   PanelDyad,
   SequenceStep,
+  Precedent,
+  EventImpact,
+  ImpactCoverage,
+  TimelineEvent,
+  DyadSolution,
 } from '../types'
-import { LineBand } from './charts/Charts'
+import { BoxRow, Fan, LineBand } from './charts/Charts'
 import type { Point } from './charts/Charts'
+import { Bars, MultiLine, pct } from './charts/Kit'
 import { Beat, Disclosure, Empty, MoveRow, StatLine, StoryHead, TensionBadge } from '../ui'
 
 function dyadFromHash(): string {
@@ -65,7 +75,7 @@ function stepMoves(step: SequenceStep | undefined) {
     .slice(0, 6)
 }
 
-export default function RelationshipPage({ region }: { region: string; onNavigate: (r: string) => void }) {
+export default function RelationshipPage({ region, onNavigate }: { region: string; onNavigate: (r: string) => void }) {
   const regionLabel = useRegionLabel(region)
   const [dyads, setDyads] = useState<PanelDyad[] | null>(null)
   const [selected, setSelected] = useState('')
@@ -75,6 +85,10 @@ export default function RelationshipPage({ region }: { region: string; onNavigat
   const [game, setGame] = useState<GameExplore | null | undefined>(undefined)
   const [outlook, setOutlook] = useState<ForecastDetail | null | undefined>(undefined)
   const [backtest, setBacktest] = useState<BacktestLedger | null | undefined>(undefined)
+  const [precedent, setPrecedent] = useState<Precedent | null | undefined>(undefined)
+  const [coverage, setCoverage] = useState<ImpactCoverage | null | undefined>(undefined)
+  const [solution, setSolution] = useState<DyadSolution | null | undefined>(undefined)
+  const [modelTrajectory, setModelTrajectory] = useState<Array<{ q: string; deviation: number; lo?: number; hi?: number }> | null>(null)
 
   useEffect(() => {
     let live = true
@@ -121,13 +135,26 @@ export default function RelationshipPage({ region }: { region: string; onNavigat
     setSeries(undefined)
     setTimeline(undefined)
     setGame(undefined)
+    setPrecedent(undefined)
+    setSolution(undefined)
     getDyadSeries(selected, region).then((r) => live && setSeries(r))
     getDyadTimeline(selected).then((r) => live && setTimeline(r))
     exploreGame(region, selected).then((r) => live && setGame(r))
+    getPrecedent(selected, region).then((r) => live && setPrecedent(r))
+    getDyadSolution(region, selected).then((r) => live && setSolution(r))
     return () => {
       live = false
     }
   }, [selected, region])
+
+  useEffect(() => {
+    let live = true
+    setCoverage(undefined)
+    getImpactCoverage(region).then((r) => live && setCoverage(r))
+    return () => {
+      live = false
+    }
+  }, [region])
 
   useEffect(() => {
     let live = true
@@ -137,6 +164,14 @@ export default function RelationshipPage({ region }: { region: string; onNavigat
       if (!live) return
       const rows = r?.rows ?? []
       const near = rows.find((f) => f.mode === 'near_term') ?? rows[0]
+      const model = rows.find((f) => f.mode === 'model')
+      if (model) {
+        getForecast(model.node_id).then((d) => {
+          if (!live) return
+          const t = d?.frozen_inputs?.trajectories?.find((x) => x.dyad_id === selected)
+          setModelTrajectory(t ? t.path.map((p) => ({ q: p.date, deviation: p.deviation, lo: p.lo, hi: p.hi })) : null)
+        })
+      }
       if (!near) {
         setOutlook(null)
         return
@@ -147,7 +182,7 @@ export default function RelationshipPage({ region }: { region: string; onNavigat
     return () => {
       live = false
     }
-  }, [region])
+  }, [region, selected])
 
   const selectedDyad = useMemo(() => dyads?.find((d) => d.dyad_id === selected) ?? null, [dyads, selected])
   const watched = useIsWatched(selected)
@@ -300,6 +335,19 @@ export default function RelationshipPage({ region }: { region: string; onNavigat
               </p>
             ) : null}
 
+            {solution && (
+              <p className="mt-3 text-sm">
+                The solved game (LP correlated equilibrium) puts <strong>{pct(solution.concepts.lp?.escalation_probability ?? 0, 0)}</strong> on this pair
+                sitting above its opening band after {solution.horizon} quarters
+                {solution.concepts.qre ? ` (${pct(solution.concepts.qre.escalation_probability, 0)} under the fitted QRE)` : ''}
+                {solution.opening.tilt ? `, with the learned layer tilting the kernel by η ${solution.opening.tilt.eta >= 0 ? '+' : ''}${solution.opening.tilt.eta.toFixed(3)}` : ', untilted by the learned layer'}.
+                {' '}
+                <button className="article-link" onClick={() => onNavigate(`/games?dyad=${encodeURIComponent(selected)}&region=${encodeURIComponent(region)}`)}>
+                  Open the solved game →
+                </button>
+              </p>
+            )}
+
             {/* Show me why — the trajectory fan behind the one-line call. */}
             {marginal.length > 1 && (
               <Disclosure label="show me the trajectory">
@@ -330,51 +378,122 @@ export default function RelationshipPage({ region }: { region: string; onNavigat
                 <div className="mt-4 scroll-x">
                   <LineBand points={linePoints} width={720} height={140} />
                 </div>
+                {modelTrajectory && modelTrajectory.length > 0 && (
+                  <div className="mt-4">
+                    <div className="kicker mb-1">The learned layer's read — deviation from this pair's own baseline, next {modelTrajectory.length} quarters</div>
+                    <MultiLine
+                      xLabels={modelTrajectory.map((m) => m.q)}
+                      yMax={Math.max(...modelTrajectory.map((m) => Math.abs(m.hi ?? m.deviation)), 1)}
+                      format={(v) => v.toFixed(1)}
+                      series={[
+                        { name: 'predicted deviation', values: modelTrajectory.map((m) => Math.max(0, m.deviation)), color: 'var(--alert)' },
+                        { name: 'upper band', values: modelTrajectory.map((m) => Math.max(0, m.hi ?? m.deviation)), color: 'var(--muted)', dash: '3 3' },
+                      ]}
+                    />
+                    <p className="mono text-[10px] mt-1" style={{ color: 'var(--muted)' }}>
+                      gated within-dyad ridge (models/intensity.json); the model's claim is magnitude, persistence keeps the ordering.
+                    </p>
+                  </div>
+                )}
+                {solution?.concepts.lp && (
+                  <div className="mt-4">
+                    <div className="kicker mb-1">Escalation propensity by intensity band and type (LP, at the opening capability)</div>
+                    <MultiLine
+                      xLabels={solution.band_labels}
+                      series={[
+                        { name: 'resolute', values: solution.concepts.lp.escalation_propensity.resolute ?? [], color: 'var(--alert)' },
+                        { name: 'irresolute', values: solution.concepts.lp.escalation_propensity.irresolute ?? [], color: 'var(--accent)', dash: '4 3' },
+                      ]}
+                    />
+                  </div>
+                )}
               </>
             ) : (
               <Empty>no quarterly trajectory for this relationship yet</Empty>
             )}
           </Beat>
 
+          {/* ── PRECEDENT — what such episodes did next, and to which markets ─ */}
+          <Beat n={2} title="What comparable episodes did next" aside={precedent ? `${precedent.episodes.length} episodes, regime-gated` : undefined}>
+            {precedent === undefined ? (
+              <Empty>reading the precedent…</Empty>
+            ) : precedent && (precedent.fan.length || precedent.markets.length) ? (
+              <div className="grid md:grid-cols-2 gap-6">
+                <div>
+                  <div className="kicker mb-1">Intensity after an episode opens — median, p25–p75, min–max</div>
+                  <Fan rows={precedent.fan} width={480} height={150} />
+                </div>
+                <div>
+                  <div className="kicker mb-1">Measured abnormal returns across this pair's episodes</div>
+                  {precedent.markets.length ? (
+                    <div className="space-y-1">
+                      {(() => {
+                        const lo = Math.min(...precedent.markets.map((m) => m.min), 0)
+                        const hi = Math.max(...precedent.markets.map((m) => m.max), 0)
+                        return precedent.markets.map((m) => <BoxRow key={m.market_id} row={m} domain={[lo, hi]} />)
+                      })()}
+                    </div>
+                  ) : (
+                    <p className="text-xs" style={{ color: 'var(--muted)' }}>{precedent.markets_note ?? 'no measured market effects for this pair'}</p>
+                  )}
+                </div>
+              </div>
+            ) : (
+              <Empty>{precedent?.markets_note ?? 'no comparable episodes on record for this pair'}</Empty>
+            )}
+          </Beat>
+
           {/* ── WHERE IT'S BEEN — the event timeline ─────────────────────── */}
           <Beat
-            n={2}
+            n={3}
             title="Where it’s been"
-            aside={timeline && timeline.total ? `${timeline.total} market-moving events` : undefined}
+            aside={timeline && timeline.total ? `${timeline.total} market-moving events · click one for measured vs expected` : undefined}
           >
+            {coverage && (() => {
+              const c = coverage.dyads.find((d) => d.dyad_id === selected)
+              return c ? (
+                <p className="mono text-[11px] mb-3" style={{ color: 'var(--muted)' }}>
+                  market-movement trace: {c.measured.toLocaleString('en-US')} of {c.events.toLocaleString('en-US')} graph events carry a measured effect ({pct(c.share_measured, 0)}) —
+                  {c.status === 'unmeasured' ? ' none measured yet; the transmission engine reaches them on a measuring boot.' : c.status === 'no_events' ? ' no graph events between these two.' : ' the rest await a measuring boot.'}
+                </p>
+              ) : (
+                <p className="mono text-[11px] mb-3" style={{ color: 'var(--muted)' }}>market-movement trace: this pair holds no graph events between roster actors.</p>
+              )
+            })()}
             {timeline === undefined ? (
               <Empty>reading the record…</Empty>
             ) : timeline && timeline.events.length ? (
               <div>
-                {timeline.events.slice(0, 12).map((ev) => (
-                  <div key={ev.event_id} className="event-row">
-                    <div className="flex items-baseline justify-between gap-3">
-                      <span className="mono text-xs" style={{ color: 'var(--muted)' }}>
-                        {ev.date}
-                      </span>
-                    </div>
-                    {ev.markets.length ? (
-                      <div className="mt-1">
-                        {ev.markets.slice(0, 4).map((m) => (
-                          <MoveRow key={m.market_id} name={m.market_name} pct={m.car * 100} />
-                        ))}
-                      </div>
-                    ) : (
-                      <p className="text-xs mt-1" style={{ color: 'var(--muted)' }}>
-                        no measured market move
-                      </p>
-                    )}
-                  </div>
+                {timeline.events.slice(0, 14).map((ev) => (
+                  <TimelineEntry key={ev.event_id} ev={ev} />
                 ))}
               </div>
             ) : (
               <Empty>no market-moving events measured for this relationship yet</Empty>
             )}
+            {selected && (
+              <p className="mt-3">
+                <button className="article-link text-sm" onClick={() => onNavigate(`/case/dynamic?dyad=${encodeURIComponent(selected)}&region=${encodeURIComponent(region)}`)}>
+                  Compose a case study from this record →
+                </button>
+              </p>
+            )}
           </Beat>
 
           {/* ── TRACK RECORD (region-wide) ───────────────────────────────── */}
           {(hasRetro || outlook?.brier_score != null || backtest?.summary) && (
-            <Beat n={3} title="Track record" aside={`${regionLabel} calls`}>
+            <Beat n={4} title="Track record" aside={`${regionLabel} calls`}>
+              {outlook?.scenarios?.some((sc) => sc.scenario_name.endsWith(selected)) && (
+                <div className="mb-3">
+                  <div className="kicker mb-1">The frozen near-term call names this pair</div>
+                  <Bars
+                    rows={outlook.scenarios.filter((sc) => sc.scenario_name.endsWith(selected)).map((sc) => ({
+                      key: sc.scenario_name, label: sc.scenario_name.split(':')[0].replace(/_/g, ' '), value: sc.likelihood ?? 0,
+                    }))}
+                    format={(v) => pct(v, 0)} max={1}
+                  />
+                </div>
+              )}
               {hasRetro && retro && (
                 <p className="text-sm">
                   When the system flagged a period as likely to run hot, it did{' '}
@@ -407,7 +526,8 @@ export default function RelationshipPage({ region }: { region: string; onNavigat
                   />
                   {backtest.computed_at && (
                     <p className="mono text-[10px] mt-1" style={{ color: 'var(--muted)' }}>
-                      walk-forward, computed {backtest.computed_at.slice(0, 10)}
+                      walk-forward, computed {backtest.computed_at.slice(0, 10)} ·{' '}
+                      <button className="article-link" onClick={() => onNavigate('/markets')}>the markets page →</button>
                     </p>
                   )}
                 </div>
@@ -470,6 +590,88 @@ function TrajectoryStrip({
           ))}
         </tbody>
       </table>
+    </div>
+  )
+}
+
+
+/** One event on the timeline: what happened, who did it, how it was coded,
+ *  which market reacted first, and — on click — the impact read: measured
+ *  beside expected (the regime-gated base rate over this pair's other
+ *  events) with the surprise. */
+function TimelineEntry({ ev }: { ev: TimelineEvent }) {
+  const [open, setOpen] = useState(false)
+  const [impact, setImpact] = useState<EventImpact | null | undefined>(undefined)
+  useEffect(() => {
+    if (!open || impact !== undefined) return
+    let live = true
+    getEventImpact(ev.event_id).then((r) => live && setImpact(r))
+    return () => {
+      live = false
+    }
+  }, [open, impact, ev.event_id])
+  const dir = ev.escalation_direction
+  const dirColor = dir === 'escalating' ? 'var(--alert)' : dir === 'deescalating' ? 'var(--accent)' : 'var(--muted)'
+  return (
+    <div className="event-row">
+      <button className="w-full text-left" onClick={() => setOpen((v) => !v)} aria-expanded={open}>
+        <div className="flex items-baseline gap-3 flex-wrap">
+          <span className="mono text-xs" style={{ color: 'var(--muted)' }}>{ev.date}</span>
+          <span className="text-sm" style={{ flex: '1 1 auto', minWidth: 0 }}>{ev.name ?? ev.event_id}</span>
+          {ev.goldstein != null && (
+            <span className="mono text-[11px]" style={{ color: dirColor }}>
+              {dir ?? 'stable'} · goldstein {ev.goldstein.toFixed(1)}
+              {ev.escalation_magnitude != null ? ` · departure ${ev.escalation_magnitude.toFixed(1)}` : ''}
+            </span>
+          )}
+          {ev.first_mover && (
+            <span className="mono text-[11px]" style={{ color: 'var(--muted)' }}>first to react: {ev.first_mover}</span>
+          )}
+        </div>
+      </button>
+      {ev.markets.length ? (
+        <div className="mt-1">
+          {ev.markets.slice(0, open ? ev.markets.length : 4).map((m) => (
+            <MoveRow key={m.market_id + m.window} name={`${m.market_name} · ${m.window}`} pct={m.car * 100}
+                     sub={m.p_value != null && m.p_value < 0.05 ? 'p<0.05' : undefined} />
+          ))}
+        </div>
+      ) : (
+        <p className="text-xs mt-1" style={{ color: 'var(--muted)' }}>no measured market move</p>
+      )}
+      {open && (
+        <div className="mt-2 boxed p-3">
+          {impact === undefined && <Empty>reading measured vs expected…</Empty>}
+          {impact === null && <Empty>the impact read is unavailable</Empty>}
+          {impact && (
+            <div>
+              <div className="kicker mb-1">Measured · expected (base rate over {impact.precedents.n} precedents) · surprise</div>
+              <table className="mono text-[11px] w-full" style={{ borderCollapse: 'collapse' }}>
+                <thead>
+                  <tr style={{ color: 'var(--muted)' }}>
+                    <th className="text-left font-normal">market</th><th className="text-right font-normal">measured</th>
+                    <th className="text-right font-normal">expected</th><th className="text-right font-normal">p10–p90</th>
+                    <th className="text-right font-normal">surprise</th><th className="text-right font-normal">n</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {impact.markets.map((m) => (
+                    <tr key={m.market_id} style={{ borderTop: '1px dotted var(--line)' }}>
+                      <td className="py-0.5">{m.market_name}{m.measured?.first_mover ? ' ★' : ''}</td>
+                      <td className="text-right" style={{ color: m.measured ? (m.measured.car >= 0 ? 'var(--accent)' : 'var(--alert)') : 'var(--muted)' }}>{m.measured ? `${(m.measured.car * 100).toFixed(2)}%` : '—'}</td>
+                      <td className="text-right">{m.expected ? `${(m.expected.mean_car * 100).toFixed(2)}%` : '—'}</td>
+                      <td className="text-right" style={{ color: 'var(--muted)' }}>{m.expected ? `${(m.expected.lo * 100).toFixed(1)}…${(m.expected.hi * 100).toFixed(1)}%` : '—'}</td>
+                      <td className="text-right" style={{ color: m.surprise != null ? (m.surprise >= 0 ? 'var(--accent)' : 'var(--alert)') : 'var(--muted)' }}>{m.surprise != null ? `${(m.surprise * 100).toFixed(2)}%` : '—'}</td>
+                      <td className="text-right" style={{ color: 'var(--muted)' }}>{m.expected?.n_precedents ?? 0}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+              <p className="text-[10px] italic mt-2" style={{ color: 'var(--muted)' }}>{impact.boundary_statement}</p>
+            </div>
+          )}
+        </div>
+      )}
     </div>
   )
 }
