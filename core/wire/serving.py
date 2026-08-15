@@ -67,23 +67,28 @@ def warm() -> dict[str, Any]:
 
         from core.games import transition  # local: the API can serve without games
 
-        pooled_panel: list[dict[str, Any]] = []
         for name in corpus.installed():
             panel_rows, game_rows = corpus.views(name)
-            pooled_panel.extend(panel_rows)
             _TABLES[name] = panel_module.build(panel_rows, region_pack=name)
-            # One pooled map rather than one per region: (dyad, quarter) keys
-            # are globally unique because a dyad belongs to one lens.
+            # One pooled map rather than one per region. Shared-roster dyads
+            # (RUS–TUR, TUR–USA) appear in more than one lens, so a later
+            # lens's update overwrites the earlier one's keys — harmlessly,
+            # because both lenses carry the same underlying events for a
+            # shared dyad and derive the same joint actions.
             _JOINT.update(
                 transition.joint_actions(
                     game_rows, quarter_of=panel_module.quarter_index
                 )
             )
-        # The no-region view the dyad ledger serves. Built from the pooled
-        # rows rather than by concatenating the per-region tables, so its
-        # ordering is what `panel.build` defines and not an accident of pack
-        # iteration order.
-        _TABLES["*"] = panel_module.build(pooled_panel, region_pack=None)
+        # The no-region view the dyad ledger serves — through the DEDUPED
+        # pooled reader, so a shared dyad's events count once, and with
+        # `panel.build` defining the ordering rather than pack iteration
+        # order. load() is cached, so this re-projects without re-parsing.
+        _TABLES["*"] = panel_module.build(corpus.all_panel_rows(), region_pack=None)
+        # The derived tables are all the API ever serves; the parsed raw rows
+        # behind them are ~1.4 GB across three lenses and would otherwise sit
+        # in the row cache for the process lifetime.
+        corpus.evict()
         _WARMED = True
         return {"warmed": True, "regions": sorted(k for k in _TABLES if k != "*")}
 

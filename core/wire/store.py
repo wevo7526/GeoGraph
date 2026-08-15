@@ -147,14 +147,21 @@ def copy_events(conn: Any, rows: Iterable[dict[str, Any]]) -> int:
             for row in rows:
                 copy.write_row([row.get(n) for n in names])
                 written += 1
+        inserted = 0
         if written:
             cur.execute(
                 f"INSERT INTO {pg_schema.WIRE_TABLE} ({', '.join(names)}) "
                 f"SELECT {', '.join(names)} FROM _wire_stage "
                 f"ON CONFLICT (node_id) DO NOTHING"
             )
+            # The INSERT's rowcount, not the staged count: a resumed or
+            # duplicate load stages every row and lands none, and reporting
+            # the staged figure as "written" is exactly the partial-load-
+            # looks-complete shape the boot's GDELT counter was rewritten to
+            # avoid.
+            inserted = max(cur.rowcount, 0)
     conn.commit()
-    return written
+    return inserted
 
 
 # ── the rescore, as one statement ─────────────────────────────────────────
