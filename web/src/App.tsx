@@ -59,12 +59,17 @@ export default function App() {
   // shared URL). The lens follows what you opened: without this, opening a saved
   // China relationship while the lens is on MENA silently shows a MENA pair,
   // because its dyad id is not in the MENA list.
+  //
+  // On ROUTE ONLY — the link's region applies when the hash changes, once.
+  // With `region` in the deps this re-fired on every manual region change and
+  // snapped the lens back to the stale hash's region, making the TopBar
+  // select inert on any page reached through a region-carrying link.
   useEffect(() => {
-    const q = window.location.hash.split('?')[1]
+    const q = route.split('?')[1]
     if (!q) return
     const linkedRegion = new URLSearchParams(q).get('region')
-    if (linkedRegion && linkedRegion !== region) chooseRegion(linkedRegion)
-  }, [route, region])
+    if (linkedRegion) chooseRegion(linkedRegion)
+  }, [route])
 
   if (route === '/' || route === '') {
     return <Landing onEnter={navigate} />

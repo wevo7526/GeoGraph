@@ -17,7 +17,13 @@ let pending: Promise<Record<string, string>> | null = null
 
 function labelMap(): Promise<Record<string, string>> {
   if (!pending) {
-    pending = getPacks().then((r) => r?.labels ?? {})
+    pending = getPacks().then((r) => {
+      // A failed fetch resolves null — do NOT cache it, or every header shows
+      // raw pack keys for the rest of the session while the underlying packs
+      // memo (which does retry) recovers without us.
+      if (r === null) pending = null
+      return r?.labels ?? {}
+    })
   }
   return pending
 }

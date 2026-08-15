@@ -7,7 +7,6 @@
  *  sequential case — one hue (`--alert`), light→dark by share. Nothing here
  *  invents a color. */
 
-import type React from 'react'
 import { bandLabel, evidenceNote, expectedTension, jointAction, marketMove } from '../lib/language'
 import type { SequenceDyad, SequenceStep } from '../types'
 
@@ -57,92 +56,6 @@ export function BandFan({
   )
 }
 
-/** The counterfactual controls — the one thing a fitted policy buys that a
- *  black box cannot.
- *
- *  Each slider is a PARAMETER WITH A MEANING, not a weight with a position,
- *  which is why "what if war were costly for the resolute side" is a question
- *  this can answer at all. Bounds match the estimator's own clips, so a reader
- *  cannot explore a region of the space the fit was never allowed to reach.
- *
- *  What is NOT adjustable is the transition kernel: what escalation has
- *  historically led to is counted from the archive and is evidence, not a
- *  setting. */
-export const CONTROLS: Array<{
-  key: string; label: string; min: number; max: number; step: number
-}> = [
-  { key: 'discount', label: 'patience (δ)', min: 0.5, max: 0.99, step: 0.01 },
-  { key: 'cost_resolute', label: 'cost of war · resolute', min: 0.05, max: 3.0, step: 0.05 },
-  { key: 'cost_irresolute', label: 'cost of war · irresolute', min: 0.05, max: 6.0, step: 0.05 },
-  { key: 'stake', label: 'stake', min: 0.1, max: 3.0, step: 0.05 },
-  { key: 'audience', label: 'audience cost', min: 0.0, max: 2.0, step: 0.05 },
-]
-
-export function Controls({
-  values, fitted, onChange, onReset, busy, dirty: dirtyOverride,
-}: {
-  values: Record<string, number>
-  fitted: Record<string, number>
-  onChange: (key: string, value: number) => void
-  onReset: () => void
-  busy: boolean
-  /** Page-level dirtiness (payoffs AND belief/capability levers). Without it
-   *  the reset button hid whenever only a belief or capability lever moved —
-   *  a counterfactual with no visible way home. */
-  dirty?: boolean
-}) {
-  const dirty =
-    dirtyOverride ??
-    CONTROLS.some((c) => Math.abs((values[c.key] ?? 0) - (fitted[c.key] ?? 0)) > 1e-9)
-  return (
-    <div className="mt-3 pt-3 border-t" style={{ borderColor: 'var(--line)' }}>
-      <div className="flex items-baseline justify-between gap-3">
-        <span className="kicker">counterfactual</span>
-        {dirty && (
-          <button
-            type="button"
-            onClick={onReset}
-            className="mono text-[10px]"
-            style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--accent)' }}
-          >
-            reset to fitted
-          </button>
-        )}
-      </div>
-      <div className="mt-2 space-y-1.5">
-        {CONTROLS.map((c) => {
-          const value = values[c.key] ?? fitted[c.key] ?? c.min
-          const moved = Math.abs(value - (fitted[c.key] ?? 0)) > 1e-9
-          return (
-            <label key={c.key} className="flex items-center gap-2 text-[11px]">
-              <span className="w-40 shrink-0" style={{ color: 'var(--muted)' }}>{c.label}</span>
-              {/* NEVER disabled while solving — the debounced latest-wins
-                  effect makes an in-flight solve safe to supersede, and a
-                  slider that locks for the round-trip on every pixel reads
-                  as broken. `busy` only dims the readout. */}
-              <input
-                type="range"
-                min={c.min} max={c.max} step={c.step} value={value}
-                onChange={(e) => onChange(c.key, Number(e.target.value))}
-                className="flex-1 lever"
-              />
-              <span
-                className="mono w-12 text-right"
-                style={{
-                  color: moved ? 'var(--alert)' : 'var(--muted)',
-                  opacity: busy ? 0.5 : 1,
-                }}
-              >
-                {value.toFixed(2)}
-              </span>
-            </label>
-          )
-        })}
-      </div>
-    </div>
-  )
-}
-
 /** One predicted step, with whatever the archive measured after events like
  *  it. A step with no measured market says so rather than showing nothing. */
 export function Step({ step, bands = 5 }: { step: SequenceStep; bands?: number }) {
@@ -177,28 +90,5 @@ export function Step({ step, bands = 5 }: { step: SequenceStep; bands?: number }
         </div>
       )}
     </li>
-  )
-}
-
-/** A numbered working-paper section — same skeleton the Reasoning page set. */
-export function Panel({
-  n, title, method, children,
-}: {
-  n: number
-  title: string
-  method: string
-  children: React.ReactNode
-}) {
-  return (
-    <section className="mt-8 pt-6 border-t" style={{ borderColor: 'var(--rule-strong)' }}>
-      <div className="flex items-baseline gap-3">
-        <span className="kicker" style={{ color: 'var(--accent)' }}>{n}</span>
-        <h2 className="text-lg">{title}</h2>
-      </div>
-      <div className="mt-3">{children}</div>
-      <p className="mono text-[10px] mt-2 leading-relaxed" style={{ color: 'var(--muted)' }}>
-        {method}
-      </p>
-    </section>
   )
 }

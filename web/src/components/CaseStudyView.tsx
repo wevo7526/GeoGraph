@@ -1,6 +1,14 @@
 import { useEffect, useState } from 'react'
 import { getCaseStudy } from '../api'
+import { useRegionLabel } from '../regions'
 import type { CaseStudy, CaseStudyEpisode, Effect } from '../types'
+
+/** The pack KEY is not its caption (packs/china is captioned Asia) — every
+ *  reader surface routes through the label layer. */
+function PackLabel({ pack }: { pack: string }) {
+  const label = useRegionLabel(pack)
+  return <>{label}</>
+}
 
 const pct = (value: number | null | undefined) =>
   value == null ? '—' : `${value >= 0 ? '+' : ''}${(value * 100).toFixed(2)}%`
@@ -246,7 +254,7 @@ export default function CaseStudyView({
       </nav>
 
       <p className="mono text-xs uppercase tracking-[0.3em]" style={{ color: 'var(--muted)' }}>
-        Case study · {study.pack}
+        Case study · <PackLabel pack={study.pack} />
       </p>
       <h1 className="text-5xl mt-4 leading-tight">{study.title}</h1>
       <p className="mt-5 text-xl leading-snug" style={{ color: 'var(--text)', maxWidth: '54ch' }}>

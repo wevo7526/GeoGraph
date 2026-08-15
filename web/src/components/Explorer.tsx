@@ -671,7 +671,7 @@ function ForecastPanel({ region }: { region: string }) {
     <div>
       <Microcaps>The forecast</Microcaps>
 
-      {model?.frozen_inputs?.trajectories?.length && (
+      {model?.frozen_inputs?.trajectories && model.frozen_inputs.trajectories.length > 0 && (
         <div className="mt-3">
           <div className="flex items-baseline justify-between gap-2">
             <h3 className="text-sm">Predicted intensity, next four quarters</h3>
@@ -858,17 +858,25 @@ export default function Explorer({
   >(new Map())
 
   useEffect(() => {
+    // Guarded like the window fetch below: switch regions while the old
+    // region's pack/coverage requests are in flight and the stale responses
+    // would land last, leaving the previous region's roster driving the cast.
+    let active = true
     windowCache.current.clear()
     setSelection(null)
     setFocusActor(null)
-    getRegimes().then(setRegimes)
-    getPack(region).then(setPack)
-    getDyads().then((r) => setDyads(r?.rows ?? []))
-    getFlows().then((r) => setFlows(r?.rows ?? []))
+    getRegimes().then((r) => active && setRegimes(r))
+    getPack(region).then((r) => active && setPack(r))
+    getDyads().then((r) => active && setDyads(r?.rows ?? []))
+    getFlows().then((r) => active && setFlows(r?.rows ?? []))
     getCoverage(region).then((r) => {
+      if (!active) return
       setCoverage(r?.years ?? {})
       setTotal(r?.total ?? 0)
     })
+    return () => {
+      active = false
+    }
   }, [region])
 
   // A five-year trailing window: long enough that the network shows structure,

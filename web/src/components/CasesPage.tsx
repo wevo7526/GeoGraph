@@ -1,6 +1,12 @@
 import { useEffect, useState } from 'react'
 import { getCaseStudies } from '../api'
 import { useRegionLabel } from '../regions'
+
+/** Card footers show the pack's CAPTION, not its key — 'china' reads ASIA. */
+function PackTag({ pack }: { pack: string }) {
+  const label = useRegionLabel(pack)
+  return <>{label.toUpperCase()}</>
+}
 import type { CaseStudyIndexEntry } from '../types'
 
 /** Every narrated episode the archive carries, one card each — the pack's
@@ -60,7 +66,7 @@ export default function CasesPage({
                 </p>
                 <p className="mono text-xs mt-3" style={{ color: 'var(--muted)' }}>
                   {study.events.length} episode event{study.events.length === 1 ? '' : 's'} ·{' '}
-                  {study.pack.toUpperCase()}
+                  <PackTag pack={study.pack} />
                 </p>
               </button>
             </li>
