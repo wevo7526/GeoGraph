@@ -191,11 +191,17 @@ def _window_of(pack: str, start: str | None, end: str | None) -> list[str]:
 
 
 def events_window(
-    pack: str | None, start: str | None, end: str | None, limit: int
+    pack: str | None,
+    start: str | None,
+    end: str | None,
+    limit: int,
+    *,
+    newest_first: bool = False,
 ) -> tuple[list[dict[str, Any]], bool]:
-    """Wire events inside [start, end], in (event_time, node_id) order —
-    `(rows, truncated)`. No pack = every lens, deduped by event id (shared-
-    roster events ship in more than one lens's artifacts)."""
+    """Wire events inside [start, end] — `(rows, truncated)`. No pack = every
+    lens, deduped by event id (shared-roster events ship in more than one
+    lens's artifacts). `newest_first` takes the most RECENT `limit` events,
+    which is what a dense window wants; otherwise the oldest."""
     if not available():
         return [], False
     if not _WARMED:
@@ -204,7 +210,7 @@ def events_window(
     joined: list[str] = []
     for name in packs_to_read:
         joined.extend(_window_of(name, start, end))
-    joined.sort()
+    joined.sort(reverse=newest_first)
     rows: list[dict[str, Any]] = []
     seen: set[str] = set()
     truncated = False
