@@ -408,12 +408,17 @@ def _image_fingerprint() -> str:
     full on every routine deploy. A content digest is process-stable, so the
     guards skip when the shipped inputs are byte-identical, as designed.
     """
-    parts = []
+    digest = hashlib.sha256()
     for directory in (_DERIVED_DIR, _ROOT / "models", _ROOT / "packs"):
         for path in sorted(directory.rglob("*")):
             if path.is_file():
-                parts.append(f"{path.relative_to(_ROOT)}:{path.stat().st_size}")
-    return hashlib.sha256("\n".join(parts).encode("utf-8")).hexdigest()
+                # CONTENT, not name:size — a same-length edit to a pack YAML
+                # or a re-fit model artifact of identical byte count must
+                # invalidate the guards. ~70MB once per boot, well under a
+                # second.
+                digest.update(str(path.relative_to(_ROOT)).encode("utf-8"))
+                digest.update(path.read_bytes())
+    return digest.hexdigest()
 
 
 #: The graph facets a step can declare as INPUTS. A step's fingerprint must
@@ -424,6 +429,7 @@ _GRAPH_FACETS = {
     "events": "MATCH (e:Event) RETURN count(e) AS n",
     "latest": "MATCH (e:Event) RETURN max(e.event_time) AS n",
     "affected": "MATCH ()-[a:AFFECTED]->() RETURN count(a) AS n",
+    "relates": "MATCH ()-[r:RELATES_TO]->() RETURN count(r) AS n",
     "estimates": "MATCH (s:AttributeEstimate) RETURN count(s) AS n",
     "forecasts": "MATCH (f:Forecast) RETURN count(f) AS n",
     "frozen": "MATCH (f:Forecast) RETURN max(f.generated_at) AS n",
@@ -488,10 +494,16 @@ def _guarded(
         _log(f"{step}: inputs unchanged — skipped (fingerprint match)")
         return {"ok": True, "skipped": "inputs unchanged (fingerprint match)"}
     result = runner()
+    # A SKIPPED run is not a complete run: opt-in runners return
+    # {"ok": True, "skipped": ...} when their variable is off, and recording a
+    # fingerprint for that would make a later explicit opt-in silently no-op
+    # (fingerprint matches, step never actually ran). The study's callback and
+    # _load_13f_weekly already refused skips; the default must too.
     is_complete = (
         complete(result)
         if complete is not None
-        else result is None or (bool(result.get("ok")) and "error" not in result)
+        else result is None
+        or (bool(result.get("ok")) and "error" not in result and "skipped" not in result)
     )
     if is_complete:
         _save_fingerprint(step, fingerprint_of())
@@ -1344,6 +1356,14 @@ def _reset_graph_if_asked() -> dict[str, Any] | None:
         _clear_markers(name)
     _log("markers cleared — every artifact will reload")
 
+    # So do the step fingerprints. The `deep` fingerprint in particular reads
+    # only the raw cache and the image — neither changes on a reset — so a
+    # surviving ledger would skip the deep tier forever and the rebuilt graph
+    # would silently lack COW windows, CINC estimates and alliance edges.
+    with contextlib.suppress(OSError):
+        _fingerprints_path().unlink()
+    _log("fingerprints cleared — every guarded step will re-run")
+
     # Record it BEFORE returning, and unconditionally — including when there
     # was nothing to delete. The ledger's claim is "this value has been acted
     # on", not "this value freed bytes"; a reset that found an empty volume has
@@ -1426,8 +1446,12 @@ def _boot_status() -> dict[str, Any]:
         )),
         ("metrics", lambda: _guarded(
             "metrics",
+            # `relates` is in the fingerprint because analytics computes over
+            # the RELATES_TO web — an alliances-only deep refresh changes no
+            # event or estimate count, and without this facet it left
+            # NetworkMetric stale until the year rolled over.
             lambda: (
-                f"{_graph_fingerprint('events', 'latest', 'estimates')}"
+                f"{_graph_fingerprint('events', 'latest', 'estimates', 'relates')}"
                 f"|year={_dt.date.today().year}|{image}"
             ),
             _run_network_metrics,

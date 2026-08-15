@@ -13,14 +13,23 @@ def main() -> None:
     settings = settings_module.load()
 
     settings.kuzu_db_path.parent.mkdir(parents=True, exist_ok=True)
+    # Closed in a finally like every sibling script: this is the documented
+    # first command in the seed sequence, and it must not hold the write lock
+    # (or Kuzu's 8 TiB address-space reservation) a moment longer than the DDL.
     conn = kuzu_store.connect(settings.kuzu_db_path)
-    kuzu_store.apply_schema(conn)
-    print(f"kuzu schema applied at {settings.kuzu_db_path}")
+    try:
+        kuzu_store.apply_schema(conn)
+        print(f"kuzu schema applied at {settings.kuzu_db_path}")
+    finally:
+        kuzu_store.close(conn)
 
     if settings.database_url:
         pg = pg_store.connect(settings)
-        pg_store.apply_schema(pg)
-        print("panel schema applied")
+        try:
+            pg_store.apply_schema(pg)
+            print("panel schema applied")
+        finally:
+            pg.close()
     else:
         print("DATABASE_URL unset — panel schema skipped (that is fine for graph-only work)")
 
