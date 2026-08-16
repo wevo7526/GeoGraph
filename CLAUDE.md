@@ -587,6 +587,16 @@ without its deep-tier past), which is why `rescore_dyad` always loads the whole
 record. That equivalence is what turns an hours-long, un-resumable,
 API-stopping batch into a background job.
 
+**UNDER A WRITING LOOP, A REQUEST'S LATENCY IS ITS QUERY COUNT** — not its
+query cost. Measured 2026-08-16: Kuzu's `count(*)` is 11ms for a node table
+and 108ms for a rel table, and twenty of them together cost 0.016s idle — yet
+`/api/stats` (twenty counts) took 19.7s while jobs were writing, because each
+query waits its turn behind a write statement in the FIFO lock. Same shape
+made a dynamic case study 20-36s: sixteen round trips, not sixteen expensive
+ones. So the fix for a slow page is almost never a faster query; it is FEWER
+queries — cache the aggregate, read the dyad's effects once and filter, hand
+the whole result set down instead of re-asking per item.
+
 **Anything that costs minutes must never run on a request thread.** Learned
 twice in one hour: a `PAYLOAD_VERSION` bump made every stale region solve LIVE
 (~130s) on request and the game-theory page simply hung; the calibration walk
