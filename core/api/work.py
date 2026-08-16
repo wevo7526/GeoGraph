@@ -99,6 +99,13 @@ def _archive(conn: Any) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     return _archive_cache["events"], _archive_cache["dates"]
 
 
+def forget_wire_ids() -> None:
+    """Drop the wire's per-pack "already in the graph" sets — a few hundred
+    thousand strings each, rebuilt by one query. Called under memory
+    pressure."""
+    _wire_seen.clear()
+
+
 def forget_archive() -> None:
     """Drop the cached archive. The scheduler calls this under memory
     pressure: it is ~1.07M lean rows plus their parsed dates, the largest
@@ -444,6 +451,7 @@ def wire(conn: Any, deadline: float) -> dict[str, Any]:
     """
     import gzip
 
+    from core.api.jobs import memory_is_tight as jobs_tight
     from core.graph import kuzu_store
     from core.ingestion import gdelt
 
@@ -490,10 +498,16 @@ def wire(conn: Any, deadline: float) -> dict[str, Any]:
             with gzip.open(artifact, "rt", encoding="latin-1") as fh:
                 for line in fh:
                     scanned += 1
-                    if scanned % _WIRE_SCAN_CHECK == 0 and time.monotonic() >= deadline:
+                    if scanned % _WIRE_SCAN_CHECK == 0 and (
+                        time.monotonic() >= deadline or jobs_tight()
+                    ):
                         # Stop mid-artifact WITHOUT a marker: the ids already
                         # written are skipped next tick, so resuming costs a
-                        # scan and never a re-merge.
+                        # scan and never a re-merge. The same boundary serves
+                        # the memory check — the scheduler's before-each-job
+                        # look cannot help a job already inside its run, and
+                        # this one holds a few hundred thousand strings plus
+                        # its merge batches.
                         if batch:
                             written += _merge_wire_batch(
                                 conn, gdelt, batch, pack, actors_by_iso3, seen

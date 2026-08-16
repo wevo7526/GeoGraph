@@ -647,3 +647,41 @@ def test_a_child_killed_by_a_signal_gives_up_after_a_few_tries(monkeypatch):
     job.enabled = True
     out = scheduler._run_child(job, plan)
     assert out["ok"] and job.state.signal_deaths == 0
+
+
+def test_a_long_job_can_stop_itself_when_memory_tightens(monkeypatch):
+    """The before-each-job check cannot help a job already inside its run.
+
+    Measured 2026-08-16: the container reached 7.67 GB of a 7.45 GiB limit and
+    the kernel killed it mid-job — twice, once in `wire` and once in `study`.
+    The scheduler had checked headroom and been satisfied before the job
+    started, which is exactly as much use as it sounds.
+
+    So a job with a natural stopping point calls `memory_is_tight()` there and
+    gives up its slice instead of the process. The wire uses the same line
+    boundary it already checks its deadline at.
+    """
+    from pathlib import Path
+
+    from core.api import work
+    from core.graph import kuzu_store
+
+    monkeypatch.setattr(kuzu_store, "container_memory_bytes", lambda: 8 << 30)
+
+    monkeypatch.setattr(kuzu_store, "memory_in_use_bytes", lambda: 2 << 30)
+    assert not jobs_module.memory_is_tight()
+
+    monkeypatch.setattr(kuzu_store, "memory_in_use_bytes", lambda: int(7.7 * 2**30))
+    assert jobs_module.memory_is_tight()
+
+    # Not containerised is never tight — a dev machine has no cgroup file.
+    monkeypatch.setattr(kuzu_store, "container_memory_bytes", lambda: None)
+    assert not jobs_module.memory_is_tight()
+
+    # And the wire actually consults it, at the boundary where it already
+    # stops for the deadline.
+    source = Path(work.__file__).read_text(encoding="utf-8")
+    scan = source[source.index("_WIRE_SCAN_CHECK == 0"):]
+    assert "jobs_tight()" in scan[:200], (
+        "the wire's periodic check must cover memory as well as the deadline"
+    )

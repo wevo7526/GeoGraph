@@ -10,6 +10,7 @@ tilt. Two builders would drift; this is the one.
 from __future__ import annotations
 
 import json
+import os
 from typing import Any
 
 from core.games import pricing as pricing_module
@@ -24,7 +25,19 @@ from core.wire import serving
 #: Per-region context cache. Counting the kernel walks every dyad-quarter in
 #: the archive (seconds); it cannot change under a single process anyway (the
 #: corpus is immutable for the process's life, Kuzu is single-writer).
+#:
+#: ONE REGION AT A TIME. A context carries `pricing.measured_effects` — every
+#: measured event-market effect for its region — and AFFECTED passed a million
+#: edges on 2026-08-16, so three cached regions is ~0.9 GB that GROWS every
+#: time the study succeeds. The container reached 7.67 GB of a 7.45 GiB limit
+#: and was OOM-killed inside the heavy jobs. Holding one region costs a
+#: re-read when the games job moves to the next (it iterates serially, so that
+#: is once per region per pass) and takes the same cache to ~0.3 GB.
 CACHE: dict[str, dict[str, Any]] = {}
+
+#: How many regions `CACHE` may hold. See above; 1 unless a reader is measured
+#: to need more.
+CACHE_REGIONS = int(os.getenv("GEOGRAPH_CONTEXT_CACHE_REGIONS", "1"))
 
 
 class GraphNeeded(RuntimeError):
@@ -96,6 +109,10 @@ def build(conn: Any, region: str) -> dict[str, Any]:
         "graph_was_open": conn is not None,
         "as_of": max(row["date"] for row in table),
     }
+    # Evict in insertion order — the games job walks regions serially, so the
+    # oldest is the one furthest from being asked for again.
+    while len(CACHE) >= CACHE_REGIONS:
+        CACHE.pop(next(iter(CACHE)))
     CACHE[region] = context
     return context
 

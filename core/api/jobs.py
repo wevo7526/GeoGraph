@@ -178,6 +178,27 @@ def _forget_region_contexts() -> None:
     calibration.CACHE.clear()
 
 
+def memory_is_tight(floor: float = MEMORY_PAUSE_BELOW) -> bool:
+    """Is the container close enough to its limit that a long job should stop?
+
+    The scheduler checks headroom BEFORE each job, which cannot help a job
+    that allocates gigabytes inside a single run — and on 2026-08-16 that is
+    what happened: memory reached 7.67 GB of a 7.45 GiB limit and the kernel
+    killed the container mid-job, twice. A job with a natural stopping point
+    (the wire's line boundary, the study's event boundary) calls this there
+    and gives up its slice instead of the process.
+
+    Unknown limits mean "not containerised", which is never tight.
+    """
+    from core.graph import kuzu_store
+
+    limit = kuzu_store.container_memory_bytes()
+    used = kuzu_store.memory_in_use_bytes()
+    if not limit or used is None:
+        return False
+    return (1.0 - used / limit) < floor
+
+
 def _return_free_arenas() -> None:
     """Hand glibc's freed arenas back to the kernel.
 
@@ -474,6 +495,14 @@ class Scheduler:
         finally:
             state.last_finished = time.monotonic()
             state.last_seconds = round(state.last_finished - state.last_started, 2)
+            # THE OTHER HALF OF THE BREADCRUMB, and it was missing when it was
+            # needed: only "starting" ever printed, so a crash could be blamed
+            # on the last job to START when it had in fact finished and the
+            # process died somewhere after. Both lines, or the trail lies.
+            print(
+                f"job: {job.name} finished in {state.last_seconds}s",
+                flush=True,
+            )
             self.current = None
 
     # ── what a reader sees ─────────────────────────────────────────────────
