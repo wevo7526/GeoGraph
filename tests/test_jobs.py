@@ -386,6 +386,53 @@ def test_the_loop_pauses_rather_than_letting_the_container_be_killed(monkeypatch
                             "buffer_pool_gb", "paused_for_memory"}
 
 
+def test_the_memory_check_runs_before_each_job_not_once_a_pass(monkeypatch):
+    """MEASURED IN PRODUCTION, 2026-08-16. Headroom fell to 0.05 while a
+    single job ran and the loop recorded no reclaim at all — because a
+    once-a-pass check cannot fire while the pass is blocked inside a job, and
+    one job's working set is what actually reaches the ceiling.
+
+    So the check is per job. A job it refuses says so in its own last_result
+    rather than looking like it simply had nothing to do.
+    """
+    from core.graph import kuzu_store
+    from core.wire import corpus
+
+    monkeypatch.setattr(kuzu_store, "container_memory_bytes", lambda: 8 << 30)
+    monkeypatch.setattr(kuzu_store, "memory_in_use_bytes", lambda: int(7.7 * 2**30))
+    monkeypatch.setattr(corpus, "evict", lambda: None)
+
+    ran: list[str] = []
+
+    def _heavy(conn: Any, deadline: float) -> dict[str, Any]:
+        ran.append("ran")
+        return {}
+
+    job = _job("heavy", _heavy)
+    scheduler = jobs_module.Scheduler(_App(), None, [job])
+
+    assert not scheduler._memory_allows(job)
+    assert scheduler.paused_for_memory
+    assert not ran, "a job must not start with the container nearly full"
+    assert (job.state.last_result or {})["skipped"] == "paused for memory"
+    assert scheduler.memory_reclaims == 1, "it should try reclaiming first"
+
+    monkeypatch.setattr(kuzu_store, "memory_in_use_bytes", lambda: 2 << 30)
+    assert scheduler._memory_allows(job)
+    assert not scheduler.paused_for_memory
+
+
+def test_reclaim_drops_the_archive_cache_too():
+    """The corpus is not the only rebuildable thing this process holds: the
+    study caches ~1.07M lean event rows plus their parsed dates between ticks,
+    and rebuilding that is one graph scan."""
+    from core.api import work
+
+    work._archive_cache.update({"count": 5, "events": [1, 2], "dates": {"a": 1}})
+    work.forget_archive()
+    assert work._archive_cache == {"count": None, "events": None, "dates": None}
+
+
 def test_the_study_falls_back_to_a_child_only_on_the_storage_assertion(monkeypatch):
     """Four write topologies died in `csr_node_group.cpp KU_UNREACHABLE`, and
     the fourth — a child process — is what showed the topology was never the

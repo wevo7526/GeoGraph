@@ -58,7 +58,7 @@ DEFAULT_SLICE_SECONDS = float(os.getenv("GEOGRAPH_JOB_SLICE", "45"))
 #: container is 8 GB, the corpus is ~1.3 GB in two representations, Kuzu's
 #: page cache is another 1.6 GB, and a job's working set on top of that is
 #: what reached the ceiling on 2026-08-16.
-MEMORY_RECLAIM_BELOW = float(os.getenv("GEOGRAPH_MEMORY_RECLAIM_BELOW", "0.25"))
+MEMORY_RECLAIM_BELOW = float(os.getenv("GEOGRAPH_MEMORY_RECLAIM_BELOW", "0.30"))
 MEMORY_PAUSE_BELOW = float(os.getenv("GEOGRAPH_MEMORY_PAUSE_BELOW", "0.12"))
 
 FAILURE_BACKOFF_SECONDS = 600.0
@@ -227,6 +227,29 @@ class Scheduler:
             return None
         return max(0.0, 1.0 - used / limit)
 
+    def _memory_allows(self, job: Job) -> bool:
+        """Reclaim, then decide whether to start this job at all."""
+        headroom = self._headroom()
+        if headroom is None:
+            return True
+        if headroom < MEMORY_RECLAIM_BELOW:
+            self._reclaim()
+            self.memory_reclaims += 1
+            headroom = self._headroom() or 1.0
+        # PAUSE RATHER THAN BE KILLED. Every job here re-derives something
+        # already persisted; none is worth the container. A tick skipped under
+        # pressure costs minutes of freshness, and the alternative cost a
+        # database.
+        if headroom < MEMORY_PAUSE_BELOW:
+            self.paused_for_memory = True
+            job.state.last_result = {
+                "skipped": "paused for memory",
+                "headroom": round(headroom, 3),
+            }
+            return False
+        self.paused_for_memory = False
+        return True
+
     def _reclaim(self) -> None:
         """Give memory back before it becomes a kill.
 
@@ -239,28 +262,21 @@ class Scheduler:
         """
         import gc
 
+        from core.api import work
         from core.wire import corpus
 
         corpus.evict()
+        # The study's archive cache: ~1.07M lean event rows plus their parsed
+        # dates, held between ticks so a tick does not re-scan the graph. It is
+        # the largest rebuildable thing this process owns after the corpus, and
+        # a tick that has to rebuild it costs seconds, not correctness.
+        work.forget_archive()
         gc.collect()
 
     def _loop(self) -> None:
         while not self._stop.wait(TICK_SECONDS):
             if not self._open():
                 continue
-            headroom = self._headroom()
-            if headroom is not None and headroom < MEMORY_RECLAIM_BELOW:
-                self._reclaim()
-                self.memory_reclaims += 1
-                headroom = self._headroom()
-            # PAUSE RATHER THAN BE KILLED. Every job here re-derives something
-            # already persisted; none is worth the container. A tick skipped
-            # under pressure costs minutes of freshness, and the alternative
-            # cost a database.
-            if headroom is not None and headroom < MEMORY_PAUSE_BELOW:
-                self.paused_for_memory = True
-                continue
-            self.paused_for_memory = False
             # The API's graph can be replaced (a reopen after a failure), so
             # the connection is re-read every pass rather than cached.
             now = time.monotonic()
@@ -268,6 +284,13 @@ class Scheduler:
                 if self._stop.is_set():
                     return
                 if not job.enabled or now < job.state.next_due:
+                    continue
+                # CHECKED BEFORE EACH JOB, not once per pass. Measured in
+                # production on 2026-08-16: headroom fell to 0.05 while a
+                # single job ran, and the loop — blocked inside that job —
+                # recorded no reclaim at all, because the once-a-pass check
+                # cannot fire while the pass is inside a job.
+                if not self._memory_allows(job):
                     continue
                 self._run(job)
                 now = time.monotonic()

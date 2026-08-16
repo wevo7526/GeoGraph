@@ -201,12 +201,12 @@ def container_memory_bytes() -> int | None:
 #: WAL replay on the next open hit a duplicated primary key and every graph
 #: endpoint served 503 until the recovery below ran.
 #:
-#: 0.20, not the 0.35 first tried — measured, not guessed. The wire corpus is
+#: 0.16, cut from 0.35 then 0.20 — measured each time, never guessed. The wire corpus is
 #: 1.3 GB resident in two representations, the jobs' working sets are another
 #: 1-2 GB while one runs, and 0.35 still touched the 8 GB ceiling. The pool is
 #: a CACHE: cutting it costs page faults against a memory-mapped file, and
 #: that is the cheapest thing in this budget to give up.
-BUFFER_POOL_SHARE = float(os.getenv("GEOGRAPH_BUFFER_POOL_SHARE", "0.20"))
+BUFFER_POOL_SHARE = float(os.getenv("GEOGRAPH_BUFFER_POOL_SHARE", "0.16"))
 
 
 def memory_in_use_bytes() -> int | None:

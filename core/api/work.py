@@ -85,6 +85,14 @@ def _archive(conn: Any) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     return _archive_cache["events"], _archive_cache["dates"]
 
 
+def forget_archive() -> None:
+    """Drop the cached archive. The scheduler calls this under memory
+    pressure: it is ~1.07M lean rows plus their parsed dates, the largest
+    rebuildable thing this process owns after the corpus, and rebuilding it
+    is one graph scan."""
+    _archive_cache.update({"count": None, "events": None, "dates": None})
+
+
 #: How long a study CHILD may run when one is needed, and how much graph-dark
 #: time that costs. See `study` for when a child is needed at all.
 STUDY_CHILD_SECONDS = float(os.getenv("GEOGRAPH_STUDY_CHILD_SECONDS", "90"))
