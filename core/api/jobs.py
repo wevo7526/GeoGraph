@@ -179,13 +179,23 @@ def _return_free_arenas() -> None:
 
     `malloc_trim(0)` is the glibc call for exactly this. Absent on musl and on
     Windows, so it is best-effort and never fatal.
+
+    DISABLE WITH `GEOGRAPH_MALLOC_TRIM=0`. It is the only thing in this loop
+    that reaches into the C allocator of a process holding a large C++
+    extension's buffers, which makes it the first thing to rule out if the
+    container starts dying without a traceback. argtypes are declared because
+    ctypes otherwise passes the argument as a C int, and this takes a size_t.
     """
+    if os.getenv("GEOGRAPH_MALLOC_TRIM", "1") != "1":
+        return
     import ctypes
     import ctypes.util
 
     try:
         name = ctypes.util.find_library("c") or "libc.so.6"
         libc = ctypes.CDLL(name)
+        libc.malloc_trim.argtypes = [ctypes.c_size_t]
+        libc.malloc_trim.restype = ctypes.c_int
         libc.malloc_trim(0)
     except (OSError, AttributeError):
         pass
@@ -410,6 +420,12 @@ class Scheduler:
         state = job.state
         state.last_started = time.monotonic()
         self.current = job.name
+        # A BREADCRUMB THAT SURVIVES THE PROCESS, because on 2026-08-16 the
+        # container died silently inside the first job pass — no traceback, no
+        # memory pressure, nothing in `/api/jobs` (the endpoint went with it).
+        # A segfault in the C++ layer leaves no Python evidence at all, so the
+        # only way to name the job is to have said its name before it ran.
+        print(f"job: {job.name} starting", flush=True)
         try:
             result = job.run(self.conn, state.last_started + job.slice_seconds)
             if job.child and isinstance(result, dict) and result.get("argv"):
