@@ -163,10 +163,15 @@ export function standingLabel(
     membership: 'shared bloc',
     trade: 'trade dependence',
   }
+  // The backend orders these so the standing that CHARACTERISES the pair
+  // leads (a non-aggression pact between rivals does not make them allies —
+  // North and South Korea hold both). A second live relation is noted rather
+  // than dropped.
   const first = rows[0]
   const word = words[first.relation_type] ?? first.relation_type.replace(/_/g, ' ')
   const since = (first.since ?? '').slice(0, 4)
-  return since ? `${word} since ${since}` : word
+  const also = rows.length > 1 ? ` +${rows.length - 1}` : ''
+  return (since ? `${word} since ${since}` : word) + also
 }
 
 /** HOW THE RECORD READS LATELY — the coercive share of the pair's coded

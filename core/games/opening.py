@@ -78,6 +78,14 @@ def capability_state(conn: Any | None, dyad_id: str) -> dict[str, Any]:
     return {"band": 1, "ratio": None, "source": "default"}
 
 
+#: Which standing characterises a pair when several are in force. Not a
+#: judgement about importance in general — a claim about what a reader needs
+#: first when the same two states are simultaneously bound and opposed.
+_STANDING_PRIORITY = {
+    "rivalry": 0, "proxy": 1, "alliance": 2, "membership": 3, "trade": 4,
+}
+
+
 def standing(conn: Any | None, dyad_id: str, *, as_of: str) -> dict[str, Any]:
     """WHAT THE PAIR IS, from the curated RELATES_TO web — not from wire mood.
 
@@ -117,6 +125,16 @@ def standing(conn: Any | None, dyad_id: str, *, as_of: str) -> dict[str, Any]:
         if str(row["valid_from"] or "") <= as_of
         and (not row["valid_to"] or str(row["valid_to"]) >= as_of)
     ]
+    # ANTAGONISM OUTRANKS AGREEMENT WHEN BOTH ARE IN FORCE, and the Korean
+    # peninsula is why. COW codes the 1991 Basic Agreement between North and
+    # South Korea as an alliance (its dataset folds non-aggression pacts in),
+    # and packs/china declares the same pair a rivalry from 1948 — both true,
+    # both live. Ordered by recency the chip read "alliance" over the most
+    # militarised border in the archive. A pact between rivals is evidence of
+    # the rivalry, not a replacement for it, so the standing that
+    # CHARACTERISES the pair leads and the rest follow (the sentence names
+    # both). Python's sort is stable, so recency still orders within a type.
+    live.sort(key=lambda row: _STANDING_PRIORITY.get(str(row["relation_type"]), 9))
     return {
         "relations": [
             {

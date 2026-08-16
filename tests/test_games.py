@@ -1092,3 +1092,30 @@ def test_a_declared_rivalry_is_never_described_by_its_mean_tone():
     assert "friendly" not in f"{said} {record}"
     # And with nothing declared, the absence is stated rather than filled.
     assert "no relation" in scenarios.describe_standing({"standing": {"relations": []}})
+
+
+def test_a_pact_between_rivals_does_not_outrank_the_rivalry(monkeypatch):
+    # THE KOREAN PENINSULA. COW folds non-aggression pacts into `alliance`, so
+    # the 1991 Basic Agreement and the 1948 rivalry are both in force for North
+    # and South Korea — and ordered by recency the region map's chip read
+    # "alliance" over the most militarised border in the archive.
+    from core.games import opening
+    from core.graph import kuzu_store
+
+    rows = [
+        {"relation_type": "alliance", "valid_from": "1991-12-13", "valid_to": "",
+         "source_id": "source:cow-alliances", "from_id": "actor:cow-731",
+         "to_id": "actor:cow-732"},
+        {"relation_type": "rivalry", "valid_from": "1948", "valid_to": "",
+         "source_id": "source:crs-taiwan", "from_id": "actor:cow-731",
+         "to_id": "actor:cow-732"},
+    ]
+    monkeypatch.setattr(kuzu_store, "query", lambda *a, **k: rows)
+    out = opening.standing(object(), "dyad:cow-731--cow-732", as_of="2026-07-01")
+    assert [r["relation_type"] for r in out["relations"]] == ["rivalry", "alliance"]
+
+    from core.games import scenarios
+
+    said = scenarios.describe_standing({"standing": out})
+    assert said.startswith("a declared rivalry since 1948")
+    assert "allies" in said  # both are named; neither is hidden
