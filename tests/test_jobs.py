@@ -200,3 +200,57 @@ def test_every_graph_write_in_the_codebase_takes_the_lock():
             if ".execute(" in line and "cur.execute" not in line and "cursor" not in line:
                 offenders.append(f"{path.relative_to(root)}:{number}")
     assert not offenders, f"graph statements outside kuzu_store: {offenders}"
+
+
+def test_neither_side_of_the_graph_lock_can_starve_the_other():
+    """FIFO, not a preference — and both directions were measured wrong first.
+
+    Readers-only-wait-for-an-active-writer starves the writer (looping readers
+    hand the lock to each other and the reader count never reaches zero).
+    Writer preference starves the readers (a job writing in a tight loop
+    always has a request queued, so new readers wait out the whole slice: a
+    20,000-edge write took the median read from 3ms to 10.2s and timed out a
+    case study at 30s). The queue is therefore strictly first-come-first-served
+    with consecutive readers batched.
+    """
+    import threading
+
+    from core.graph import kuzu_store
+
+    lock = kuzu_store._ReadWriteLock()
+    order: list[str] = []
+
+    held = threading.Event()
+    release = threading.Event()
+
+    def first_writer() -> None:
+        with lock.write():
+            order.append("W1")
+            held.set()
+            release.wait(timeout=5)
+
+    def late_reader() -> None:
+        with lock.read():
+            order.append("R")
+
+    def late_writer() -> None:
+        with lock.write():
+            order.append("W2")
+
+    threads = [threading.Thread(target=first_writer, daemon=True)]
+    threads[0].start()
+    assert held.wait(timeout=5)
+    # Both queue BEHIND the writer in flight, the reader first.
+    reader = threading.Thread(target=late_reader, daemon=True)
+    reader.start()
+    time.sleep(0.05)
+    writer = threading.Thread(target=late_writer, daemon=True)
+    writer.start()
+    time.sleep(0.05)
+    release.set()
+    for thread in (*threads, reader, writer):
+        thread.join(timeout=5)
+
+    # The reader arrived first, so it goes first — a writer in a loop cannot
+    # keep jumping the queue, which is what starved every page.
+    assert order == ["W1", "R", "W2"], order

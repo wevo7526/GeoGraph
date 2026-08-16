@@ -128,6 +128,10 @@ def _start_jobs(app: FastAPI, settings: Any) -> None:
         from core.api import jobs as jobs_module
         from core.api import work
 
+        # Writes in a SERVING process are sized for read latency: the graph
+        # lock is FIFO, so one statement is what a reader ever waits for.
+        kuzu_store.BATCH_ROWS = jobs_module.SERVING_BATCH_ROWS
+
         scheduler = jobs_module.Scheduler(app, settings, [
             # Cadences are about the writer's share of the process, not about
             # urgency: a slice every few minutes converges a hundred-thousand

@@ -27,7 +27,9 @@ from __future__ import annotations
 import contextlib
 import decimal
 import math
+import os
 import threading
+from collections import deque
 from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
@@ -49,70 +51,92 @@ __all__ = [
 
 
 class _ReadWriteLock:
-    """Many readers, one writer, writer excludes readers — PROCESS-WIDE.
+    """FIFO fairness between many readers and one writer — PROCESS-WIDE.
 
-    WHY THIS EXISTS (2026-08-15, and it cost a production job failure to
-    learn). Kuzu CHECKPOINTS after a write, and a checkpoint requires that no
-    transaction is active anywhere in the process. That is fine when writes
-    happen in a batch job with nothing else running — the design until the
-    convergence loop moved recurring work inside the API. It is not fine when
-    request threads are reading continuously: there is always an active
-    transaction, the checkpoint waits, and the write fails. Reproduced exactly:
-    a sibling connection writing 4,000-edge batches while three threads read
-    the same database fails with "Timeout waiting for active transactions to
-    leave the system before checkpointing"; in production the same contention
-    surfaced as an internal assertion in the rel-table storage
-    (csr_node_group.cpp KU_UNREACHABLE) on the study job's first AFFECTED
-    merge.
+    WHY A LOCK AT ALL (2026-08-15, learned in production). Kuzu CHECKPOINTS
+    after a write, and a checkpoint requires that no transaction is active
+    anywhere in the process. That is fine in a batch job with nothing else
+    running — the design until recurring work moved inside the API. It is not
+    fine when request threads read continuously: there is always an active
+    transaction, the checkpoint waits, and the write dies. Reproduced as
+    "Timeout waiting for active transactions to leave the system before
+    checkpointing"; in production it surfaced as an internal assertion in the
+    rel-table storage (csr_node_group.cpp KU_UNREACHABLE) on the study job's
+    first AFFECTED merge.
 
-    So reads share and writes exclude. Reads stay concurrent with each other,
-    which is what the API needs; a write batch (~1s for 4,000 edges) blocks
-    readers for its duration, which is the price of converging the archive
-    without a deploy. The lock is on the MODULE because the process is the
-    unit Kuzu checkpoints for — a per-connection lock would not help.
+    WHY FIFO AND NOT A PREFERENCE, which took two more measurements to get
+    right. Readers-only-wait-for-an-active-writer starves the writer: three
+    reader threads in a loop hand the lock to each other, the reader count
+    never reaches zero, and a job hangs forever. Flipping to writer preference
+    fixed that and starved the READERS instead — a job writing in a tight loop
+    always has a request in, so new readers are blocked for the whole job
+    slice. Measured on a 20,000-edge write: reads went from a 3ms median to a
+    10.2s median, and a case study that answered in 1.3s timed out at 30s.
+
+    So the queue is strictly first-come-first-served, with consecutive readers
+    granted together. A reader arriving mid-write waits for the statement in
+    flight and then goes AHEAD of the writer's next one; a writer waits out
+    the readers already queued and then gets its turn. Neither side can be
+    starved by the other's traffic pattern, which is the only property that
+    makes a converging archive and a live API coexist in one process.
     """
 
     def __init__(self) -> None:
         self._condition = threading.Condition()
         self._readers = 0
         self._writer = False
-        self._waiting_writers = 0
+        self._queue: deque[dict[str, Any]] = deque()
+
+    def _dispatch(self) -> None:
+        """Grant from the head of the queue. Called with the condition held."""
+        granted = False
+        while self._queue:
+            head = self._queue[0]
+            if head["kind"] == "w":
+                if self._readers or self._writer:
+                    break
+                self._writer = True
+                head["ready"] = True
+                self._queue.popleft()
+                granted = True
+                break
+            if self._writer:
+                break
+            self._readers += 1
+            head["ready"] = True
+            self._queue.popleft()
+            granted = True
+        if granted:
+            self._condition.notify_all()
+
+    def _acquire(self, kind: str) -> None:
+        waiter = {"kind": kind, "ready": False}
+        with self._condition:
+            self._queue.append(waiter)
+            self._dispatch()
+            while not waiter["ready"]:
+                self._condition.wait()
 
     @contextlib.contextmanager
     def read(self) -> Iterator[None]:
-        # WRITER PREFERENCE, and it is not a nicety. A reader that only waits
-        # on an ACTIVE writer starves a WAITING one whenever requests overlap:
-        # measured here as a hang, because three reader threads in a loop hand
-        # the lock to each other and the reader count never reaches zero. The
-        # API's request threads are exactly that kind of traffic, and a job
-        # that can never acquire is a job that never converges.
-        with self._condition:
-            while self._writer or self._waiting_writers:
-                self._condition.wait()
-            self._readers += 1
+        self._acquire("r")
         try:
             yield
         finally:
             with self._condition:
                 self._readers -= 1
-                if self._readers == 0:
-                    self._condition.notify_all()
+                self._dispatch()
+                self._condition.notify_all()
 
     @contextlib.contextmanager
     def write(self) -> Iterator[None]:
-        with self._condition:
-            self._waiting_writers += 1
-            try:
-                while self._writer or self._readers:
-                    self._condition.wait()
-            finally:
-                self._waiting_writers -= 1
-            self._writer = True
+        self._acquire("w")
         try:
             yield
         finally:
             with self._condition:
                 self._writer = False
+                self._dispatch()
                 self._condition.notify_all()
 
 
@@ -283,7 +307,14 @@ def query(
 #: UNWIND batch size. One MERGE per row was the deep tier's 25-minute IGO
 #: load; batched it is under a second per ten thousand — same statements,
 #: same semantics, three hundred times fewer round trips.
-_BATCH = 1000
+#:
+#: MUTABLE, because the right size depends on who is writing. A batch job
+#: wants throughput and has no readers to keep waiting. THE SERVING PROCESS
+#: WANTS LATENCY: a reader waits at most one statement (the lock is FIFO), so
+#: statement size IS the p95 read latency under a converging archive —
+#: measured at ~2.4s for 1,000 AFFECTED rows, which is what turned a 1.3s case
+#: study into a 30s timeout. `core/api/app.py` sets the serving value.
+BATCH_ROWS = int(os.getenv("GEOGRAPH_MERGE_BATCH", "1000"))
 
 
 def _batches(rows: list[dict[str, Any]], signature: Any) -> list[list[dict[str, Any]]]:
@@ -300,7 +331,8 @@ def _batches(rows: list[dict[str, Any]], signature: Any) -> list[list[dict[str, 
         grouped.setdefault(signature(cleaned), []).append(cleaned)
     out: list[list[dict[str, Any]]] = []
     for group in grouped.values():
-        out.extend(group[i : i + _BATCH] for i in range(0, len(group), _BATCH))
+        size = max(1, BATCH_ROWS)
+        out.extend(group[i : i + size] for i in range(0, len(group), size))
     return out
 
 
@@ -313,23 +345,21 @@ def merge_nodes(conn: kuzu.Connection, table: str, rows: list[dict[str, Any]]) -
     for row in rows:
         ontology.validate_node(table, row)
     written = 0
-    # EXCLUSIVE FOR THE WHOLE MERGE, not per batch: Kuzu checkpoints after a
-    # write and a checkpoint needs the process quiet, so a reader admitted
-    # between two batches is a reader whose transaction the next checkpoint
-    # waits on. See `_ReadWriteLock`.
-    with ACCESS.write():
-        for batch in _batches(rows, lambda r: tuple(n for n in prop_names if n in r)):
-            present = [n for n in prop_names if n in batch[0]]
-            sets = ", ".join(f"n.{name} = row.{name}" for name in present)
-            cypher = f"UNWIND $rows AS row MERGE (n:{table} {{node_id: row.node_id}})"
-            if sets:
-                cypher += f" ON CREATE SET {sets} ON MATCH SET {sets}"
-            payload = [
-                {"node_id": row["node_id"], **{n: row[n] for n in present}}
-                for row in batch
-            ]
+    # EXCLUSIVE PER BATCH, not per call — see `_ReadWriteLock` for why that is
+    # both safe and necessary.
+    for batch in _batches(rows, lambda r: tuple(n for n in prop_names if n in r)):
+        present = [n for n in prop_names if n in batch[0]]
+        sets = ", ".join(f"n.{name} = row.{name}" for name in present)
+        cypher = f"UNWIND $rows AS row MERGE (n:{table} {{node_id: row.node_id}})"
+        if sets:
+            cypher += f" ON CREATE SET {sets} ON MATCH SET {sets}"
+        payload = [
+            {"node_id": row["node_id"], **{n: row[n] for n in present}}
+            for row in batch
+        ]
+        with ACCESS.write():
             conn.execute(cypher, parameters={"rows": payload})
-            written += len(batch)
+        written += len(batch)
     return written
 
 
@@ -346,30 +376,30 @@ def merge_edges(conn: kuzu.Connection, rel: str, rows: list[dict[str, Any]]) -> 
     for row in rows:
         ontology.validate_edge(rel, {k: v for k, v in row.items() if k not in ("src", "dst")})
     written = 0
-    # EXCLUSIVE — see `merge_nodes`. Rel writes are where this bit first: the
-    # CSR storage assertion that took the study job down was a checkpoint
-    # racing live readers.
-    with ACCESS.write():
-        for batch in _batches(
-            rows, lambda r: tuple(sorted(k for k in r if k not in ("src", "dst")))
-        ):
-            props = [k for k in batch[0] if k not in ("src", "dst")]
-            keys = [k for k in spec.key_slots if k in props]
-            rest = [k for k in props if k not in keys]
-            key_pattern = (
-                (" {" + ", ".join(f"{k}: row.{k}" for k in keys) + "}") if keys else ""
-            )
-            sets = ", ".join(f"r.{k} = row.{k}" for k in rest)
-            cypher = (
-                f"UNWIND $rows AS row "
-                f"MATCH (a:{spec.src} {{node_id: row.src}}), "
-                f"(b:{spec.dst} {{node_id: row.dst}}) "
-                f"MERGE (a)-[r:{rel}{key_pattern}]->(b)"
-            )
-            if sets:
-                cypher += f" ON CREATE SET {sets} ON MATCH SET {sets}"
+    # EXCLUSIVE PER BATCH — see `merge_nodes`. Rel writes are where the
+    # checkpoint race bit first (the CSR assertion that took the study job
+    # down), and where a whole-call lock starved readers worst.
+    for batch in _batches(
+        rows, lambda r: tuple(sorted(k for k in r if k not in ("src", "dst")))
+    ):
+        props = [k for k in batch[0] if k not in ("src", "dst")]
+        keys = [k for k in spec.key_slots if k in props]
+        rest = [k for k in props if k not in keys]
+        key_pattern = (
+            (" {" + ", ".join(f"{k}: row.{k}" for k in keys) + "}") if keys else ""
+        )
+        sets = ", ".join(f"r.{k} = row.{k}" for k in rest)
+        cypher = (
+            f"UNWIND $rows AS row "
+            f"MATCH (a:{spec.src} {{node_id: row.src}}), "
+            f"(b:{spec.dst} {{node_id: row.dst}}) "
+            f"MERGE (a)-[r:{rel}{key_pattern}]->(b)"
+        )
+        if sets:
+            cypher += f" ON CREATE SET {sets} ON MATCH SET {sets}"
+        with ACCESS.write():
             conn.execute(cypher, parameters={"rows": batch})
-            written += len(batch)
+        written += len(batch)
     return written
 
 

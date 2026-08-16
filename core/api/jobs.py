@@ -55,6 +55,19 @@ DEFAULT_SLICE_SECONDS = float(os.getenv("GEOGRAPH_JOB_SLICE", "45"))
 #: not become a busy loop against Postgres or the volume.
 FAILURE_BACKOFF_SECONDS = 600.0
 
+#: Rows per write statement WHILE SERVING. The graph lock is FIFO, so a reader
+#: waits at most one statement — which makes statement size the p95 read
+#: latency of every page while the archive converges. Measured against a
+#: 20,000-edge write with a reader polling throughout:
+#:
+#:     1,000 rows  median 3,505ms  p95 9,260ms   write 110s
+#:       200 rows  median 1,374ms  p95 1,909ms   write 112s
+#:       100 rows  median   844ms  p95   988ms   write 176s
+#:
+#: Throughput is the thing being traded, and throughput is exactly what a
+#: background job has to spare — it has all night. A reader does not.
+SERVING_BATCH_ROWS = int(os.getenv("GEOGRAPH_JOB_MERGE_BATCH", "100"))
+
 
 def _enabled(name: str, default: bool = True) -> bool:
     raw = os.getenv(f"GEOGRAPH_JOB_{name.upper()}", "").strip().lower()
