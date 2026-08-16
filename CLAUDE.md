@@ -561,13 +561,39 @@ because of the lock below, not despite it. Three rules make it safe under live t
    later write segfaulting, while the same batch wrote cleanly into a fresh
    graph). A deploy sends SIGTERM and waits, so draining is the mitigation.
 
-Jobs: `study` (the measurement backlog, curated-first), `games` (re-solve when
-`PAYLOAD_VERSION` or the archive moved — this is what makes a version bump
-self-healing instead of a 3.5-minute deploy tax), `wire` (the GDELT artifacts
-into the graph — mena's gap, previously an hour of graph-dark). Status at
-`/api/jobs`; `GEOGRAPH_JOBS=0` disables all, `GEOGRAPH_JOB_<NAME>=0` one.
-Tests set `GEOGRAPH_JOBS=0` in `conftest.py`, because a scheduler loose on a
-three-event fixture would merge the repository's real 1.3M artifacts into it.
+**NINE JOBS, and between them the platform keeps itself current without a
+deploy**: `wire` (GDELT artifacts into the graph), `rescore` (Head B over what
+the wire loaded), `study` (the measurement backlog, curated-first), `games`
+(re-solve on a `PAYLOAD_VERSION` change or archive growth), `forecasts` (the
+freeze — all four modes), `scores` (Brier what resolved, retrodict what
+cannot), `metrics` (the windowed network), `backtest` (the paper book),
+`calibration` (the scoreboard). Status at `/api/jobs`; `GEOGRAPH_JOBS=0`
+disables all, `GEOGRAPH_JOB_<NAME>=0` one. Tests set `GEOGRAPH_JOBS=0` in
+`conftest.py`, because a scheduler loose on a three-event fixture would merge
+the repository's real 1.3M artifacts into it.
+
+Every job needed a CONNECTION-TAKING SEAM, because the API process holds the
+write lock and a second `kuzu.Database` inside it fails on that lock:
+`forecasting.rows_from_conn`, `structural.PressureArchive.from_conn`,
+`calibration.retrodict(conn=)`, `analytics.compute_windows(conn=)`,
+`run_forecasts.freeze(conn=)`. The rule to remember: inside the API, pass the
+connection; never open by path.
+
+**The rescore is per DYAD, and that is not a shortcut.** `code_events` folds
+through a `DyadTracker` keyed by dyad, so one pair's COMPLETE history in time
+order produces exactly what the archive-wide pass produces for it. What is
+wrong by construction is a partial fold WITHIN a pair (its modern events
+without its deep-tier past), which is why `rescore_dyad` always loads the whole
+record. That equivalence is what turns an hours-long, un-resumable,
+API-stopping batch into a background job.
+
+**Anything that costs minutes must never run on a request thread.** Learned
+twice in one hour: a `PAYLOAD_VERSION` bump made every stale region solve LIVE
+(~130s) on request and the game-theory page simply hung; the calibration walk
+computed on first read (~2min, growing). Both now answer instantly — a stale
+map returns `resolving: true`, an unwarmed walk returns `pending: true` — and
+a job does the work. `live=true` / `compute=true` still force it for a caller
+who means to wait.
 
 **The transmission engine's driver is a library** (`core/transmission/runner.py`),
 so the CLI and the job run the same measurement; `scripts/run_event_study.py` is
