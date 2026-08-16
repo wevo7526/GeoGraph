@@ -548,3 +548,37 @@ def test_the_study_shrinks_its_own_tick_when_the_buffer_pool_runs_out(monkeypatc
     for _ in range(10):
         work.study(object(), time.monotonic() + 60)
     assert work._events_per_tick == work.STUDY_EVENTS_FLOOR
+
+
+def test_reclaim_drops_the_cache_that_grows_with_the_archive():
+    """THE ONE THAT GROWS WITH SUCCESS, and so was found last.
+
+    A region's game context holds `pricing.measured_effects` — every measured
+    event-market effect for that region, one dict per row. AFFECTED passed
+    900,000 edges on 2026-08-16 and grows every time the study writes, so the
+    cache that makes the games page fast is also the thing that walks the
+    container into the kernel's kill zone. Measured: 5.17 GB -> 6.93 GB over
+    half an hour, with six reclaims that recovered nothing because none of
+    them touched this.
+
+    Everything cleared here is rebuildable — the games job re-solves a region
+    from scratch and the routers' caches are read-through.
+    """
+    from core.api.routers import dyads as dyads_router
+    from core.api.routers import games as games_router
+    from core.games import context as context_module
+    from core.reasoning import calibration, impact
+
+    context_module.CACHE["mena"] = {"effects": [{"x": 1}] * 10}
+    games_router._BASELINE_CACHE[("mena", "d")] = (0.0, {})
+    dyads_router._CACHE["mena"] = [{"d": 1}]
+    impact._COVERAGE_CACHE["mena"] = {"d": 1}
+    calibration.CACHE["mena"] = (1, {})
+
+    jobs_module._forget_region_contexts()
+
+    assert not context_module.CACHE, "the effects cache must be dropped"
+    assert not games_router._BASELINE_CACHE
+    assert not dyads_router._CACHE
+    assert not impact._COVERAGE_CACHE
+    assert not calibration.CACHE

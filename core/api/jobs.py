@@ -142,6 +142,31 @@ class Job:
         self.state = JobState(name=self.name, every=self.every, enabled=self.enabled)
 
 
+def _forget_region_contexts() -> None:
+    """Drop the per-region game contexts and the caches built from them.
+
+    THE ONE THAT GROWS WITH SUCCESS, which is why it was found last. A region's
+    context holds `pricing.measured_effects` — EVERY measured event-market
+    effect for that region, as a dict per row — so it is ~900,000 dicts today
+    across three regions and larger every time the study writes. The container
+    climbed from 5.17 GB to 6.93 GB over half an hour with six reclaims that
+    recovered nothing, because none of them touched this.
+
+    All of it is rebuildable: the games job re-solves a region from scratch,
+    and the routers' caches are read-through.
+    """
+    from core.api.routers import dyads as dyads_router
+    from core.api.routers import games as games_router
+    from core.games import context as context_module
+    from core.reasoning import calibration, impact
+
+    context_module.CACHE.clear()
+    games_router._BASELINE_CACHE.clear()
+    dyads_router._CACHE.clear()
+    impact._COVERAGE_CACHE.clear()
+    calibration.CACHE.clear()
+
+
 def _return_free_arenas() -> None:
     """Hand glibc's freed arenas back to the kernel.
 
@@ -295,6 +320,7 @@ class Scheduler:
         # the largest rebuildable thing this process owns after the corpus, and
         # a tick that has to rebuild it costs seconds, not correctness.
         work.forget_archive()
+        _forget_region_contexts()
         gc.collect()
         _return_free_arenas()
 
