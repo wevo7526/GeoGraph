@@ -163,7 +163,11 @@ def build(
         cell["n"] += 1
         if row["goldstein"] is not None:
             cell["goldstein"].append(float(row["goldstein"]))
-        if row["quad_class"] == "material_conflict":
+        # A co-participation event (two allies coded against each other on
+        # third-country soil — `family.is_co_participation`) is not coercion
+        # BETWEEN the pair, whatever its quad class says; the posture, the
+        # coercive count and the ranking read `conflict`, so it stops here.
+        if row["quad_class"] == "material_conflict" and not row.get("co_participation"):
             cell["conflict"] += 1
         # Intensity is the quarter's LARGEST departure, not its mean: a
         # rupture inside a noisy quarter is the event being forecast, and an

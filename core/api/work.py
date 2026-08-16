@@ -317,6 +317,54 @@ def _study_in_process(conn: Any, deadline: float) -> dict[str, Any]:
         panel.close()
 
 
+# ── an unfinished AFFECTED refill, finished with the site up ────────────────
+
+
+#: Events per refill chunk INSIDE THE API: small, because every write is a
+#: statement a reader waits behind (the FIFO lock), and the point of doing
+#: this here rather than in a boot is that the site stays up.
+REFILL_CHUNK_EVENTS = 200
+
+
+def refill(conn: Any, deadline: float) -> dict[str, Any]:
+    """Finish an AFFECTED re-projection the boot's repair step left unfinished.
+
+    The 2026-08-16 repair proved the table takes writes again (the probe after
+    the rebuild passed) and re-projected 447,484 of 1,051,722 edges before its
+    budget ended — at ~200 edges/s a full refill is ~90 minutes, and every
+    minute of it in a boot is a minute the graph is dark. So the marker the
+    boot left (`.affected-refill.json`) is picked up HERE, in slices, through
+    the same `rebuild.refill`, and cleared when the projection is complete.
+    Idempotent: `write_edges` reads before it creates, and the marker says
+    where to resume. Nothing to do when no marker exists.
+    """
+    from core.transmission import rebuild
+
+    marker_path = settings_module.load().kuzu_db_path.with_name(".affected-refill.json")
+    if not marker_path.exists():
+        return {"note": "no refill pending"}
+    marker = rebuild.Marker(marker_path)
+    panel = _panel()
+    if panel is None:
+        return {"skipped": "no panel"}
+    try:
+        # Only the rows past the marker for the pack in progress; a pack not
+        # yet started reads from its beginning on its own turn.
+        after = marker.state.get("after") if marker.state.get("pack") else None
+        rows = rebuild.panel_effect_rows(panel, after=after)
+    finally:
+        panel.close()
+    dates = rebuild.event_dates(conn)
+    loaded = [packs.load(name) for name in _pack_names()]
+    outcome = rebuild.refill(
+        conn, rows, loaded, dates, marker=marker,
+        chunk_events=REFILL_CHUNK_EVENTS, deadline=deadline,
+    )
+    if outcome["complete"]:
+        marker.clear()
+    return {**outcome, "rows_read": len(rows)}
+
+
 # ── the region scenario maps ───────────────────────────────────────────────
 
 

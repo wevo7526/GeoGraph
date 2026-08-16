@@ -1391,3 +1391,53 @@ def test_the_ally_game_reproduces_olson_zeckhauser():
     # The adversary reading of the same quarters is unchanged.
     assert transition.action_from_quads(
         {"material_cooperation": 3, "verbal_cooperation": 7}) == "de-escalate"
+
+
+def test_allies_coded_against_each_other_on_third_soil_are_co_participants():
+    """GDELT pairs co-participants as adversaries: US–Australia's material
+    conflict for the year to 2026-08 was CAMEO 190/193 from joint operations.
+    Two partners under an alliance in force, coded in material conflict with
+    each other on soil that is NEITHER's, are read as co-participants; on
+    their own soil, or under no alliance, the coding stands."""
+    from core.games import family, transition
+
+    windows = {"dyad:cow-2--cow-900": [(1951, 9999)]}
+    joint_op = {"quad_class": "material_conflict", "event_time": "2026-03-01",
+                "dyad_id": "dyad:cow-2--cow-900", "action_geo": "IRQ",
+                "initiator_iso3": "AUS", "target_iso3": "USA"}
+    assert family.is_co_participation(joint_op, windows)
+    at_home = dict(joint_op, action_geo="AUS")
+    assert not family.is_co_participation(at_home, windows)
+    no_geo = dict(joint_op, action_geo="")
+    assert not family.is_co_participation(no_geo, windows)
+    not_allied = dict(joint_op, dyad_id="dyad:cow-2--cow-710")
+    assert not family.is_co_participation(not_allied, windows)
+    before = dict(joint_op, event_time="1940-01-01")
+    assert not family.is_co_participation(before, windows)
+    talk = dict(joint_op, quad_class="verbal_conflict")
+    assert not family.is_co_participation(talk, windows)
+
+    # The readers: the game reading counts it as the material COOPERATION it
+    # was; the panel's coercion counter does not count it at all.
+    rows = [{"dyad_id": "d", "actor_a": "a", "actor_b": "b", "initiator": "a",
+             "event_time": "2026-03-01", "quad_class": "material_conflict",
+             "co_participation": True}]
+    counts = transition.quad_counts(rows, quarter_of=lambda t: 0)
+    assert counts[("d", 0)]["a"] == {"material_cooperation": 1}
+    from core.models import panel as panel_module
+    # The panel's own counter, on a dyad with enough history to be modelled:
+    # the co-participation event is one of the quarter's events and none of
+    # its conflict.
+    rows_in = [
+        {"dyad_id": "d", "dyad_name": "A–B",
+         "event_time": f"{2010 + q // 4}-{(q % 4) * 3 + 1:02d}-15",
+         "direction": "escalating", "magnitude": 1.0, "goldstein": -9.0,
+         "quad_class": "material_conflict", "region_pack": "t",
+         "co_participation": q == 0}
+        for q in range(40)
+    ]
+    table = panel_module.build(rows_in, region_pack="t", min_coverage=0)
+    first = min(table, key=lambda r: r["q"])
+    assert first["events"] == 1 and first["conflict"] == 0
+    later = [r for r in table if r["q"] > first["q"] and r["events"]][0]
+    assert later["conflict"] == 1

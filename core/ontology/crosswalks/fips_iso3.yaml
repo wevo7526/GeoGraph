@@ -1,0 +1,143 @@
+# FIPS 10-4 country code → ISO 3166-1 alpha-3.
+#
+# GDELT geo-codes every event's ACTION location in FIPS 10-4 (two letters, and
+# not the ISO two-letter codes: GM is Germany, AS is Australia, UP is Ukraine,
+# RS is Russia, KS is South Korea), while the packs anchor actors to GDELT's
+# ACTOR country codes, which are ISO3-like CAMEO codes. This crosswalk lets the
+# wire parser say, deterministically, WHOSE TERRITORY an event happened on —
+# the fact behind the co-participation flag (see core/ingestion/gdelt.py):
+# two ALLIES coded in material conflict with each other on a THIRD country's
+# soil are, in the overwhelming case, fighting TOGETHER there, and GDELT's
+# dyadic coding cannot say so on its own.
+#
+# Roster-scoped: every pack actor's country plus the theatres those actors
+# recur in. A FIPS code absent here maps to '' (unknown), which never fires
+# the flag — the parser infers nothing from a code it cannot place. Extend by
+# adding rows; the parser reads the file at import.
+#
+# Source: US NGA GEOnet FIPS 10-4 list, cross-checked against ISO 3166-1.
+fips_to_iso3:
+  # ── the pack rosters ──────────────────────────────────────────────────────
+  US: USA
+  CH: CHN
+  RS: RUS
+  UK: GBR
+  JA: JPN
+  KS: KOR
+  KN: PRK
+  TW: TWN
+  AS: AUS
+  IN: IND
+  RP: PHL
+  VM: VNM
+  IR: IRN
+  IS: ISR
+  SA: SAU
+  IZ: IRQ
+  SY: SYR
+  LE: LBN
+  EG: EGY
+  TU: TUR
+  JO: JOR
+  KU: KWT
+  QA: QAT
+  AE: ARE
+  BA: BHR
+  MU: OMN
+  YM: YEM
+  GM: DEU
+  FR: FRA
+  IT: ITA
+  PL: POL
+  UP: UKR
+  BO: BLR
+  KZ: KAZ
+  GG: GEO
+  AM: ARM
+  AJ: AZE
+  MD: MDA
+  RO: ROU
+  BU: BGR
+  HU: HUN
+  EZ: CZE
+  LO: SVK
+  RI: SRB
+  EN: EST
+  LG: LVA
+  LH: LTU
+  FI: FIN
+  SW: SWE
+  NO: NOR
+  AU: AUT
+  AF: AFG
+  TI: TJK
+  TX: TKM
+  UZ: UZB
+  KG: KGZ
+  # ── theatres the rosters recur in (third-country soil the flag needs) ─────
+  PK: PAK
+  LY: LBY
+  SU: SDN
+  SO: SOM
+  ET: ETH
+  ER: ERI
+  DJ: DJI
+  MA: MDG
+  ML: MLI
+  NG: NER
+  NI: NGA
+  CM: CMR
+  CD: TCD
+  CT: CAF
+  MO: MAR
+  AG: DZA
+  TS: TUN
+  WE: PSE
+  GZ: PSE
+  CY: CYP
+  GR: GRC
+  BK: BIH
+  HR: HRV
+  KV: XKX
+  MK: MKD
+  AL: ALB
+  MW: MWI
+  MZ: MOZ
+  KE: KEN
+  UG: UGA
+  TZ: TZA
+  CG: COD
+  CF: COG
+  ID: IDN
+  MY: MYS
+  TH: THA
+  BM: MMR
+  CB: KHM
+  LA: LAO
+  SN: SGP
+  BX: BRN
+  PP: PNG
+  NZ: NZL
+  CA: CAN
+  MX: MEX
+  CU: CUB
+  VE: VEN
+  CO: COL
+  BR: BRA
+  AR: ARG
+  PA: PRY
+  SP: ESP
+  PO: PRT
+  BE: BEL
+  NL: NLD
+  LU: LUX
+  SZ: CHE
+  DA: DNK
+  IC: ISL
+  EI: IRL
+  MN: MNG
+  NP: NPL
+  BG: BGD
+  CE: LKA
+  MV: MDV
+  BT: BTN

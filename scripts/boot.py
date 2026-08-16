@@ -1728,6 +1728,15 @@ def _boot_status() -> dict[str, Any]:
         ("deep", lambda: _guarded(
             "deep", lambda: f"{_raw_listing()}|{image}", _load_deep_tier,
         )),
+        # ALWAYS ON, and cheap: the deep tier above is fingerprint-guarded, so
+        # a prune that lived only inside it ran when the inputs moved and not
+        # otherwise — 489 of 754 off-roster actors survived the first pass on
+        # 2026-08-16. Idempotent; seconds when there is nothing to remove.
+        ("prune", lambda: _run_step(
+            "prune off-roster actors",
+            [sys.executable, str(_DEEP_TIER_SCRIPT), "--prune-only"],
+            timeout=600,
+        )),
         ("gdelt", lambda: _load_gdelt(names)),
         ("rescore", lambda: _rescore_if_new_events(names)),
         ("flows", _load_13f_weekly),

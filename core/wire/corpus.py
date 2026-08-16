@@ -80,6 +80,11 @@ def parse_artifact(pack: Any, artifact: Path) -> tuple[list[dict[str, Any]], Any
     """
     roster = _roster(pack)
     names = {entry["node_id"]: entry["name"] for entry in roster.values()}
+    # The declared alliance windows this pack's pairs carry — the standing
+    # half of the co-participation reading (see `family.is_co_participation`).
+    from core.games import family as family_module
+
+    windows, _sources = family_module.ally_windows(pack)
     with gzip.open(artifact, "rt", encoding=_ENCODING) as fh:
         events, edges, result = gdelt.parse_lines(
             fh,
@@ -109,14 +114,19 @@ def parse_artifact(pack: Any, artifact: Path) -> tuple[list[dict[str, Any]], Any
             result.drop("event without both actor ends")
             continue
         first, second = sorted((actor_a, actor_b))
-        rows.append({
+        row = {
             **event,
             "dyad_id": escalation.dyad_id(actor_a, actor_b),
             "dyad_name": f"{names.get(first, first)}–{names.get(second, second)}",
             "initiator_id": actor_a,
             "target_id": actor_b,
             "source_id": gdelt.SOURCE_GDELT,
-        })
+        }
+        # ALLIES CODED IN MATERIAL CONFLICT ON THIRD-COUNTRY SOIL are read as
+        # co-participants (fighting together there), not adversaries. The raw
+        # code stays; the flag rides beside it for the readers that count.
+        row["co_participation"] = family_module.is_co_participation(row, windows)
+        rows.append(row)
     return rows, result
 
 
@@ -233,6 +243,7 @@ def _as_panel_row(row: dict[str, Any]) -> dict[str, Any]:
         "goldstein": row["goldstein"],
         "quad_class": row["quad_class"],
         "region_pack": row["region_pack"],
+        "co_participation": bool(row.get("co_participation", False)),
     }
 
 
@@ -252,6 +263,7 @@ def _as_game_row(row: dict[str, Any]) -> dict[str, Any]:
         "event_time": row["event_time"],
         "quad_class": row["quad_class"],
         "region_pack": row["region_pack"],
+        "co_participation": bool(row.get("co_participation", False)),
     }
 
 

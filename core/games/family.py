@@ -39,7 +39,9 @@ the reader can discount it, rather than being quietly presented as a war game.
 
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 #: The three families, in the order the classification tries them.
@@ -416,3 +418,102 @@ def kind_words(family: str, kind: str) -> tuple[str, str]:
     """(label, sentence) for a course kind in a family's own words."""
     table = KIND_WORDS.get(family) or KIND_WORDS["adversary"]
     return table.get(kind, (kind.replace("_", " "), kind.replace("_", " ")))
+
+
+# ── co-participation: allies coded against each other on third-country soil ─
+#
+# GDELT PAIRS CO-PARTICIPANTS AS ADVERSARIES. Checked directly on 2026-08-16:
+# US–Australia's material-conflict record for the year to 2026-08 was 25
+# events of CAMEO 190 ("use conventional military force: Australia → United
+# States") and 13 of 193 ("fight with small arms") — co-involvement in
+# third-party operations, coded as a dyadic event between the two allies. On
+# the ranking that put US–Australia above North Korea–South Korea and US–UK
+# above US–Russia. An alliance filter would erase genuine ally-vs-ally
+# friction (base disputes at home, a public rift), so the rule needs the one
+# fact that separates the two: WHERE it happened. Two partners under a
+# declared alliance in force at the time, coded in material conflict with
+# each other, on soil that is NEITHER partner's, are read as co-participants;
+# the raw CAMEO code and quad class are kept as coded, and the readers that
+# count coercion (`models.panel.build`, `transition.quad_counts`) treat the
+# flagged event as the material COOPERATION between the partners it was.
+
+#: Where the deep tier's raw files live when fetched; the COW alliance list is
+#: the widest source of DECLARED alliance windows the corpus can read offline.
+_RAW_DIR = Path(
+    os.getenv("GEOGRAPH_RAW_DIR")
+    or Path(__file__).resolve().parents[2] / "data" / "raw"
+)
+_COW_ALLIANCES = "alliance_v4.1_by_directed.csv"
+
+
+def _year_of(value: Any, default: int) -> int:
+    text = str(value or "").strip()
+    return int(text[:4]) if text[:4].isdigit() else default
+
+
+def ally_windows(pack: Any) -> tuple[dict[str, list[tuple[int, int]]], list[str]]:
+    """dyad_id → the year windows in which the archive declares it allied,
+    and where the declarations came from.
+
+    Read OFFLINE — the pack's `relations` (in the image) and, when the COW
+    alliance file is on disk, COW's directed alliance list restricted to the
+    pack's roster. Windows, not pairs: a first pass took every pair ever
+    allied since 1905, which put US–China (1942) and US–Iran (1958-79) in the
+    ally sample with their whole wire-era record. An open window is
+    (start, 9999). Used by the corpus's co-participation flag and by
+    `scripts/fit_game.py --family ally`.
+    """
+    from core.classifier import escalation
+
+    roster = {str(a["id"]) for a in pack.actors}
+    ccode_to_id = {
+        int(a["cow_ccode"]): str(a["id"]) for a in pack.actors if a.get("cow_ccode")
+    }
+    windows: dict[str, list[tuple[int, int]]] = {}
+    sources: list[str] = []
+    for relation in pack.relations:
+        if relation.get("relation_type") in ("alliance", "membership"):
+            dyad = escalation.dyad_id(str(relation["a"]), str(relation["b"]))
+            windows.setdefault(dyad, []).append(
+                (_year_of(relation.get("valid_from"), 1905),
+                 _year_of(relation.get("valid_to"), 9999))
+            )
+    if windows:
+        sources.append("packs")
+    cow_file = _RAW_DIR / _COW_ALLIANCES
+    if cow_file.exists():
+        import csv
+
+        with open(cow_file, encoding="utf-8", newline="") as fh:
+            for row in csv.DictReader(fh):
+                try:
+                    a = ccode_to_id.get(int(row["ccode1"]))
+                    b = ccode_to_id.get(int(row["ccode2"]))
+                except (TypeError, ValueError):
+                    continue
+                if not a or not b or a == b or a not in roster or b not in roster:
+                    continue
+                start = _year_of(row.get("dyad_st_year"), 1905)
+                end = _year_of(row.get("dyad_end_year"), 9999)
+                if end < 1905:
+                    continue
+                windows.setdefault(escalation.dyad_id(a, b), []).append((start, end))
+        sources.append("cow:alliance_v4.1")
+    return windows, sources
+
+
+def allied_in(windows: list[tuple[int, int]] | None, year: int) -> bool:
+    return bool(windows) and any(start <= year <= end for start, end in windows or [])
+
+
+def is_co_participation(
+    row: dict[str, Any], windows: dict[str, list[tuple[int, int]]]
+) -> bool:
+    """The rule, over a corpus row carrying `quad_class`, `event_time`,
+    `dyad_id`, `action_geo`, `initiator_iso3` and `target_iso3`."""
+    if row.get("quad_class") != "material_conflict":
+        return False
+    geo = str(row.get("action_geo") or "")
+    if not geo or geo in (row.get("initiator_iso3"), row.get("target_iso3")):
+        return False
+    return allied_in(windows.get(str(row.get("dyad_id"))), _year_of(row.get("event_time"), 0))

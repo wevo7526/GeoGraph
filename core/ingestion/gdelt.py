@@ -26,6 +26,8 @@ after loading (core/classifier/rescore.py).
 
 from __future__ import annotations
 
+import functools
+from pathlib import Path
 from typing import Any
 
 from core.classifier import typing as event_typing
@@ -57,6 +59,25 @@ _EVENT_CODE = 26
 _QUAD = 29
 _GOLDSTEIN = 30
 _MENTIONS = 31
+#: ActionGeo_CountryCode — WHERE the event happened, FIPS 10-4. The one column
+#: that can say two allies coded in material conflict with each other were in
+#: fact fighting side by side on a third country's soil (see `parse_lines`).
+_ACTION_GEO_COUNTRY = 51
+
+_FIPS_CROSSWALK = (
+    Path(__file__).resolve().parent.parent / "ontology" / "crosswalks" / "fips_iso3.yaml"
+)
+
+
+@functools.lru_cache(maxsize=1)
+def fips_to_iso3() -> dict[str, str]:
+    """FIPS 10-4 → ISO3, from the crosswalk. A code absent from it maps to
+    nothing — the parser never guesses a country."""
+    import yaml
+
+    with open(_FIPS_CROSSWALK, encoding="utf-8") as fh:
+        table = yaml.safe_load(fh) or {}
+    return {str(k): str(v) for k, v in (table.get("fips_to_iso3") or {}).items()}
 
 #: GDELT QuadClass integers → the ontology's enum.
 _QUAD_CLASS = {
@@ -136,6 +157,10 @@ def parse_lines(
         initiator = actors_by_iso3[a1]
         target = actors_by_iso3[a2]
         event_id = f"event:gdelt-{fields[_GLOBALEVENTID]}"
+        # THE ACTION'S COUNTRY, as ISO3 — '' when the row has none or the
+        # crosswalk cannot place it. Not a graph property: it rides on the
+        # corpus row for the co-participation reading and nowhere else.
+        geo = fields[_ACTION_GEO_COUNTRY] if len(fields) > _ACTION_GEO_COUNTRY else ""
         events.append({
             "node_id": event_id,
             "name": f"{label}: {initiator['name']} → {target['name']}",
@@ -147,6 +172,9 @@ def parse_lines(
             "fidelity_tier": "modern_coded",
             "temporal_resolution": "day",
             "source_scale": "goldstein",
+            "action_geo": fips_to_iso3().get(geo, "") if geo else "",
+            "initiator_iso3": a1,
+            "target_iso3": a2,
         })
         edges.append({"kind": "INITIATED_BY", "src": event_id,
                       "dst": initiator["node_id"], "source_id": SOURCE_GDELT})
@@ -157,6 +185,12 @@ def parse_lines(
     return events, edges, result
 
 
+#: Row keys the parser adds for the CORPUS reading that are not Event
+#: properties. `merge_nodes` only SETs ontology properties, so they would be
+#: ignored anyway; stripped explicitly so the graph write says what it writes.
+_CORPUS_ONLY = ("action_geo", "initiator_iso3", "target_iso3")
+
+
 def write_events(
     conn: Any, events: list[dict[str, Any]], edges: list[dict[str, Any]]
 ) -> None:
@@ -165,7 +199,10 @@ def write_events(
     kuzu_store.merge_nodes(conn, "Source", [_SOURCE_META])
     if not events:
         return
-    kuzu_store.merge_nodes(conn, "Event", events)
+    kuzu_store.merge_nodes(
+        conn, "Event",
+        [{k: v for k, v in e.items() if k not in _CORPUS_ONLY} for e in events],
+    )
     for rel in ("INITIATED_BY", "DIRECTED_AT", "DERIVED_FROM"):
         rows = [
             {k: v for k, v in e.items() if k != "kind"}

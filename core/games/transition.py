@@ -130,6 +130,13 @@ def quad_counts(
         quad = row.get("quad_class")
         if not quad:
             continue
+        # A CO-PARTICIPATION EVENT — two allies coded in material conflict with
+        # each other on a third country's soil — is read as the material
+        # cooperation between them it was (a joint operation), so the
+        # adversary reading stops calling it escalation and the ally reading
+        # counts it as carrying the burden. The raw code is untouched.
+        if quad == "material_conflict" and row.get("co_participation"):
+            quad = "material_cooperation"
         key = (str(row["dyad_id"]), quarter_of(str(row["event_time"])))
         side = "a" if row["initiator"] == row["actor_a"] else "b"
         per_side[key][side][str(quad)] += 1

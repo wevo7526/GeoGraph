@@ -169,6 +169,13 @@ def _start_jobs(app: FastAPI, settings: Any) -> None:
             # turn brings that to about a day. The memory guard runs before
             # each job either way, and the study's own deadline still ends the
             # turn at an event boundary.
+            # An unfinished AFFECTED re-projection, completed with the site
+            # up (see work.refill); a no-op when no marker exists.
+            jobs_module.Job(
+                name="refill", every=60.0, run=work.refill,
+                enabled=jobs_module._enabled("refill"),
+                slice_seconds=180.0,
+            ),
             jobs_module.Job(
                 name="study", every=120.0, run=work.study,
                 enabled=jobs_module._enabled("study"),

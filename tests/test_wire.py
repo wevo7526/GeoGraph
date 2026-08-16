@@ -174,6 +174,9 @@ def test_the_panel_view_matches_what_the_panel_reads(real_corpus):
     assert set(view) == {
         "dyad_id", "dyad_name", "event_time", "direction",
         "magnitude", "goldstein", "quad_class", "region_pack",
+        # The co-participation flag rides on the panel view (2026-08-16); the
+        # graph reader (`dyad_event_rows`) has no such column and `.get`s it.
+        "co_participation",
     }
 
 

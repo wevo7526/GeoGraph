@@ -55,8 +55,10 @@ MEASURED_STATUSES = ("computed", "overlapping")
 DEFAULT_CHUNK_EVENTS = 1000
 
 
-def panel_effect_rows(panel: Any) -> list[dict[str, Any]]:
-    """Every measured (event, market, window) row the panel remembers.
+def panel_effect_rows(panel: Any, *, after: str | None = None) -> list[dict[str, Any]]:
+    """Every measured (event, market, window) row the panel remembers — or,
+    with `after`, only those past a resume marker's event id, so a job that
+    refills in slices does not re-read a million rows a tick.
 
     One read, materialised: a million rows is ~200 MB of Python dicts, which
     is what a repair child has to spare and a request thread does not — this
@@ -67,8 +69,8 @@ def panel_effect_rows(panel: Any) -> list[dict[str, Any]]:
             "SELECT event_node_id, market_ticker, effect_window, resolution, "
             "status, raw_return, expected_return, abnormal_return, t_stat, "
             "p_value, method FROM event_study_runs "
-            "WHERE status = ANY(%s) ORDER BY event_node_id",
-            (list(MEASURED_STATUSES),),
+            "WHERE status = ANY(%s) AND event_node_id > %s ORDER BY event_node_id",
+            (list(MEASURED_STATUSES), after or ""),
         )
         columns = [d[0] for d in cur.description]
         return [dict(zip(columns, row, strict=True)) for row in cur.fetchall()]

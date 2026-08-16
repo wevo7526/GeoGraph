@@ -102,6 +102,13 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--no-fetch", action="store_true", help="local files only")
     parser.add_argument(
+        "--prune-only", action="store_true",
+        help="only prune the actors no pack names (and what hangs off them); "
+             "the boot runs this on EVERY boot because the deep tier itself is "
+             "fingerprint-guarded and a prune that only ran when the inputs "
+             "moved left 489 of 754 actors on the volume on 2026-08-16",
+    )
+    parser.add_argument(
         "--skip-rescore", action="store_true",
         help="load but defer the archive-wide Head B rescore. THE BOOT PASSES "
              "THIS. The rescore folds escalation over every event in time "
@@ -113,13 +120,30 @@ def main() -> None:
     )
     args = parser.parse_args()
 
+    settings = settings_module.load()
+    if args.prune_only:
+        from core import packs as packs_module
+
+        conn = kuzu_store.connect(settings.kuzu_db_path)
+        try:
+            roster = {
+                str(actor["id"])
+                for name in packs_module.available()
+                for actor in packs_module.load(name).actors
+            }
+            pruned = cow.prune_off_roster_actors(conn, roster)
+            print("pruned off-roster: " + (", ".join(
+                f"{table} {count}" for table, count in pruned.items() if count) or "nothing"))
+        finally:
+            kuzu_store.close(conn)
+        return
+
     if not args.no_fetch:
         fetch_missing()
     for _, _, filename in _FETCH:
         if not (_RAW / filename).exists():
             sys.exit(f"missing {_RAW / filename} — run without --no-fetch")
 
-    settings = settings_module.load()
     settings.kuzu_db_path.parent.mkdir(parents=True, exist_ok=True)
     conn = kuzu_store.connect(settings.kuzu_db_path)
     try:

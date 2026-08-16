@@ -26,7 +26,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
 import sys
 from pathlib import Path
 from typing import Any
@@ -48,75 +47,14 @@ from core.wire import corpus  # noqa: E402
 MIN_KERNEL_COVERAGE = 0.5
 
 
-#: Where the deep tier's raw files live when they have been fetched — the
-#: COW alliance list is the widest source of DECLARED alliances the fit can
-#: select ally pairs by, and it is a public, versioned dataset (v4.1). The
-#: packs' own `relations` are the other source and are always present.
-_RAW_DIR = Path(
-    os.getenv("GEOGRAPH_RAW_DIR") or Path(__file__).resolve().parent.parent / "data" / "raw"
-)
-
-
 def ally_windows(region: str) -> tuple[dict[str, list[tuple[int, int]]], list[str]]:
-    """dyad → the YEAR WINDOWS in which the archive declares it allied, and
-    where the declarations came from.
-
-    An ally pair is one the archive DECLARES allied — the family classifier's
-    own standing rule — read offline from the pack's `relations` and, when the
-    COW alliance file is on disk, from COW's directed alliance list restricted
-    to the pack's roster. WINDOWS, NOT PAIRS: a first pass took every pair
-    ever allied since 1905, which put the United States and China (1942) and
-    the United States and Iran (1958-79) in the ALLY sample with their whole
-    wire-era record — a rivalry's record fitted as an alliance's. A quarter
-    enters the fit only inside a window; the game itself is solved on the
-    pair's CURRENT standing. An open window is (start, 9999).
-    """
-    from core.classifier import escalation
-
-    pack = packs.load(region)
-    roster = {str(a["id"]) for a in pack.actors}
-    ccode_to_id = {
-        int(a["cow_ccode"]): str(a["id"]) for a in pack.actors if a.get("cow_ccode")
-    }
-    windows: dict[str, list[tuple[int, int]]] = {}
-    sources: list[str] = []
-
-    def _year(value: Any, default: int) -> int:
-        text = str(value or "").strip()
-        return int(text[:4]) if text[:4].isdigit() else default
-
-    for relation in pack.relations:
-        if relation.get("relation_type") in ("alliance", "membership"):
-            dyad = escalation.dyad_id(str(relation["a"]), str(relation["b"]))
-            windows.setdefault(dyad, []).append(
-                (_year(relation.get("valid_from"), 1905), _year(relation.get("valid_to"), 9999))
-            )
-    if windows:
-        sources.append("packs")
-    cow_file = _RAW_DIR / "alliance_v4.1_by_directed.csv"
-    if cow_file.exists():
-        import csv
-
-        with open(cow_file, encoding="utf-8", newline="") as fh:
-            for row in csv.DictReader(fh):
-                try:
-                    a = ccode_to_id.get(int(row["ccode1"]))
-                    b = ccode_to_id.get(int(row["ccode2"]))
-                except (TypeError, ValueError):
-                    continue
-                if not a or not b or a == b or a not in roster or b not in roster:
-                    continue
-                start = _year(row.get("dyad_st_year"), 1905)
-                end = _year(row.get("dyad_end_year"), 9999)
-                if end < 1905:
-                    continue
-                windows.setdefault(escalation.dyad_id(a, b), []).append((start, end))
-        sources.append("cow:alliance_v4.1")
-    return windows, sources
+    """The declared alliance windows for a region's pairs — `family.ally_windows`
+    over the pack, the same function the corpus's co-participation flag reads."""
+    return family_module.ally_windows(packs.load(region))
 
 
 def _in_windows(year: int, windows: list[tuple[int, int]]) -> bool:
-    return any(start <= year <= end for start, end in windows)
+    return family_module.allied_in(windows, year)
 
 
 def prepare_region(
