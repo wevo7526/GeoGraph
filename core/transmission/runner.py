@@ -64,14 +64,29 @@ ARCHIVE_QUERY = (
     "ORDER BY e.event_time, e.node_id"
 )
 
+#: The same scan WITHOUT the event name. The name is only ever printed (the
+#: CLI's per-event line); nothing in the measurement reads it. It is also the
+#: heaviest column: the whole archive costs ~530 MB per million events held
+#: as rows plus parsed dates, and the API's convergence loop holds exactly
+#: that between ticks. Dropping the one column it never uses is most of the
+#: difference, in a process already carrying the corpus and Kuzu's buffers.
+ARCHIVE_QUERY_LEAN = (
+    "MATCH (e:Event) RETURN e.node_id AS id, e.event_time AS date, "
+    "e.goldstein AS goldstein "
+    "ORDER BY e.event_time, e.node_id"
+)
 
-def archive(graph: Any) -> list[dict[str, Any]]:
+
+def archive(graph: Any, *, with_names: bool = True) -> list[dict[str, Any]]:
     """Every event in the graph, in date order — THE event source.
 
     The deep tier (COW MIDs) lives only in the graph, so the pack is not the
-    source: "the archive" means the archive.
+    source: "the archive" means the archive. `with_names=False` is the
+    long-lived caller's form (see ARCHIVE_QUERY_LEAN).
     """
-    return kuzu_store.query(graph, ARCHIVE_QUERY)
+    return kuzu_store.query(
+        graph, ARCHIVE_QUERY if with_names else ARCHIVE_QUERY_LEAN
+    )
 
 
 def curated_event_ids(pack: Any) -> set[str]:

@@ -69,7 +69,9 @@ def _archive(conn: Any) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     rows = kuzu_store.query(conn, "MATCH (e:Event) RETURN count(e) AS n")
     count = int(rows[0]["n"]) if rows else 0
     if _archive_cache["count"] != count:
-        events = runner.archive(conn)
+        # Lean rows: the job never prints an event name, and the name is the
+        # heaviest column in a cache this process holds between ticks.
+        events = runner.archive(conn, with_names=False)
         _archive_cache.update({
             "count": count,
             "events": events,
@@ -282,6 +284,12 @@ def wire(conn: Any, deadline: float) -> dict[str, Any]:
         if not artifacts:
             _wire_done.add(name)
             continue
+        pending_now = [a for a in artifacts if not _marker(name, a).exists()]
+        if not pending_now:
+            # Marked complete — return before building the id set, which is a
+            # few hundred thousand strings per pack and pure waste here.
+            _wire_done.add(name)
+            continue
         pack = packs.load(name)
         seen = _wire_seen.get(name)
         if seen is None:
@@ -300,10 +308,7 @@ def wire(conn: Any, deadline: float) -> dict[str, Any]:
         }
 
         written = 0
-        pending = [a for a in artifacts if not _marker(name, a).exists()]
-        if not pending:
-            _wire_done.add(name)
-            continue
+        pending = pending_now
         for artifact in pending:
             if time.monotonic() >= deadline:
                 return {"pack": name, "written": written, "held": len(seen),
