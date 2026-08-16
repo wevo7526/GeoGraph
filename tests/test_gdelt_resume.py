@@ -549,19 +549,22 @@ def test_the_curated_spine_is_measured_on_every_boot_not_only_a_measuring_one(
     assert calls == []
 
 
-def test_the_games_guard_re_solves_when_the_payload_shape_changes():
-    # Measured on 2026-08-15: PAYLOAD_VERSION was bumped so the persisted maps
-    # stopped being servable, the graph facets had not moved, and the
-    # fingerprint guard skipped the one step that had to run — leaving every
-    # /api/games request to solve live. The image fingerprint covers shipped
-    # DATA, not core/, so the shape the step WRITES has to be in its own
-    # fingerprint whenever the reader can reject what is stored.
-    from core.games import scenarios
+def test_a_stale_payload_shape_is_what_makes_the_games_job_re_solve():
+    """The guard moved from the boot to the loop, and the property survived.
 
-    assert boot._games_payload_version() == scenarios.PAYLOAD_VERSION
-    source = (_ROOT / "scripts" / "boot.py").read_text(encoding="utf-8")
-    games = source.split('("games", lambda: _guarded(')[1].split("_solve_games")[0]
-    assert "_games_payload_version()" in games
+    Bumping PAYLOAD_VERSION makes every persisted map unservable — the reader
+    rejects it — so something must re-solve or every request falls back to a
+    ~130s live solve. That used to be a fingerprint on a boot step; it is now
+    the games job, which asks for the map AT THE CURRENT VERSION and re-solves
+    exactly what comes back missing.
+    """
+    import inspect
+
+    from core.api import work
+
+    source = inspect.getsource(work.games)
+    assert "version=scenarios.PAYLOAD_VERSION" in source
+    assert "record_game_solutions" in source
 
 
 def test_the_paper_backtest_is_declinable_and_opt_in(monkeypatch):

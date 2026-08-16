@@ -428,28 +428,6 @@ def _image_fingerprint() -> str:
     return digest.hexdigest()
 
 
-def _games_payload_version() -> str:
-    """The shape `scripts/solve_games.py` will WRITE, as a fingerprint input.
-
-    The image fingerprint covers shipped DATA (corpus, models, packs), not
-    `core/` — deliberately, since a code change is not an input to a
-    deterministic re-derivation. A persisted scenario map is the exception:
-    when its payload shape changes, the stored rows stop being servable
-    (`pg_store.game_solution` treats a version mismatch as a miss) and the
-    endpoint falls back to solving live on every request. Measured on
-    2026-08-15: the version was bumped, the graph facets had not moved, and the
-    guard skipped the one step that had to run. The shape a step writes belongs
-    in its fingerprint whenever the reader can reject what is stored.
-    """
-    try:
-        from core.games import scenarios
-
-        return str(scenarios.PAYLOAD_VERSION)
-    except Exception as exc:  # noqa: BLE001 - a fingerprint, not a dependency
-        _log(f"games payload version unreadable ({exc})")
-        return "unknown"
-
-
 #: The graph facets a step can declare as INPUTS. A step's fingerprint must
 #: cover what it READS and exclude what it WRITES, or the guard never sticks:
 #: the freeze writes Forecast nodes, so `frozen` in its own fingerprint would
@@ -1594,7 +1572,6 @@ def _boot_status() -> dict[str, Any]:
     # the study from reporting why it could not run, and neither may stop the
     # API from coming up. The fingerprint wrappers make unchanged inputs cost
     # milliseconds — each names exactly the facets its step READS.
-    import datetime as _dt
 
     image = _image_fingerprint()
     steps: tuple[tuple[str, Callable[[], dict[str, Any] | None]], ...] = (
@@ -1627,56 +1604,15 @@ def _boot_status() -> dict[str, Any]:
                 and not r.get("skipped")
             ),
         )),
-        ("metrics", lambda: _guarded(
-            "metrics",
-            # `relates` is in the fingerprint because analytics computes over
-            # the RELATES_TO web — an alliances-only deep refresh changes no
-            # event or estimate count, and without this facet it left
-            # NetworkMetric stale until the year rolled over.
-            lambda: (
-                f"{_graph_fingerprint('events', 'latest', 'estimates', 'relates')}"
-                f"|year={_dt.date.today().year}|{image}"
-            ),
-            _run_network_metrics,
-        )),
-        ("forecasts", lambda: _guarded(
-            "forecasts",
-            lambda: (
-                _graph_fingerprint(
-                    "events", "latest", "affected",
-                    "estimates", "forecasts", "frozen",
-                )
-                + f"|{image}"
-            ),
-            _freeze_forecasts,
-        )),
-        ("scores", lambda: _guarded(
-            "scores",
-            lambda: (
-                f"{_graph_fingerprint('events', 'latest', 'forecasts', 'frozen')}"
-                f"|{image}"
-            ),
-            _score_forecasts,
-        )),
-        ("backtest", lambda: _guarded(
-            "backtest",
-            lambda: (
-                f"{_graph_fingerprint('events', 'latest', 'affected')}"
-                f"|{_panel_edge()}|{image}"
-            ),
-            _run_backtest,
-        )),
-        # The scenario maps read events (the kernel), AFFECTED (the market
-        # map), estimates (CINC) and the frozen forecasts (the model tilt);
-        # the committed game/model artifacts ride in the image fingerprint.
-        ("games", lambda: _guarded(
-            "games",
-            lambda: (
-                f"{_graph_fingerprint('events', 'latest', 'affected', 'estimates', 'forecasts')}"
-                f"|{image}|payload={_games_payload_version()}"
-            ),
-            _solve_games,
-        )),
+        # metrics / forecasts / scores / backtest / games USED TO RUN HERE.
+        # They are jobs now (core/api/work.py), which is the whole point of
+        # the convergence loop: the boot's copies re-derived work the running
+        # API can do without a deploy, and — because the archive now moves
+        # continuously under them — their fingerprints missed on EVERY deploy,
+        # adding ~2 minutes of graph-dark time to each one for numbers the
+        # loop would refresh within the hour anyway. Run them by hand with
+        # scripts/run_network_metrics.py, run_forecasts.py, score_forecasts.py,
+        # run_backtest.py, solve_games.py when the API is stopped.
     )
     for key, step in steps:
         try:
