@@ -495,3 +495,173 @@ def forecasts(conn: Any, deadline: float) -> dict[str, Any]:
     if not done:
         return {"note": "every region's forecast is current", "archive": size}
     return {"frozen": done, "archive": size}
+
+
+# ── scoring the frozen trail ───────────────────────────────────────────────
+
+
+def scores(conn: Any, deadline: float) -> dict[str, Any]:
+    """Brier-score what has resolved; attach a retrodiction to what cannot be.
+
+    Near-term calls are scored only once the archive outlives their horizon —
+    three years, so nothing frozen this week resolves this week, and an open
+    question is left visibly unscored rather than counted as a zero. The
+    long-horizon mode is never Brier-scored (pressure over windows carries no
+    dated point prediction); it carries a retrodiction instead, and THAT is
+    what goes stale as the archive grows, because both the flagged windows and
+    the conflict that followed are recomputed from it.
+    """
+    import json
+
+    from core.graph import kuzu_store
+    from core.reasoning import calibration as calibration_module
+    from core.reasoning import forecasting
+
+    rows = kuzu_store.query(
+        conn,
+        "MATCH (f:Forecast) RETURN f.node_id AS node_id, f.mode AS mode, "
+        "f.region_pack AS region_pack, f.question AS question, "
+        "f.generated_at AS generated_at, f.horizon_end AS horizon_end, "
+        "f.scenarios_json AS scenarios_json, "
+        "f.frozen_inputs_json AS frozen_inputs_json, "
+        "f.boundary_statement AS boundary_statement ORDER BY f.node_id",
+    )
+    if not rows:
+        return {"skipped": "no frozen forecasts"}
+
+    archive_rows = forecasting.rows_from_conn(conn)
+    latest = max((str(r["event_time"]) for r in archive_rows), default="")
+    episodes = calibration_module.episode_quarters(archive_rows)
+
+    retro_by_region: dict[str, str] = {}
+    if latest:
+        as_of = f"{int(latest[:4]) - 10}-12-31"
+        for name in _pack_names():
+            if time.monotonic() >= deadline:
+                break
+            try:
+                retro_by_region[name] = json.dumps(calibration_module.retrodict(
+                    settings_module.load().kuzu_db_path,
+                    as_of=as_of, region_pack=name, conn=conn,
+                ))
+            except Exception as exc:  # noqa: BLE001 - one region's failure is its own
+                retro_by_region[name] = ""
+                del exc
+
+    updates: list[dict[str, Any]] = []
+    scored = 0
+    for row in rows:
+        base = {k: (v if v is not None else "") for k, v in row.items()}
+        scenarios = json.loads(str(row["scenarios_json"]) or "[]")
+        frozen = json.loads(str(row["frozen_inputs_json"]) or "{}")
+        if row["mode"] == "near_term":
+            as_of = str(frozen.get("as_of") or "")
+            horizon_end = str(row["horizon_end"] or "")
+            if not as_of or not horizon_end or not latest or latest < horizon_end:
+                continue  # an open question is not a zero
+            quarters = max(int(horizon_end[:4]) - int(as_of[:4]), 1) * 4
+            outcomes = calibration_module.near_term_outcomes(
+                scenarios, episodes, as_of=as_of, horizon_quarters=quarters
+            )
+            if not outcomes:
+                continue
+            base["brier_score"] = calibration_module.score_forecast(scenarios, outcomes)
+            scored += 1
+        elif row["mode"] == "long_horizon":
+            attached = retro_by_region.get(str(row["region_pack"]) or "")
+            if not attached:
+                continue
+            base["retrodiction_json"] = attached
+        else:
+            continue
+        updates.append(base)
+
+    if not updates:
+        return {"note": "nothing newly scoreable", "forecasts": len(rows)}
+    kuzu_store.merge_nodes(conn, "Forecast", updates)
+    return {"updated": len(updates), "brier_scored": scored}
+
+
+# ── the network's shape, and the paper book ────────────────────────────────
+
+
+#: Metrics and the backtest both read the whole archive, so both are gated on
+#: it having actually moved rather than on a clock.
+_metrics_at: dict[str, int] = {}
+_backtest_at: dict[str, int] = {}
+
+
+def metrics(conn: Any, deadline: float) -> dict[str, Any]:
+    """Centrality, brokerage and communities over the windowed subgraphs.
+
+    Persisted NetworkMetric nodes are what the explorer's time slider draws,
+    and they are a function of the RELATES_TO web and the events inside each
+    window — so they drift as the wire lands. Runs one window at a time so a
+    slice can stop cleanly.
+    """
+    import importlib.util
+    from pathlib import Path
+
+    from core.graph import analytics, kuzu_store
+
+    rows = kuzu_store.query(conn, "MATCH (e:Event) RETURN count(e) AS n")
+    size = int(rows[0]["n"]) if rows else 0
+    was = _metrics_at.get("all")
+    if was is not None and was > 0 and abs(size - was) / was < FREEZE_GROWTH:
+        return {"note": "network metrics are current", "archive": size}
+
+    root = Path(__file__).resolve().parents[2]
+    spec = importlib.util.spec_from_file_location(
+        "run_network_metrics", root / "scripts" / "run_network_metrics.py"
+    )
+    if spec is None or spec.loader is None:
+        return {"skipped": "runner unavailable"}
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    written = 0
+    windows = module.standard_windows()
+    for window in windows:
+        if time.monotonic() >= deadline:
+            return {"windows": written, "of": len(windows), "skipped": "slice spent"}
+        written += analytics.compute_windows(None, [window], conn=conn)[0][1]
+    _metrics_at["all"] = size
+    return {"windows": len(windows), "metrics": written, "archive": size}
+
+
+def backtest(conn: Any, deadline: float) -> dict[str, Any]:
+    """The walk-forward paper book, re-walked as the archive grows.
+
+    Reads the graph and writes only Postgres, so it never contends for the
+    write lock; it is here because it is a function of the archive and the
+    archive is moving.
+    """
+    import importlib.util
+    from pathlib import Path
+
+    from core.graph import kuzu_store
+
+    rows = kuzu_store.query(conn, "MATCH (e:Event) RETURN count(e) AS n")
+    size = int(rows[0]["n"]) if rows else 0
+    root = Path(__file__).resolve().parents[2]
+    spec = importlib.util.spec_from_file_location(
+        "run_backtest", root / "scripts" / "run_backtest.py"
+    )
+    if spec is None or spec.loader is None:
+        return {"skipped": "runner unavailable"}
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    done: list[str] = []
+    for name in _pack_names():
+        was = _backtest_at.get(name)
+        if was is not None and was > 0 and abs(size - was) / was < FREEZE_GROWTH:
+            continue
+        if time.monotonic() >= deadline:
+            return {"walked": done, "skipped": "slice spent"}
+        if module.run(name) is not None:
+            _backtest_at[name] = size
+            done.append(name)
+    if not done:
+        return {"note": "every region's book is current", "archive": size}
+    return {"walked": done, "archive": size}

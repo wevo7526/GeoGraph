@@ -166,6 +166,25 @@ def _start_jobs(app: FastAPI, settings: Any) -> None:
                 enabled=jobs_module._enabled("forecasts"),
                 slice_seconds=600.0,
             ),
+            # What has resolved, scored; what cannot be, retrodicted. Follows
+            # the freeze, since it reads what the freeze wrote.
+            jobs_module.Job(
+                name="scores", every=1800.0, run=work.scores,
+                enabled=jobs_module._enabled("scores"),
+                slice_seconds=300.0,
+            ),
+            # The explorer's windowed network, and the paper book. Both are
+            # functions of an archive that is now moving under them.
+            jobs_module.Job(
+                name="metrics", every=3600.0, run=work.metrics,
+                enabled=jobs_module._enabled("metrics"),
+                slice_seconds=300.0,
+            ),
+            jobs_module.Job(
+                name="backtest", every=3600.0, run=work.backtest,
+                enabled=jobs_module._enabled("backtest"),
+                slice_seconds=300.0,
+            ),
             # The scoreboard: seconds per region, and it must not be the first
             # reader's problem — the archive read alone grows with the wire.
             jobs_module.Job(

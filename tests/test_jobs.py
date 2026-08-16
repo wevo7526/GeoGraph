@@ -254,3 +254,26 @@ def test_neither_side_of_the_graph_lock_can_starve_the_other():
     # The reader arrived first, so it goes first — a writer in a loop cannot
     # keep jumping the queue, which is what starved every page.
     assert order == ["W1", "R", "W2"], order
+
+
+def test_every_recurring_job_runs_inside_the_api_rather_than_a_boot():
+    """The whole point of the loop: nothing that keeps the platform current
+    should need a deploy, because a deploy here is downtime (one volume, one
+    instance, stop-then-start).
+
+    Each of these was a boot step. Each needed a connection-taking seam,
+    because the API process holds Kuzu's write lock and a second
+    `kuzu.Database` inside it fails on that lock.
+    """
+    import inspect
+
+    from core.api import work
+
+    for name in ("study", "games", "wire", "rescore", "forecasts", "scores",
+                 "metrics", "backtest", "calibration"):
+        job = getattr(work, name, None)
+        assert callable(job), f"{name} is not a job"
+        params = list(inspect.signature(job).parameters)
+        assert params[:2] == ["conn", "deadline"], (
+            f"{name} must take the API's connection and a deadline: {params}"
+        )

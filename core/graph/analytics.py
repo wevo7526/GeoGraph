@@ -210,15 +210,23 @@ def compute_metrics(db_path: Path, window: Window) -> int:
         kuzu_store.close(conn)
 
 
-def compute_windows(db_path: Path, windows: list[Window]) -> list[tuple[Window, int]]:
+def compute_windows(
+    db_path: Path | None, windows: list[Window], *, conn: Any = None
+) -> list[tuple[Window, int]]:
     """Every window over ONE open connection — the boot's path. Opening the
     graph once instead of per window avoids the 20-40 cold opens (and their
-    8 TiB reservations) the standard decade+regime set would otherwise pay."""
-    conn = kuzu_store.connect(db_path)
-    try:
+    8 TiB reservations) the standard decade+regime set would otherwise pay.
+
+    `conn` runs it inside the API process (core/api/work.py), which holds the
+    write lock and so cannot open a graph of its own."""
+    if conn is not None:
         return [(window, _write_metrics(conn, window)) for window in windows]
+    assert db_path is not None, "compute_windows needs a path or an open conn"
+    owned = kuzu_store.connect(db_path)
+    try:
+        return [(window, _write_metrics(owned, window)) for window in windows]
     finally:
-        kuzu_store.close(conn)
+        kuzu_store.close(owned)
 
 
 def regime_shift_report(db_path: Path) -> list[dict[str, Any]]:

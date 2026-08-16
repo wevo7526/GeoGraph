@@ -103,6 +103,7 @@ def retrodict(
     region_pack: str,
     lookahead_years: int = 10,
     anchor_step_years: int = 5,
+    conn: Any = None,
 ) -> dict[str, Any]:
     """The Turchin retrospective: stand the structural method at MANY past
     dates and check whether the pressure it flagged preceded the conflict
@@ -125,7 +126,13 @@ def retrodict(
     """
     from core.reasoning import structural
 
-    archive = structural.PressureArchive.load(db_path, region_pack=region_pack)
+    # `conn` lets this run inside the API process, which holds the write lock
+    # and therefore cannot open a graph of its own (core/api/work.py).
+    archive = (
+        structural.PressureArchive.from_conn(conn, region_pack=region_pack)
+        if conn is not None
+        else structural.PressureArchive.load(db_path, region_pack=region_pack)
+    )
     realized = archive.components()["conflict_intensity"]
     end_year = int(as_of[:4])
     first_anchor = (min(realized) + lookahead_years) if realized else end_year
