@@ -91,9 +91,22 @@ ALLY_DEFAULTS = Payoffs(
 )
 
 
+#: The rival game's starting parameters: a hardliner presses at calm (its cost
+#: of pressing sits under the share a press wins) and stops when the
+#: recklessness cost of pressing at high friction outweighs it; an
+#: accommodating type holds. The fit (`fit_game.py --family rival`) decides.
+RIVAL_DEFAULTS = Payoffs(
+    discount=0.9, cost_resolute=0.1, cost_irresolute=1.0, stake=1.0, audience=0.5,
+)
+
+
 def defaults_for(space: family_module.ActionSpace) -> Payoffs:
     """The payoffs a family's game starts from when nothing is fitted."""
-    return ALLY_DEFAULTS if space.family == "ally" else Payoffs()
+    if space.family == "ally":
+        return ALLY_DEFAULTS
+    if space.family == "rival":
+        return RIVAL_DEFAULTS
+    return Payoffs()
 
 
 #: An ally's CONTRIBUTION to the shared good, by action index — commit
@@ -181,6 +194,53 @@ def ally_stage_payoff(
     return float(good - borne - abandonment)
 
 
+def rival_stage_payoff(
+    action: int,
+    other: int,
+    intensity: int,
+    capability: int,
+    type_index: int,
+    payoffs: Payoffs,
+) -> float:
+    """One period's payoff to a RIVAL — repeated competition below the use of
+    force, whose bad end is a coercive turn.
+
+    THE SAME FIVE PARAMETERS, RE-READ ONCE MORE. A rivalry conducted in
+    argument (US–China, US–Russia, UK–Russia — declared rivalries whose
+    record is under the adversary cut) is not a crisis over a stake held under
+    threat of force; it is a standing competition in which each side chooses
+    to ease, hold or press, the prize is contested by pressing, and the thing
+    to fear is not backing down but PRESSING AT HIGH FRICTION, which is how a
+    competition crosses into coercion (family 1). So:
+
+      - `stake`            the prize the competition is over (influence,
+                           standing, the terms of the relationship), won in
+                           share by pressing harder than the other side —
+                           Fearon's own share term, on the Goldstein spacing;
+      - `cost_resolute`    the cost of pressing for a HARDLINER type, and
+      - `cost_irresolute`  for an ACCOMMODATING one;
+      - `audience`         here the RECKLESSNESS cost — pressing when friction
+                           is already high risks the coercive turn, and the
+                           cost rises with the level (Fearon charges the
+                           audience cost for BACKING DOWN from a high band;
+                           this game charges it for pressing at one);
+      - `discount`         patience.
+
+    The bad end — the coercive turn — is both sides pressing at high friction,
+    which this payoff makes expensive in proportion to how high.
+    """
+    bands = len(state_module.INTENSITY_EDGES)
+    strength = (capability + 1) / len(state_module.CAPABILITY_EDGES)
+    positions = _action_positions()
+    press = (positions[action] - positions[other]) / 2.0
+    share = payoffs.stake * (0.5 + 0.5 * press) * strength
+    level = intensity / max(bands - 1, 1)
+    pressure = max(0.0, float(positions[action]))
+    borne = payoffs.cost_of(type_index) * pressure
+    recklessness = payoffs.audience * level if action == 2 else 0.0
+    return float(share - borne - recklessness)
+
+
 def stage_payoff(
     action: int,
     other: int,
@@ -205,6 +265,8 @@ def stage_payoff(
     """
     if space.family == "ally":
         return ally_stage_payoff(action, other, intensity, capability, type_index, payoffs)
+    if space.family == "rival":
+        return rival_stage_payoff(action, other, intensity, capability, type_index, payoffs)
     bands = len(state_module.INTENSITY_EDGES)
     strength = (capability + 1) / len(state_module.CAPABILITY_EDGES)
     # Pressing harder is measured on the GOLDSTEIN scale, not by ordinal

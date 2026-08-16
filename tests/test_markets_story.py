@@ -50,7 +50,11 @@ def _seed(conn: Any) -> Pack:
         direction = "escalating" if i % 4 != 3 else "de-escalating"
         events.append({
             "node_id": f"event:e{i}", "name": f"Event {i}",
-            "event_time": f"2020-{1 + i % 12:02d}-10",
+            # Saturdays: the days a Sun–Thu and a Mon–Fri calendar diverge,
+            # which is when first_mover carries information.
+            "event_time": (
+                f"2020-{1 + i % 12:02d}-{(4, 1, 7, 4, 2, 6, 4, 1, 5, 3, 7, 5)[i % 12]:02d}"
+            ),
             "action_cameo_code": "190", "goldstein": -9.0, "quad_class": "material_conflict",
             "fidelity_tier": "modern_coded", "temporal_resolution": "day",
             "source_scale": "goldstein", "region_pack": "t",

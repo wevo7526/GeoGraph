@@ -95,9 +95,10 @@ SEMANTICS: dict[str, dict[str, str]] = {
         "concede": "ease",
         "bad_end": "a coercive turn",
         "note": (
-            "structural competition below the use of force; the same "
-            "bargaining game, read for whether the threshold is approached "
-            "rather than for how a crisis ends"
+            "a repeated-competition game below the use of force: each side "
+            "eases, holds or presses over a contested prize, and the cost to "
+            "fear is pressing at high friction — the coercive turn — not "
+            "backing down"
         ),
     },
     "ally": {
@@ -192,7 +193,7 @@ def classify(
         # A rival is still solved with the adversary's payoff and says so, so
         # a reader can discount it instead of being handed brinkmanship
         # language for a competition conducted in argument.
-        "native": family in ("adversary", "ally"),
+        "native": family in ("adversary", "ally", "rival"),
         "question": semantics["question"],
         "headline": semantics["headline"],
         "bad_end": semantics["bad_end"],
@@ -215,6 +216,13 @@ def describe(classification: dict[str, Any]) -> str:
             "withhold — whose bad end is a rift, and the numbers below "
             "describe departures from this pair's OWN usual level of friction, "
             "never odds of conflict between the partners."
+        )
+    elif family == "rival":
+        line += (
+            " It is solved as a repeated-competition game — ease, hold or "
+            "press over a contested prize — whose bad end is a coercive turn, "
+            "and the numbers below describe how far the competition hardens "
+            "against this pair's OWN usual level, not the odds of open conflict."
         )
     elif not classification.get("native"):
         line += (
@@ -290,16 +298,23 @@ ADVERSARY = ActionSpace(
     reader="coercion",
 )
 
-#: A rival plays the SAME game read for a different threshold — family 2's own
-#: repeated-competition payoff is not built (docs/game-families.md), so the
-#: space is the adversary's with rival words on the surface. `native` stays
-#: false for it.
+#: The rival space — repeated competition below the use of force. The same
+#: three actions and the same coercion reading as the adversary's (a rival
+#: eases, holds or presses, read off the same quad classes), the same types
+#: (a hardliner presses more readily), but ITS OWN PAYOFF
+#: (`solve.rival_stage_payoff`): the prize is contested by pressing and the
+#: cost to fear is pressing at high friction — the coercive turn — not backing
+#: down. `native` since 2026-08-16.
 RIVAL = ActionSpace(
     family="rival",
-    actions=ADVERSARY.actions,
-    quads=ADVERSARY.quads,
-    types=ADVERSARY.types,
-    signal=ADVERSARY.signal,
+    actions=("ease", "hold", "press"),
+    quads={
+        "press": "material_conflict",
+        "hold": "verbal_conflict",
+        "ease": "verbal_cooperation",
+    },
+    types=("accommodating", "hardliner"),
+    signal=2,
     reader="coercion",
 )
 

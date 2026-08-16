@@ -34,6 +34,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from core import packs  # noqa: E402
 from core import settings as settings_module  # noqa: E402
+from core.classifier import escalation  # noqa: E402
 from core.games import estimate, transition  # noqa: E402
 from core.games import family as family_module  # noqa: E402
 from core.games import state as state_module  # noqa: E402
@@ -95,6 +96,47 @@ def prepare_region(
         events, quarter_of=panel_module.quarter_index, space=space
     )
     pair_note: dict[str, Any] = {}
+    if space.family == "rival":
+        # THE RIVAL GAME IS FITTED ON DECLARED RIVALRIES — the pack relations
+        # (COW carries no rivalry list) — whose record is under the adversary
+        # cut and under the adversary COUNT, in the rivalry's own window.
+        from core.games import opening as opening_module
+
+        pack = packs.load(region)
+        rival_windows: dict[str, list[tuple[int, int]]] = {}
+        for relation in pack.relations:
+            if relation.get("relation_type") == "rivalry":
+                dyad = escalation.dyad_id(str(relation["a"]), str(relation["b"]))
+                rival_windows.setdefault(dyad, []).append((
+                    family_module._year_of(relation.get("valid_from"), 1905),
+                    family_module._year_of(relation.get("valid_to"), 9999),
+                ))
+        windowed = [
+            row for row in table
+            if str(row["dyad_id"]) in rival_windows
+            and family_module.allied_in(rival_windows[str(row["dyad_id"])],
+                                        int(str(row["date"])[:4]))
+        ]
+        by_dyad_r: dict[str, list[dict[str, Any]]] = {}
+        for row in windowed:
+            by_dyad_r.setdefault(str(row["dyad_id"]), []).append(row)
+        chosen = set()
+        for dyad, rows in by_dyad_r.items():
+            read = opening_module.posture(rows)
+            share = read.get("share") or 0.0
+            count = int(read.get("coercive") or 0)
+            if share < family_module.ADVERSARY_SHARE and count < family_module.ADVERSARY_COUNT:
+                chosen.add(dyad)
+        table = [row for row in windowed if str(row["dyad_id"]) in chosen]
+        kept = {(str(r["dyad_id"]), int(r["q"])) for r in table}
+        joint = {k: v for k, v in joint.items() if k in kept}
+        pair_note = {"pairs": sorted(chosen), "pair_sources": ["packs"],
+                     "declared": len(rival_windows), "windowed": True}
+        print(f"{region}: {len(chosen)} rival pairs of {len(rival_windows)} declared, "
+              f"{len(table):,} in-window rows")
+        if not table:
+            print(f"{region}: no rival pair with a series — skipping")
+            return None
     if space.family == "ally":
         # THE ALLY GAME IS FITTED ON ALLY PAIRS — declared allied, and read
         # as such by the same coercive-share cut the classifier applies. The
@@ -219,8 +261,8 @@ def main() -> int:
     regions = [args.region] if args.region else packs.available()
     written = 0
 
-    if space.family == "ally":
-        # THE ALLY GAME IS FITTED POOLED ACROSS REGIONS. An alliance's
+    if space.family in ("ally", "rival"):
+        # THE ALLY AND RIVAL GAMES ARE FITTED POOLED ACROSS REGIONS. An alliance's
         # burden-sharing parameters — the value of the shared good against a
         # partner's private cost of carrying it — are not a property of a
         # region, and per region the in-window ally sample is thin: china's
@@ -251,7 +293,7 @@ def main() -> int:
         note = {"pairs": sorted(pooled_pairs), "pair_sources": sorted(sources),
                 "windowed": True, "pooled_over": list(regions)}
         fitted = fit_prepared(
-            "ally (pooled)", pooled_table, pooled_joint,
+            f"{space.family} (pooled)", pooled_table, pooled_joint,
             evaluations=args.evaluations, space=space, pair_note=note,
         )
         if fitted is None or args.dry_run:
@@ -259,7 +301,7 @@ def main() -> int:
                 print("\n--dry-run: nothing written")
             return 0 if (fitted is not None or args.dry_run) else 1
         for region in regions:
-            target = registry.MODELS_DIR / f"game-ally-{region}.json"
+            target = registry.MODELS_DIR / f"game-{space.family}-{region}.json"
             target.parent.mkdir(parents=True, exist_ok=True)
             payload = {**fitted, "region": region}
             payload["hash"] = registry.content_hash(payload)

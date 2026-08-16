@@ -78,18 +78,19 @@ def action_from_quads(
     """
     if space.reader == "contribution":
         return family_module.contribution_action(quad_counts)
+    concede, hold, press = space.actions
     total = sum(int(v) for v in quad_counts.values())
     if total <= 0:
-        return "hold"
+        return hold
     material = int(quad_counts.get("material_conflict", 0))
     if material and (material / total >= MATERIAL_SHARE or material >= MATERIAL_COUNT):
-        return "escalate"
+        return press
     cooperation = int(quad_counts.get("material_cooperation", 0)) + int(
         quad_counts.get("verbal_cooperation", 0)
     )
     if cooperation / total >= COOPERATION_SHARE:
-        return "de-escalate"
-    return "hold"
+        return concede
+    return hold
 
 
 def event_rows(conn: Any) -> list[dict[str, Any]]:

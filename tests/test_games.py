@@ -884,7 +884,11 @@ def test_the_explanation_is_written_from_the_payload():
     assert "untilted" in text  # no frozen model in this context
     lp = solved["concepts"]["lp"]
     assert 0.0 <= lp["escalation_probability"] <= 1.0
-    assert lp["opening_matrix"]["resolute"]["actions"] == list(state.ACTIONS)
+    # An unclassifiable pair (no standing, no coercive record) is read as a
+    # RIVAL — the weakest claim — and solved in the rival space, whose types
+    # and actions the payload names; the matrix is keyed by those.
+    types = solved["space"]["types"]
+    assert lp["opening_matrix"][types[1]]["actions"] == solved["space"]["actions"]
 
 
 def test_the_region_map_aggregates_every_solved_dyad(tmp_path, monkeypatch):
@@ -1241,9 +1245,10 @@ def test_the_game_family_comes_from_what_the_pair_is_and_how_it_behaves():
     assert ally["native"]
     assert ally["headline"] == "friction"
 
-    # A declared rivalry conducted in argument is a rival, not an adversary.
+    # A declared rivalry conducted in argument is a rival, not an adversary —
+    # and since the repeated-competition game landed it is played natively.
     rival = family.classify(_standing("rivalry"), _posture(0.05))
-    assert rival["family"] == "rival" and not rival["native"]
+    assert rival["family"] == "rival" and rival["native"]
 
     # The same declaration with a violent record is an adversary, and the
     # crisis-bargaining game IS the right one for it.
@@ -1270,7 +1275,7 @@ def test_the_game_family_comes_from_what_the_pair_is_and_how_it_behaves():
     # friction, never odds of conflict between the partners; a rival's carry
     # the crisis-bargaining caveat; an adversary's need neither.
     assert "never odds of conflict" in family.describe(ally)
-    assert "not odds of" in family.describe(rival)
+    assert "coercive turn" in family.describe(rival)
     assert "not odds of" not in family.describe(adversary)
 
 
@@ -1334,7 +1339,8 @@ def test_an_ally_pair_is_solved_in_the_ally_space(monkeypatch):
     assert "burden-sharing" in text and "never odds of conflict" in text
     assert "escalate" not in text.split("burden-sharing")[0].lower() or True
 
-    # The same context read as a rivalry: Fearon's game, Fearon's names.
+    # The same context read as a rivalry conducted in argument: the RIVAL
+    # game — ease / hold / press, accommodating / hardliner, its own payoffs.
     monkeypatch.setattr(
         opening, "standing",
         lambda conn, dyad_id, as_of=None: {
@@ -1347,9 +1353,9 @@ def test_an_ally_pair_is_solved_in_the_ally_space(monkeypatch):
         graph_conn=None, horizon=2,
     )
     assert rival is not None
-    assert rival["space"]["actions"] == list(state.ACTIONS)
-    assert rival["payoffs"]["cost_resolute"] == solve.Payoffs().cost_resolute
-    assert set(rival["concepts"]["lp"]["opening_matrix"]) == {"irresolute", "resolute"}
+    assert rival["space"]["actions"] == list(family.RIVAL.actions)
+    assert rival["payoffs"]["cost_resolute"] == solve.RIVAL_DEFAULTS.cost_resolute
+    assert set(rival["concepts"]["lp"]["opening_matrix"]) == {"accommodating", "hardliner"}
 
 
 def test_the_ally_game_reproduces_olson_zeckhauser():
@@ -1441,3 +1447,30 @@ def test_allies_coded_against_each_other_on_third_soil_are_co_participants():
     assert first["events"] == 1 and first["conflict"] == 0
     later = [r for r in table if r["q"] > first["q"] and r["events"]][0]
     assert later["conflict"] == 1
+
+
+def test_the_rival_game_fears_pressing_at_high_friction_not_backing_down():
+    """Family 2: a rivalry conducted in argument is a repeated competition
+    whose bad end is a coercive turn — so pressing at high friction is what
+    costs, and easing from a high band costs nothing (Fearon's audience cost
+    is for backing down; this game has none)."""
+    from core.games import family
+
+    p = solve.RIVAL_DEFAULTS
+    # At low friction the hardliner presses; at the top band the recklessness
+    # cost bites and it holds or eases.
+    calm = [solve.stage_payoff(a, 1, 0, 1, 1, p, family.RIVAL) for a in range(3)]
+    hot = [solve.stage_payoff(a, 1, 5, 1, 1, p, family.RIVAL) for a in range(3)]
+    assert calm.index(max(calm)) == 2
+    assert hot.index(max(hot)) != 2
+    assert hot[2] < calm[2]
+    # Easing from a high band carries no audience cost here — unlike Fearon.
+    assert solve.stage_payoff(0, 1, 5, 1, 1, p, family.RIVAL) == pytest.approx(
+        solve.stage_payoff(0, 1, 0, 1, 1, p, family.RIVAL))
+    assert solve.stage_payoff(0, 1, 5, 1, 1, p, family.ADVERSARY) < solve.stage_payoff(
+        0, 1, 0, 1, 1, p, family.ADVERSARY)
+    # The rival space reads the record as the adversary does, in its own words.
+    from core.games import transition
+    assert transition.action_from_quads({"material_conflict": 3, "verbal_conflict": 2},
+                                        family.RIVAL) == "press"
+    assert transition.action_from_quads({"verbal_cooperation": 9}, family.RIVAL) == "ease"

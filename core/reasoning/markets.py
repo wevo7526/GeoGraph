@@ -48,6 +48,17 @@ def kind_of(direction: str | None, magnitude: float | None) -> str:
     return "stable"
 
 
+def _weekend(date: Any) -> bool:
+    """Friday, Saturday or Sunday — the days a Sun–Thu and a Mon–Fri calendar
+    disagree about the next session."""
+    import datetime as dt
+
+    try:
+        return dt.date.fromisoformat(str(date)[:10]).weekday() >= 4
+    except (TypeError, ValueError):
+        return False
+
+
 def _quantiles(values: list[float]) -> dict[str, float]:
     ordered = sorted(values)
     n = len(ordered)
@@ -67,6 +78,7 @@ def market_rows(conn: Any, ticker: str, region_pack: str) -> list[dict[str, Any]
         "MATCH (e:Event)-[a:AFFECTED]->(m:Market {ticker: $ticker}) "
         "WHERE e.region_pack = $pack OR e.region_pack = '' "
         "RETURN e.escalation_direction AS direction, e.escalation_magnitude AS magnitude, "
+        "e.event_time AS date, "
         "a.window AS window, a.abnormal_return AS ar, a.first_mover AS first_mover, "
         "a.overlapping AS overlapping",
         {"ticker": ticker, "pack": region_pack},
@@ -113,7 +125,12 @@ def market_response(rows: list[dict[str, Any]]) -> dict[str, Any]:
             continue
         kind = kind_of(r["direction"], r["magnitude"])
         cells[(kind, str(r["window"]))].append(float(r["ar"]))
-        if str(r["window"]) == HEADLINE_WINDOW or str(r["window"]) in ("monthly", "annual"):
+        # FIRST MOVER IS ONLY INFORMATION WHEN THE CALENDARS DIVERGE. On a
+        # weekday every market's first session is the same day and all tie
+        # for first — the flag read 100% for every US market. Friday, Saturday
+        # and Sunday events are the ones on which a Sun–Thu exchange and a
+        # Mon–Fri exchange print on different days, so the share is over those.
+        if str(r["window"]) == HEADLINE_WINDOW and _weekend(r.get("date")):
             first[kind].append(bool(r["first_mover"]))
     windows = sorted({w for _, w in cells})
     response: dict[str, dict[str, Any]] = {}
@@ -340,9 +357,10 @@ def explain(payload: dict[str, Any]) -> list[str]:
         share = shares.get("sharp_escalation") or shares.get("escalation")
         if share is not None:
             out.append(
-                f"{g['name']} trades Sunday–Thursday and printed first on {share:.0%} of "
-                "escalations — the weekend gap between Gulf and US sessions is real "
-                "information, not bookkeeping."
+                f"{g['name']} trades Sunday–Thursday and, on escalations that landed on a "
+                f"Friday, Saturday or Sunday, printed first {share:.0%} of the time — the "
+                "weekend gap between Gulf and US sessions is real information, not "
+                "bookkeeping."
             )
     fwd = payload.get("forward") or {}
     if fwd.get("direction"):

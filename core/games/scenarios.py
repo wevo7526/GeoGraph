@@ -54,7 +54,7 @@ REGION_DYADS = 12
 #: play named at 100%, because those rows also predate the belief ceiling that
 #: stopped a filtered belief reaching certainty. A persisted computation
 #: outlives the code that wrote it; the version is what makes that safe.
-PAYLOAD_VERSION = "2026-08-16.10"
+PAYLOAD_VERSION = "2026-08-16.11"
 
 #: A step's market row needs this many measurements before the scenario
 #: names it as an implication (the pricing module's own thinness bar).
@@ -441,6 +441,7 @@ def solve_dyad(
     horizon: int = 4,
     solvers: tuple[str, ...] = ("qre", "lp"),
     ally_payoffs: solve_module.Payoffs | None = None,
+    rival_payoffs: solve_module.Payoffs | None = None,
 ) -> dict[str, Any] | None:
     """The full solved game for one dyad at its data-driven opening state.
 
@@ -483,6 +484,10 @@ def solve_dyad(
     if space.family == "ally":
         payoffs = ally_payoffs or solve_module.Payoffs(
             **context_module.fitted_payoffs(region, "ally")
+        )
+    elif space.family == "rival":
+        payoffs = rival_payoffs or solve_module.Payoffs(
+            **context_module.fitted_payoffs(region, "rival")
         )
     joint = context_module.joint_for(context, space)
     beliefs = opening_module.filtered_beliefs(joint, dyad_id, payoffs, space=space)
@@ -571,6 +576,12 @@ def solve_dyad(
             "cost_irresolute": payoffs.cost_irresolute, "stake": payoffs.stake,
             "audience": payoffs.audience,
         },
+        # Whether a fitted artifact stands behind those numbers. The rival game
+        # ships on defaults: its declared pairs are too few to fit (kernel 19%
+        # measured against the 50% bar), and a reader must be able to see that.
+        "payoffs_source": (
+            "fitted" if context_module.payoffs_fitted(region, space.family) else "defaults"
+        ),
         # THE GAME PLAYED: its family, its actions in order (concede / hold /
         # press) and its private types, so a reader of the payload — and the
         # explanation below — never has to guess what index 2 meant.
@@ -583,8 +594,8 @@ def solve_dyad(
         "primary_solver": primary,
         "concepts": concepts,
         "kernel": (
-            context.get("coverage_by_space", {}).get("ally", context["coverage"])
-            if space.family == "ally" else context["coverage"]
+            context.get("coverage_by_space", {}).get(space.family, context["coverage"])
+            if space.family in ("ally", "rival") else context["coverage"]
         ),
         "boundary_statement": BOUNDARY_STATEMENT,
     }
@@ -745,6 +756,13 @@ def explain(solution: dict[str, Any]) -> list[str]:
     # error that made US-Japan look like a war on 2026-08-16.
     if op.get("family"):
         out.append(family_module.describe(op["family"]))
+    if solution.get("payoffs_source") == "defaults":
+        out.append(
+            "The payoffs of this game are its stated DEFAULTS, not a fit: the archive's "
+            "declared pairs of this family are too few for indirect inference to clear "
+            "its coverage bar, so the numbers below describe the game's own logic at "
+            "reasonable parameters rather than parameters recovered from the record."
+        )
 
     if lp:
         m = lp["opening_matrix"][type_one]
@@ -869,12 +887,13 @@ def region_map(
     # artifact where one ships, the ally defaults otherwise. `solve_dyad`
     # picks them up only for pairs its family read makes allies.
     ally_payoffs = solve_module.Payoffs(**context_module.fitted_payoffs(region, "ally"))
+    rival_payoffs = solve_module.Payoffs(**context_module.fitted_payoffs(region, "rival"))
     solutions: list[dict[str, Any]] = []
     for dyad_id in dyad_ids:
         solved = solve_dyad(
             context, region=region, dyad_id=dyad_id, payoffs=payoffs,
             graph_conn=graph_conn, horizon=horizon, solvers=solvers,
-            ally_payoffs=ally_payoffs,
+            ally_payoffs=ally_payoffs, rival_payoffs=rival_payoffs,
         )
         if solved is not None:
             solutions.append(solved)

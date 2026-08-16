@@ -43,14 +43,18 @@ from core.wire import corpus  # noqa: E402
 DEFAULT_CUTS = (0.60, 0.70, 0.80)
 
 
-def rows_for(region: str) -> list[dict[str, Any]]:
-    """One row per (dyad, quarter) transition: features, offset key, label."""
+def rows_for(region: str, space: Any = None) -> list[dict[str, Any]]:
+    """One row per (dyad, quarter) transition: features, offset key, label —
+    the joint action read in `space` (the adversary reading by default, the
+    ally reading for `dynamics-ally-<region>`)."""
+    from core.games import family as family_module
     from core.models import panel as panel_module
 
+    space = space or family_module.ADVERSARY
     panel_rows, game_rows = corpus.views(region)
     table = panel_module.build(panel_rows, region_pack=region)
     joint = transition.joint_actions(
-        game_rows, quarter_of=panel_module.quarter_index)
+        game_rows, quarter_of=panel_module.quarter_index, space=space)
 
     by_dyad: dict[str, list[dict[str, Any]]] = defaultdict(list)
     for row in table:
@@ -77,8 +81,8 @@ def rows_for(region: str) -> list[dict[str, Any]]:
                 "date": str(series[i]["date"]),
                 "band": band,
                 "next": levels[i + 1],
-                "a": state_module.ACTIONS.index(actions[0]),
-                "b": state_module.ACTIONS.index(actions[1]),
+                "a": space.index(actions[0]),
+                "b": space.index(actions[1]),
                 **dynamics.row_features(window, band, scale),
             })
     return sorted(out, key=lambda r: r["date"])
@@ -156,12 +160,22 @@ def main() -> None:
     parser.add_argument("regions", nargs="*", help="default: every pack")
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--ablate", action="store_true")
+    parser.add_argument(
+        "--family", default="adversary", choices=("adversary", "ally"),
+        help="which reading of the record the kernel is conditioned on; 'ally' "
+             "trains the per-pair residual over commit/affirm/withhold and writes "
+             "models/dynamics-ally-<region>.json, which the ally game's kernel reads",
+    )
     args = parser.parse_args()
+    from core.games import family as family_module
+
+    space = family_module.space_for(args.family)
+    stem = "dynamics" if space.family != "ally" else "dynamics-ally"
 
     names = args.regions or corpus.installed()
     for region in names:
-        print(f"\n=== {region}")
-        rows = rows_for(region)
+        print(f"\n=== {region} ({space.family} reading)")
+        rows = rows_for(region, space)
         print(f"  {len(rows)} transitions, "
               f"{len({r['dyad'] for r in rows})} dyads, "
               f"{rows[0]['date']} → {rows[-1]['date']}")
@@ -181,8 +195,10 @@ def main() -> None:
         kernel = counted_kernel(rows)
         fitted = dynamics.fit(rows, kernel)
         payload: dict[str, Any] = {
-            "name": f"dynamics-{region}",
+            "name": f"{stem}-{region}",
             "version": registry.ARTIFACT_VERSION,
+            "family": space.family,
+            "actions": list(space.actions),
             "trained_on": {
                 "region": region, "rows": len(rows),
                 "dyads": len({r["dyad"] for r in rows}),

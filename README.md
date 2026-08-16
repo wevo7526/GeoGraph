@@ -16,15 +16,11 @@ A game layer that solves what happens next — and a rule that the AI never orig
 [![API](https://img.shields.io/badge/API-FastAPI-009688?style=flat-square&logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com/)
 [![Web](https://img.shields.io/badge/web-React%20%2B%20Vite-61dafb?style=flat-square&logo=react&logoColor=black)](https://vitejs.dev/)
 
-[![Tests](https://img.shields.io/badge/tests-458%20passing-2da44e?style=flat-square)](#verification)
+[![Tests](https://img.shields.io/badge/tests-474%20passing-2da44e?style=flat-square)](#verification)
 [![Lint](https://img.shields.io/badge/ruff-clean-2da44e?style=flat-square)](#verification)
 [![Types](https://img.shields.io/badge/mypy-strict-2da44e?style=flat-square)](#verification)
 [![Archive](https://img.shields.io/badge/archive-1905%20→%20present-6e7781?style=flat-square)](#the-archive)
 [![Regions](https://img.shields.io/badge/region%20packs-3-6e7781?style=flat-square)](#region-packs)
-
-<br>
-
-[**Build spec**](docs/build-spec.md) · [**Game layer**](docs/game-spec.md) · [**Game families**](docs/game-families.md) · [**Learned layer**](docs/ml-spec.md) · [**OOS validation**](docs/oos-spec.md) · [**Build plan**](docs/master-build-plan.md)
 
 </div>
 
@@ -37,8 +33,9 @@ about uncertainty enforced in code rather than in prose. It is a sibling of
 source of truth, Kuzu as the embedded knowledge graph, one provenance
 invariant, one Railway deploy.
 
-> **`docs/build-spec.md` is the master spec and every decision in it is locked.**
-> This README is the door, not the argument.
+> Every structural decision here is locked in a design spec that lives with the
+> maintainers; the code cites its sections. This README is the door, not the
+> argument.
 
 ---
 
@@ -397,12 +394,12 @@ adversaries, and the wrong one for treaty allies, to whom it was being applied.
 sourced `RELATES_TO` web) and how its record **reads** (the coercive share of
 its coded events), and every solved dyad carries its family and, where the
 solved game is not that family's own, a sentence saying so.
-`docs/game-families.md` maps the families the archive can identify and the
-order in which they get their own action sets and payoffs.
+`core/games/family.py` names the families the archive can identify; the
+adversary, ally and rival games each have their own action set and payoff.
 
 </details>
 
 ---
 
-`docs/build-spec.md` is the master spec and every decision in it is locked.
-Cite the section when you deviate, and never deviate silently.
+Every locked decision is cited by section in the code that carries it. Cite
+the section when you deviate, and never deviate silently.

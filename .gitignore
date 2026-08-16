@@ -37,3 +37,6 @@ web/.vite/
 
 # Claude Code project instructions stay local (2026-08-16)
 CLAUDE.md
+
+# Design specs and audits stay local — the public repo is the software
+docs/
