@@ -361,7 +361,11 @@ export default function RelationshipPage({ region, onNavigate }: { region: strin
                   {' '}The solved game puts <strong>{pct(solution.concepts[solution.primary_solver]?.sharp_departure_probability ?? 0, 0)}</strong> on a
                   sharper-than-usual departure from its own baseline within {solution.horizon} quarters
                   {solution.concepts.lp && solution.primary_solver !== 'lp' ? ` (LP benchmark ${pct(solution.concepts.lp.sharp_departure_probability, 0)})` : ''}
-                  {solution.opening.tilt ? `, with the learned layer tilting the kernel by η ${solution.opening.tilt.eta >= 0 ? '+' : ''}${solution.opening.tilt.eta.toFixed(3)}` : ', untilted by the learned layer'}.
+                  {solution.opening.tilt
+                    ? (solution.opening.tilt.features
+                        ? ', over a kernel conditioned on this pair’s own measured record rather than the region’s pooled table'
+                        : `, with the learned layer tilting the kernel by η ${(solution.opening.tilt.eta ?? 0) >= 0 ? '+' : ''}${(solution.opening.tilt.eta ?? 0).toFixed(3)}`)
+                    : ', over the region’s counted kernel'}.
                 </p>
                 <p className="mt-2">
                   <button className="btn" onClick={() => onNavigate(`/games?dyad=${encodeURIComponent(selected)}&region=${encodeURIComponent(region)}`)}>

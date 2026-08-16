@@ -177,3 +177,32 @@ def test_a_pack_with_no_artifact_still_solves():
     from core.games import context as context_module
 
     assert context_module.load_dynamics("no-such-region") is None
+
+
+def test_the_explanation_handles_both_kernel_audits_and_neither():
+    """THE REGRESSION THIS EXISTS FOR. `explain` read `tilt['eta']` directly,
+    and the dynamics audit has no eta — it names features, a bound and the
+    gate it passed. Production answered `KeyError: 'eta'` on the first solve
+    after the model shipped.
+
+    Two instruments can produce a kernel and a third case is neither, so the
+    sentence has to cope with all three rather than assume the bridge.
+    """
+    from core.games import scenarios
+
+    dynamics_audit = {
+        "model": "dynamics-test@abc123", "method": "softmax over an offset",
+        "features": {"volume": 6.1, "coercive": 0.09, "volatility": 0.2},
+        "max_tilt": 2.5, "gate": "log-loss 1.25 vs counted 1.38",
+    }
+    line = scenarios.describe_kernel(dynamics_audit)
+    assert "dynamics-test@abc123" in line and "volume +6.10" in line
+    assert "log-loss 1.25" in line
+
+    bridge_audit = {"eta": 0.42, "scale": 0.5, "model": "intensity@def456",
+                    "method": "kernel rows tilted by exp(eta * band offset)"}
+    line = scenarios.describe_kernel(bridge_audit)
+    assert "+0.420" in line and "intensity@def456" in line
+
+    line = scenarios.describe_kernel(None)
+    assert "counted table" in line

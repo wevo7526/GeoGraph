@@ -536,6 +536,39 @@ def _mix_words(mix: list[float]) -> str:
     return ", ".join(parts) if parts else "no action above 5%"
 
 
+def describe_kernel(tilt: dict[str, Any] | None) -> str:
+    """Which instrument produced this pair's kernel, in one sentence.
+
+    TWO SHAPES OF AUDIT, and a third case that is neither — extracted here
+    because `explain` read `tilt["eta"]` straight out of the block and the
+    dynamics audit has no eta (it names features, a bound and the gate it
+    passed). Production answered `KeyError: 'eta'` on the first solve after
+    the model shipped. One function knows the shapes; everything else asks it.
+    """
+    if tilt and "features" in tilt:
+        measured = ", ".join(
+            f"{name} {value:+.2f}" for name, value in sorted(tilt["features"].items())
+        )
+        return (
+            f"This pair's kernel is its own: the counted table enters as an offset and "
+            f"{tilt['model']} adds a residual read off its measured record ({measured}), "
+            f"bounded at ±{tilt.get('max_tilt')} in log space. Held out, that model beat "
+            f"the counted kernel this game used to solve over for every pair alike — "
+            f"{tilt.get('gate', '')}."
+        )
+    if tilt:
+        return (
+            f"The learned layer tilts this pair's kernel: η = {float(tilt['eta']):+.3f} "
+            f"(bounded by {tilt['scale']}) from the frozen model {tilt['model']}'s "
+            "trajectory for this dyad — the counted kernel remains the evidence; the "
+            "tilt is the model's claim about magnitude."
+        )
+    return (
+        "No transition model ships for this region and no gated model trajectory is "
+        "frozen for this pair, so the kernel is the region's counted table, untilted."
+    )
+
+
 def explain(solution: dict[str, Any]) -> list[str]:
     """Paragraphs a reader can check against the payload — every number in
     the prose is a field in the solution."""
@@ -658,20 +691,8 @@ def explain(solution: dict[str, Any]) -> list[str]:
             "No course of play cleared the retained-mass floor — the fan alone is the forecast."
         )
 
-    tilt = op.get("tilt")
-    if tilt:
-        out.append(
-            f"The learned layer tilts this pair's kernel: η = {float(tilt['eta']):+.3f} "
-            "(bounded by "
-            f"{tilt['scale']}) from the frozen model {tilt['model']}'s trajectory for "
-            "this dyad — the "
-            "counted kernel remains the evidence; the tilt is the model's claim about magnitude."
-        )
-    else:
-        out.append(
-            "No gated model trajectory is frozen for this pair, so the kernel is untilted: the "
-            "learned layer makes no claim here."
-        )
+    out.append(describe_kernel(op.get("tilt")))
+
     k = solution["kernel"]
     out.append(
         f"Kernel: {k.get('measured', 0)} of {k.get('cells', 0)} transition cells measured "

@@ -352,8 +352,21 @@ export interface GameOpening {
     quarters_observed: number
     source: 'bayes_filter' | 'default'
   }
-  /** The ML→game bridge's audit block; null when untilted. */
-  tilt: { eta: number; scale: number; model: string; method: string } | null
+  /**
+   * Which instrument produced this pair's kernel, or null for the region's
+   * plain counted table. `features` present = the dynamics model (the counted
+   * table conditioned on this pair's own record); `eta` present = the older
+   * ML→game bridge, which is the fallback where no dynamics artifact ships.
+   */
+  tilt: {
+    model: string
+    method: string
+    eta?: number
+    scale?: number
+    features?: Record<string, number>
+    max_tilt?: number
+    gate?: string
+  } | null
 }
 
 export interface SequenceDyad {
@@ -919,7 +932,15 @@ export interface DyadSolution {
     active_quarters: number
     capability: { band: number; ratio?: number; source: string }
     beliefs: { a: number; b: number; quarters_observed?: number; source: string }
-    tilt: { eta: number; scale: number; model: string; method: string } | null
+    tilt: {
+      model: string
+      method: string
+      eta?: number
+      scale?: number
+      features?: Record<string, number>
+      max_tilt?: number
+      gate?: string
+    } | null
   }
   payoffs: Record<string, number>
   primary_solver: 'lp' | 'qre'

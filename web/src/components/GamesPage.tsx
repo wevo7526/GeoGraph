@@ -386,7 +386,7 @@ function DyadGame({
             { label: 'opening departure', value: sol.opening.intensity_label, sub: `latest ${sol.opening.latest_intensity.toFixed(2)} vs the pair's scale ${sol.opening.scale.toFixed(2)}` },
             { label: 'capability', value: `band ${sol.opening.capability.band}`, sub: sol.opening.capability.source === 'cinc' ? `CINC ratio ${(sol.opening.capability.ratio ?? 0.5).toFixed(2)}` : 'default (no CINC)' },
             { label: 'beliefs (resolute)', value: `${pct(sol.opening.beliefs.a, 0)} / ${pct(sol.opening.beliefs.b, 0)}`, sub: sol.opening.beliefs.source === 'bayes_filter' ? `filtered from ${sol.opening.beliefs.quarters_observed} quarters` : 'flat prior' },
-            { label: 'ML tilt', value: sol.opening.tilt ? `η ${sol.opening.tilt.eta >= 0 ? '+' : ''}${sol.opening.tilt.eta.toFixed(3)}` : 'none', tone: sol.opening.tilt ? (sol.opening.tilt.eta > 0 ? 'loss' : 'gain') : 'plain', sub: sol.opening.tilt ? sol.opening.tilt.model : 'no gated trajectory' },
+            { label: 'kernel', value: sol.opening.tilt ? (sol.opening.tilt.features ? 'this pair’s own' : `η ${(sol.opening.tilt.eta ?? 0) >= 0 ? '+' : ''}${(sol.opening.tilt.eta ?? 0).toFixed(3)}`) : 'region counted', tone: 'plain', sub: sol.opening.tilt ? sol.opening.tilt.model : 'no model ships for this region' },
           ]} />
         </div>
       </div>
