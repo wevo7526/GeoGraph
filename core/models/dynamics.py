@@ -28,8 +28,8 @@ is what makes the residual's job small enough to learn.
 
 WHAT IS IN x, AND WHAT IS NOT. Three measured facts about the pair's own recent
 record — volume, coercive share and volatility over four quarters — plus the
-two interactions the ablation kept. A fourth, mean level, was computed and
-dropped: see FEATURES below. NOT in it: `ally`, `rival`, `bloc`,
+two interactions the ablation kept. Mean level and Head B's escalation
+magnitude were both computed and dropped: see FEATURES below. NOT in it: `ally`, `rival`, `bloc`,
 `proxy`, the CINC ratio, betweenness, eigenvector, degree, Burt constraint,
 community co-membership. Every one was measured against PRODUCTION's 37,930
 NetworkMetric nodes (the dev graph holds none, which is why an earlier pass
@@ -53,6 +53,29 @@ Held out on a time split (75/25), against the kernel that ships today:
     mena      1.4982 → 1.3710       +0.1406 → +0.2056
     china     1.3982 → 1.2583       +0.1294 → +0.1740
     eurasia   1.3858 → 1.2556       +0.0720 → +0.1061
+
+HOW FAR AHEAD THE CLAIM HOLDS, because the game applies this kernel FOUR times
+(`solve.solve(..., horizon=4)`) and the model is fitted one quarter ahead.
+Measured directly, held out, by re-fitting at each horizon:
+
+    horizon    log-loss edge        within-dyad ρ (counted → model)
+    1 quarter  −0.086 to −0.093     +0.125→+0.144, +0.043→+0.071, +0.093→+0.106
+    2 quarters −0.072 to −0.091     +0.095→+0.118, +0.008→−0.001, +0.063→+0.057
+    4 quarters −0.049 to −0.083     +0.068→+0.066, −0.018→−0.059, +0.030→+0.030
+
+The LOG-LOSS edge survives the horizon; the ORDERING edge does not. By four
+quarters the model orders a pair's own quarters no better than the counted
+table, and in china neither of them orders correctly at all (both ρ negative).
+So a solved path's later steps rest on the counted kernel's evidence, not on
+this model's — the near steps are where its claim lives, and `describe_kernel`
+says so rather than letting a four-period fan imply four periods of edge.
+
+Two more candidates were built and dropped, both because pooled log-loss
+improved while within-dyad ordering did not:
+  * PER-DYAD RANDOM INTERCEPTS, shrunk empirical-Bayes over the training
+    residual. Log-loss −0.001 to −0.004; ρ unchanged to three decimals.
+  * A SQUARE-AND-CROSS-TERM BASIS. Noise in mena and eurasia, clearly worse in
+    china (log-loss 1.2685 → 1.2884). The linear residual is at its ceiling.
 
 Training is OFFLINE (`scripts/train_dynamics.py` → a hashed JSON artifact in
 `models/`, committed), reading the CORPUS and never a live store, so the
@@ -84,6 +107,16 @@ from core.games import state as state_module
 #: `volume` is what carries the model: dropping it costs +0.0281/+0.0199/
 #: +0.0201 log-loss and −0.0424/−0.0428/−0.0151 within-dyad ρ. `coercive`
 #: earns its place through the interactions rather than on its own.
+#:
+#: `magnitude` — Head B's own departure-from-baseline coding, averaged over the
+#: quarter's events in both directions — was BUILT AND REVERTED, and the near
+#: miss is worth recording. On a single 75/25 split it looked like the first
+#: graph-side feature to earn a place: log-loss down in two regions, within-dyad
+#: ρ up in all three. Over the three walk-forward folds the trainer actually
+#: gates on, log-loss improved everywhere (−0.0007/−0.0029/−0.0035) while ρ
+#: fell in china (−0.0014) and eurasia (−0.0052). That is the same pattern as
+#: the graph features, and this file's own rule says pooled log-loss is the
+#: easy half. One split is not evidence here; the folds are.
 FEATURES = ("volume", "coercive", "volatility")
 
 #: Two products the ablation kept. `coercive * band` lets a coercive record
@@ -99,6 +132,11 @@ WINDOW_QUARTERS = 4
 
 #: L2 on the residual weights. The residual's whole job is to be small.
 L2 = 0.3
+
+#: How far ahead the model's dyad-specific ORDERING claim holds, in quarters.
+#: Measured, not assumed — see the module docstring's horizon table. Carried
+#: into the audit block so a four-period fan cannot imply four periods of edge.
+ORDERING_HORIZON_QUARTERS = 1
 
 #: The band the model may move an offset row by, in log space, before the tilt
 #: is clipped. A residual that can dominate the counted evidence is no longer

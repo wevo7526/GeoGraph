@@ -53,7 +53,7 @@ REGION_DYADS = 12
 #: play named at 100%, because those rows also predate the belief ceiling that
 #: stopped a filtered belief reaching certainty. A persisted computation
 #: outlives the code that wrote it; the version is what makes that safe.
-PAYLOAD_VERSION = "2026-08-16.1"
+PAYLOAD_VERSION = "2026-08-16.2"
 
 #: A step's market row needs this many measurements before the scenario
 #: names it as an implication (the pricing module's own thinness bar).
@@ -549,12 +549,20 @@ def describe_kernel(tilt: dict[str, Any] | None) -> str:
         measured = ", ".join(
             f"{name} {value:+.2f}" for name, value in sorted(tilt["features"].items())
         )
+        horizon = tilt.get("ordering_horizon")
         return (
             f"This pair's kernel is its own: the counted table enters as an offset and "
             f"{tilt['model']} adds a residual read off its measured record ({measured}), "
             f"bounded at ±{tilt.get('max_tilt')} in log space. Held out, that model beat "
             f"the counted kernel this game used to solve over for every pair alike — "
             f"{tilt.get('gate', '')}."
+            + (
+                f" Its dyad-specific claim was measured to hold "
+                f"{horizon} quarter ahead: further out the counted evidence "
+                "is what the path rests on, so the later periods of the fan "
+                "are less informed than the first."
+                if horizon else ""
+            )
         )
     if tilt:
         return (

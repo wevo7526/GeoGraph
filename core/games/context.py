@@ -181,6 +181,7 @@ def kernel_for(context: dict[str, Any], dyad_id: str) -> tuple[Any, dict[str, An
                              for k, v in facts["features"].items()},
                 "max_tilt": dynamics_module.MAX_TILT,
                 "gate": loaded["summary"],
+                "ordering_horizon": dynamics_module.ORDERING_HORIZON_QUARTERS,
                 "method": (
                     "P(next) = softmax(log P_counted(next | band, a, b) + x.W): "
                     "the counted kernel enters as an OFFSET, so W = 0 is the "

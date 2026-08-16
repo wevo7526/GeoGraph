@@ -194,10 +194,16 @@ def test_the_explanation_handles_both_kernel_audits_and_neither():
         "model": "dynamics-test@abc123", "method": "softmax over an offset",
         "features": {"volume": 6.1, "coercive": 0.09, "volatility": 0.2},
         "max_tilt": 2.5, "gate": "log-loss 1.25 vs counted 1.38",
+        "ordering_horizon": dynamics.ORDERING_HORIZON_QUARTERS,
     }
     line = scenarios.describe_kernel(dynamics_audit)
     assert "dynamics-test@abc123" in line and "volume +6.10" in line
     assert "log-loss 1.25" in line
+    # AND THE HORIZON THE CLAIM HOLDS FOR. The game applies this kernel four
+    # times; the model was fitted one quarter ahead, and re-fitting at each
+    # horizon showed the ORDERING edge gone by the fourth (china's goes
+    # negative). A four-period fan must not imply four periods of edge.
+    assert "quarter ahead" in line and "less informed" in line
 
     bridge_audit = {"eta": 0.42, "scale": 0.5, "model": "intensity@def456",
                     "method": "kernel rows tilted by exp(eta * band offset)"}
@@ -206,3 +212,20 @@ def test_the_explanation_handles_both_kernel_audits_and_neither():
 
     line = scenarios.describe_kernel(None)
     assert "counted table" in line
+
+
+def test_the_ordering_horizon_is_carried_into_every_solve():
+    """The model is fitted ONE quarter ahead and the game applies its kernel
+    four times. Re-fitting at each horizon showed the log-loss edge surviving
+    and the within-dyad ORDERING edge gone by the fourth — china's turns
+    negative. The number travels with the audit block so a four-period fan
+    cannot quietly imply four periods of edge."""
+    from pathlib import Path
+
+    from core.games import context as context_module
+
+    assert dynamics.ORDERING_HORIZON_QUARTERS == 1
+    source = Path(context_module.__file__).read_text(encoding="utf-8")
+    assert "ordering_horizon" in source, (
+        "kernel_for must put the measured horizon in the audit block"
+    )
