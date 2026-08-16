@@ -28,6 +28,7 @@ from typing import Any
 import numpy as np
 
 from core.games import context as context_module
+from core.games import family as family_module
 from core.games import opening as opening_module
 from core.games import paths as paths_module
 from core.games import pricing as pricing_module
@@ -53,7 +54,7 @@ REGION_DYADS = 12
 #: play named at 100%, because those rows also predate the belief ceiling that
 #: stopped a filtered belief reaching certainty. A persisted computation
 #: outlives the code that wrote it; the version is what makes that safe.
-PAYLOAD_VERSION = "2026-08-16.7"
+PAYLOAD_VERSION = "2026-08-16.8"
 
 #: A step's market row needs this many measurements before the scenario
 #: names it as an implication (the pricing module's own thinness bar).
@@ -494,6 +495,14 @@ def solve_dyad(
             "tone_label": tone_label(tone_now),
             "standing": standing_now,
             "posture": read,
+            # WHICH GAME THIS PAIR PLAYS, from what it IS and how it BEHAVES.
+            # The solver has one game — a crisis-bargaining model — and it was
+            # being applied to treaty allies, which is how US-Japan came to
+            # carry a 0.77 "escalation probability" and a modal course of
+            # "probe and retreat". Naming the family is the honest half of the
+            # fix; giving each family its own actions and fitted payoffs is
+            # the other, and is not done yet.
+            "family": family_module.classify(standing_now, read),
             "latest_intensity": round(float(latest["intensity"]), 3),
             "scale": round(float(scale or 0.0), 3),
             "active_quarters": len([r for r in own if float(r["intensity"]) > 0]),
@@ -655,6 +664,14 @@ def explain(solution: dict[str, Any]) -> list[str]:
         f"quarters on record), with {cap_words}; {bel_words}. Bands are relative friction, "
         "not absolute hostility."
     )
+
+    # WHICH GAME, AND WHETHER IT IS THIS PAIR'S OWN. Said before any solved
+    # number, because it changes what every number after it means: an
+    # alliance's "escalation probability" is a statement about friction
+    # between partners, and reading it as odds of conflict is the specific
+    # error that made US-Japan look like a war on 2026-08-16.
+    if op.get("family"):
+        out.append(family_module.describe(op["family"]))
 
     if lp:
         m = lp["opening_matrix"]["resolute"]

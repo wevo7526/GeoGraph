@@ -1207,3 +1207,65 @@ def test_standing_shows_one_row_per_kind_and_antagonism_first():
     assert alliance["since"] == "1949-04-04", (
         "the FOUNDING date is the one a reader wants beside the kind"
     )
+
+
+def test_the_game_family_comes_from_what_the_pair_is_and_how_it_behaves():
+    """US-Japan carried an `escalation_probability` of 0.77 and a modal course
+    of "probe and retreat" on 2026-08-16 — for a treaty alliance.
+
+    There is one game in the solver, a Fearon crisis-bargaining model: a stake
+    contested under threat of force, private resolve types, an audience cost
+    for backing down. Right for the United States and Iran; meaningless for
+    the United States and Japan, which contest no stake by threat of force.
+    Allies, rivals and adversaries do not play the same game, so the first
+    thing the platform has to do is say which one a pair is in.
+
+    NEITHER LAYER ALONE DECIDES IT. Standing alone would hand US-China the
+    same game as North Korea-South Korea, whose record is far more coercive.
+    Posture alone would call two allies co-deployed in someone else's war an
+    adversary pair, which is the GDELT co-participation artefact the ranking
+    already warns about.
+    """
+    from core.games import family
+
+    def _standing(*kinds: str):
+        return {"relations": [{"relation_type": k, "since": "1949"} for k in kinds]}
+
+    def _posture(share: float | None, thin: bool = False):
+        return {"share": share, "thin": thin}
+
+    # A treaty alliance with a quiet record is an ally pair, and the solver's
+    # game is NOT its own.
+    ally = family.classify(_standing("alliance"), _posture(0.09))
+    assert ally["family"] == "ally"
+    assert not ally["native"]
+    assert ally["headline"] == "friction"
+
+    # A declared rivalry conducted in argument is a rival, not an adversary.
+    rival = family.classify(_standing("rivalry"), _posture(0.05))
+    assert rival["family"] == "rival" and not rival["native"]
+
+    # The same declaration with a violent record is an adversary, and the
+    # crisis-bargaining game IS the right one for it.
+    adversary = family.classify(_standing("rivalry"), _posture(0.36))
+    assert adversary["family"] == "adversary" and adversary["native"]
+    assert adversary["headline"] == "escalation"
+
+    # Behaviour can outweigh a declaration in the other direction too.
+    hot_allies = family.classify(_standing("alliance"), _posture(0.40))
+    assert hot_allies["family"] == "adversary"
+    assert "outweighs the declaration" in hot_allies["why"]
+
+    # A pact between rivals is evidence of the rivalry, not a replacement.
+    both = family.classify(_standing("rivalry", "alliance"), _posture(0.30))
+    assert both["family"] == "adversary"
+
+    # ABSENCE OF EVIDENCE MUST NOT MAKE THE STRONG CLAIM. Calling two states
+    # adversaries is a statement; an unclassifiable pair is a rival.
+    unknown = family.classify(None, _posture(None, thin=True))
+    assert unknown["family"] == "rival"
+    assert "weakest of the three" in unknown["why"]
+
+    # And the sentence warns when the solved game is not the pair's own.
+    assert "not odds of" in family.describe(ally)
+    assert "not odds of" not in family.describe(adversary)
