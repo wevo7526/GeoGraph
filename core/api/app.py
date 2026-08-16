@@ -160,10 +160,19 @@ def _start_jobs(app: FastAPI, settings: Any) -> None:
             # returns. The child rate-limits itself, because its slice takes
             # the graph dark; the in-process path costs nothing, so this
             # cadence is the ordinary one.
+            # THE LONGEST SLICE IN THE LOOP, because it is the longest job.
+            # Measured on 2026-08-16: the loop is serial (two concurrent
+            # writers would interleave transactions on one database), so with
+            # forecasts at 288s and rescore at 118s a cycle runs ~600s and the
+            # study gets ONE turn in it. A 60s turn measuring 1,000 events
+            # would take 95 hours to clear a 600,000-event backlog; a 240s
+            # turn brings that to about a day. The memory guard runs before
+            # each job either way, and the study's own deadline still ends the
+            # turn at an event boundary.
             jobs_module.Job(
                 name="study", every=120.0, run=work.study,
                 enabled=jobs_module._enabled("study"),
-                slice_seconds=60.0, child=True,
+                slice_seconds=240.0, child=True,
             ),
             # The wire load is the heaviest writer (~145 events/sec into Kuzu)
             # and the one that was a downtime decision: mena's 450k artifact

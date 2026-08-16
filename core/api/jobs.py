@@ -142,6 +142,30 @@ class Job:
         self.state = JobState(name=self.name, every=self.every, enabled=self.enabled)
 
 
+def _return_free_arenas() -> None:
+    """Hand glibc's freed arenas back to the kernel.
+
+    `gc.collect()` frees Python objects; it does not shrink the process. glibc
+    keeps freed arenas for reuse, so RSS stays at the high-water mark of the
+    heaviest job that has ever run — and RSS is what the cgroup kills on. The
+    forecasts job peaks well above its steady state, so after one pass the
+    container looks nearly full while most of that memory is available to
+    malloc and to nobody else.
+
+    `malloc_trim(0)` is the glibc call for exactly this. Absent on musl and on
+    Windows, so it is best-effort and never fatal.
+    """
+    import ctypes
+    import ctypes.util
+
+    try:
+        name = ctypes.util.find_library("c") or "libc.so.6"
+        libc = ctypes.CDLL(name)
+        libc.malloc_trim(0)
+    except (OSError, AttributeError):
+        pass
+
+
 class Scheduler:
     """One thread, one connection, one job at a time.
 
@@ -272,6 +296,7 @@ class Scheduler:
         # a tick that has to rebuild it costs seconds, not correctness.
         work.forget_archive()
         gc.collect()
+        _return_free_arenas()
 
     def _loop(self) -> None:
         while not self._stop.wait(TICK_SECONDS):

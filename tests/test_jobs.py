@@ -472,3 +472,34 @@ def test_the_study_falls_back_to_a_child_only_on_the_storage_assertion(monkeypat
     with pytest.raises(RuntimeError, match="panel is unreachable"):
         work.study(object(), time.monotonic() + 60)
     assert not work._PREFER_CHILD
+
+
+def test_the_scheduler_still_has_the_methods_the_loop_calls():
+    """A module-level helper written between two methods silently ENDS the
+    class body, and every other check passed anyway: ruff clean, mypy clean,
+    fourteen tests green, and `Scheduler` missing `_loop` and `_reclaim` — the
+    background loop would have died on `start()` in production.
+
+    Cheap to pin, and the failure mode is invisible in a diff.
+    """
+    for name in ("start", "stop", "status", "_open", "_loop", "_run",
+                 "_run_child", "_reclaim", "_memory_allows", "_headroom",
+                 "_memory_payload"):
+        assert hasattr(jobs_module.Scheduler, name), (
+            f"Scheduler lost {name}() — a module-level def inside the class "
+            "body ends it; move helpers above the class"
+        )
+    scheduler = jobs_module.Scheduler(_App(), None, [])
+    scheduler.start()
+    try:
+        assert scheduler.status()["running"], "the loop thread did not start"
+    finally:
+        scheduler.stop(timeout=5.0)
+
+
+def test_reclaiming_returns_freed_arenas_to_the_kernel():
+    """`gc.collect()` frees Python objects; it does not shrink the process.
+    glibc keeps freed arenas, so RSS sits at the high-water mark of the
+    heaviest job that ever ran — and RSS is what the cgroup kills on. Best
+    effort: absent on musl and on Windows, and never fatal."""
+    jobs_module._return_free_arenas()  # must not raise on any platform
