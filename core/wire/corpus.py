@@ -182,7 +182,17 @@ def forecast_rows(pack_names: list[str] | None = None) -> list[dict[str, Any]]:
     ]
 
 
-@functools.lru_cache(maxsize=8)
+#: ONE ENTRY, not eight. The parsed rows are ~450 MB a pack as dicts, and
+#: `evict()` below exists precisely because holding them all is most of an
+#: 8 GB container. But eviction only helps until the next reader repopulates:
+#: `reasoning/structural` and `reasoning/forecasting` both call `load()` per
+#: pack inside background jobs, so with eight slots all three packs came back
+#: and STAYED — the corpus was evicted at warm and fully resident again an
+#: hour later. The API's own read path never comes here (it reads
+#: `wire/serving`'s slim tables), and the jobs that do walk packs serially, so
+#: one slot costs a ~5s re-parse per pack per job and bounds this cache at one
+#: lens instead of three.
+@functools.lru_cache(maxsize=1)
 def _loaded(pack_name: str, scored: bool, derived: str) -> tuple[dict[str, Any], ...]:
     # `derived` is in the key so a test that repoints the directory cannot be
     # served rows parsed from the previous one.

@@ -336,3 +336,43 @@ def test_the_study_is_a_child_and_stops_on_its_own_budget(monkeypatch):
     assert "measured 3 events" in " ".join(outcome["tail"])
     assert reopened == ["yes"], "the graph must reopen after the child"
     assert app.state.graph is not None
+
+
+def test_the_loop_pauses_rather_than_letting_the_container_be_killed(monkeypatch):
+    """An OOM kill is not an exception this process gets to catch.
+
+    On 2026-08-16 the kernel took it mid-write and the graph's write-ahead log
+    could not be replayed afterwards — every graph endpoint served 503 until
+    the recovery landed. Every job in this loop re-derives something already
+    persisted, so none of them is worth that. Below a headroom floor the loop
+    first drops the caches it can rebuild, and below a lower one it stops
+    starting jobs at all — visibly, in `status()`, because a loop that quietly
+    stops looks exactly like a loop with nothing to do.
+    """
+    from core.graph import kuzu_store
+
+    scheduler = jobs_module.Scheduler(_App(), None, [])
+
+    monkeypatch.setattr(kuzu_store, "container_memory_bytes", lambda: 8 << 30)
+    monkeypatch.setattr(kuzu_store, "memory_in_use_bytes", lambda: 4 << 30)
+    assert scheduler._headroom() == 0.5
+    assert scheduler._headroom() > jobs_module.MEMORY_RECLAIM_BELOW
+
+    monkeypatch.setattr(kuzu_store, "memory_in_use_bytes", lambda: int(7.5 * 2**30))
+    headroom = scheduler._headroom()
+    assert headroom is not None and headroom < jobs_module.MEMORY_PAUSE_BELOW, headroom
+
+    # Reclaim drops the corpus cache — the biggest thing here that rebuilds.
+    dropped: list[str] = []
+    from core.wire import corpus
+    monkeypatch.setattr(corpus, "evict", lambda: dropped.append("corpus"))
+    scheduler._reclaim()
+    assert dropped == ["corpus"]
+
+    # Unknown limits must not pause the loop: not every host is a container.
+    monkeypatch.setattr(kuzu_store, "container_memory_bytes", lambda: None)
+    assert scheduler._headroom() is None
+
+    payload = scheduler.status()["memory"]
+    assert set(payload) >= {"limit_gb", "used_gb", "headroom",
+                            "buffer_pool_gb", "paused_for_memory"}

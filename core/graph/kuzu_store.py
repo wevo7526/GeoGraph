@@ -156,6 +156,12 @@ CGROUP_LIMIT_FILES = (
     Path("/sys/fs/cgroup/memory/memory.limit_in_bytes"),
 )
 
+#: The matching current-usage files, same v2-then-v1 order.
+CGROUP_USAGE_FILES = (
+    Path("/sys/fs/cgroup/memory.current"),
+    Path("/sys/fs/cgroup/memory/memory.usage_in_bytes"),
+)
+
 
 def container_memory_bytes() -> int | None:
     """The CGROUP's memory limit, which is NOT what the kernel reports.
@@ -194,7 +200,29 @@ def container_memory_bytes() -> int | None:
 #: process mid-write on 2026-08-16. That kill is what broke the database: the
 #: WAL replay on the next open hit a duplicated primary key and every graph
 #: endpoint served 503 until the recovery below ran.
-BUFFER_POOL_SHARE = float(os.getenv("GEOGRAPH_BUFFER_POOL_SHARE", "0.35"))
+#:
+#: 0.20, not the 0.35 first tried — measured, not guessed. The wire corpus is
+#: 1.3 GB resident in two representations, the jobs' working sets are another
+#: 1-2 GB while one runs, and 0.35 still touched the 8 GB ceiling. The pool is
+#: a CACHE: cutting it costs page faults against a memory-mapped file, and
+#: that is the cheapest thing in this budget to give up.
+BUFFER_POOL_SHARE = float(os.getenv("GEOGRAPH_BUFFER_POOL_SHARE", "0.20"))
+
+
+def memory_in_use_bytes() -> int | None:
+    """What the cgroup says this container is holding RIGHT NOW.
+
+    The scheduler reads this before starting a job. Nothing else in the
+    process knows how close the kernel's kill line is, and the kill is not
+    catchable — by the time a MemoryError would be raised the container is
+    already gone, mid-write.
+    """
+    for candidate in CGROUP_USAGE_FILES:
+        try:
+            return int(candidate.read_text(encoding="utf-8").strip())
+        except (OSError, ValueError):
+            continue
+    return None
 
 
 def buffer_pool_bytes() -> int:

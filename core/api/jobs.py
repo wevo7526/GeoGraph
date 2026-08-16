@@ -53,6 +53,14 @@ DEFAULT_SLICE_SECONDS = float(os.getenv("GEOGRAPH_JOB_SLICE", "45"))
 
 #: A job that raises backs off rather than retrying hot — a failing job must
 #: not become a busy loop against Postgres or the volume.
+#: Reclaim rebuildable caches below this much free memory, and stop starting
+#: jobs below this much. Measured against the CGROUP, never the host: the
+#: container is 8 GB, the corpus is ~1.3 GB in two representations, Kuzu's
+#: page cache is another 1.6 GB, and a job's working set on top of that is
+#: what reached the ceiling on 2026-08-16.
+MEMORY_RECLAIM_BELOW = float(os.getenv("GEOGRAPH_MEMORY_RECLAIM_BELOW", "0.25"))
+MEMORY_PAUSE_BELOW = float(os.getenv("GEOGRAPH_MEMORY_PAUSE_BELOW", "0.12"))
+
 FAILURE_BACKOFF_SECONDS = 600.0
 
 #: Rows per write statement WHILE SERVING. The graph lock is FIFO, so a reader
@@ -152,6 +160,8 @@ class Scheduler:
         self._thread: threading.Thread | None = None
         self.started_at: float | None = None
         self.current: str | None = None
+        self.paused_for_memory = False
+        self.memory_reclaims = 0
 
     # ── lifecycle ──────────────────────────────────────────────────────────
     def start(self) -> None:
@@ -207,10 +217,50 @@ class Scheduler:
         self.error = None
         return True
 
+    def _headroom(self) -> float | None:
+        """Fraction of the container's memory still free, or None if unknown."""
+        from core.graph import kuzu_store
+
+        limit = kuzu_store.container_memory_bytes()
+        used = kuzu_store.memory_in_use_bytes()
+        if not limit or used is None:
+            return None
+        return max(0.0, 1.0 - used / limit)
+
+    def _reclaim(self) -> None:
+        """Give memory back before it becomes a kill.
+
+        An OOM kill is not an exception this process can catch — the kernel
+        takes it mid-write, and on 2026-08-16 that left the graph's write-ahead
+        log unreplayable and every graph endpoint on 503. So the loop watches
+        the cgroup it is actually held to and drops the caches it can rebuild:
+        the parsed corpus (~450 MB a pack, re-parsed in ~5s) and whatever the
+        last job left behind.
+        """
+        import gc
+
+        from core.wire import corpus
+
+        corpus.evict()
+        gc.collect()
+
     def _loop(self) -> None:
         while not self._stop.wait(TICK_SECONDS):
             if not self._open():
                 continue
+            headroom = self._headroom()
+            if headroom is not None and headroom < MEMORY_RECLAIM_BELOW:
+                self._reclaim()
+                self.memory_reclaims += 1
+                headroom = self._headroom()
+            # PAUSE RATHER THAN BE KILLED. Every job here re-derives something
+            # already persisted; none is worth the container. A tick skipped
+            # under pressure costs minutes of freshness, and the alternative
+            # cost a database.
+            if headroom is not None and headroom < MEMORY_PAUSE_BELOW:
+                self.paused_for_memory = True
+                continue
+            self.paused_for_memory = False
             # The API's graph can be replaced (a reopen after a failure), so
             # the connection is re-read every pass rather than cached.
             now = time.monotonic()
@@ -315,5 +365,23 @@ class Scheduler:
             ),
             "error": self.error,
             "slice_seconds": DEFAULT_SLICE_SECONDS,
+            # REPORTED, because a loop that quietly stops looks identical to a
+            # loop with nothing to do — and this one stops on purpose.
+            "memory": self._memory_payload(),
             "jobs": [job.state.payload(now) for job in self.jobs],
+        }
+
+    def _memory_payload(self) -> dict[str, Any]:
+        from core.graph import kuzu_store
+
+        limit = kuzu_store.container_memory_bytes()
+        used = kuzu_store.memory_in_use_bytes()
+        headroom = self._headroom()
+        return {
+            "limit_gb": round(limit / 2**30, 2) if limit else None,
+            "used_gb": round(used / 2**30, 2) if used is not None else None,
+            "headroom": round(headroom, 3) if headroom is not None else None,
+            "buffer_pool_gb": round(kuzu_store.buffer_pool_bytes() / 2**30, 2),
+            "paused_for_memory": self.paused_for_memory,
+            "reclaims": self.memory_reclaims,
         }
