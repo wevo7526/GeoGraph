@@ -280,3 +280,33 @@ def test_health_reads_the_boot_status(monkeypatch):
     assert "error" in (app_module._boot_status() or {})
     monkeypatch.delenv("GEOGRAPH_BOOT_STATUS")
     assert app_module._boot_status() is None
+
+
+def test_the_boot_fingerprint_covers_the_code_that_reads_the_inputs():
+    """A loader bug being FIXED must re-derive what the buggy version wrote.
+
+    Production carried COW alliances with no end date: the graph believed
+    Britain and Russia were allies on the strength of a 1915 treaty, and the
+    United States and Iran on a 1958 one, each sitting beside the rivalry that
+    actually characterises the pair. COW had the terminations all along
+    (1917-11-08 and 1979-03-12) and `cow.load_alliances` parses them correctly
+    — the edges had simply been written by an older version, and the
+    fingerprint matched on every boot forever, so `deep` skipped in
+    milliseconds and the wrong data stayed.
+
+    Inputs alone are not the input. The code that turns a raw file into graph
+    rows is too.
+    """
+    import scripts.boot as boot
+
+    source = Path(boot.__file__).read_text(encoding="utf-8")
+    fingerprint = source[source.index("def _image_fingerprint"):]
+    fingerprint = fingerprint[:fingerprint.index("\n\n\n")]
+    assert '"ingestion"' in fingerprint, (
+        "_image_fingerprint must hash core/ingestion, or a fixed loader never "
+        "re-derives what the broken one wrote"
+    )
+    assert '"ontology"' in fingerprint, "same for the schema the rows are shaped by"
+    # And NOT all of core/, which would invalidate every guard on every push —
+    # the cost the guards exist to avoid.
+    assert '_ROOT / "core"\n' not in fingerprint

@@ -404,8 +404,10 @@ def _save_fingerprint(step: str, value: str) -> None:
 
 
 def _image_fingerprint() -> str:
-    """The shipped inputs: corpus artifacts, model artifacts, packs. Constant
-    for the life of an image — changes exactly when a build changes them.
+    """The shipped inputs AND the code that derives from them: corpus
+    artifacts, model artifacts, packs, and the ingestion/ontology modules.
+    Constant for the life of an image — changes exactly when a build changes
+    them.
 
     MUST be stable ACROSS PROCESSES, and builtin `hash()` is not: Python salts
     the hash of str/tuple per interpreter via PYTHONHASHSEED (unset here), so
@@ -416,7 +418,21 @@ def _image_fingerprint() -> str:
     guards skip when the shipped inputs are byte-identical, as designed.
     """
     digest = hashlib.sha256()
-    for directory in (_DERIVED_DIR, _ROOT / "models", _ROOT / "packs"):
+    # THE CODE THAT READS THE INPUTS IS AN INPUT. Without this the guard is
+    # blind to a loader bug being FIXED: production carried COW alliances with
+    # no end date — the graph believed Britain and Russia were allies on the
+    # strength of a 1915 treaty, and the United States and Iran on a 1958 one,
+    # both alongside the rivalries that actually characterise them. The source
+    # had the terminations all along (1917-11-08, 1979-03-12) and the loader
+    # parses them correctly today; the edges were written by an older version
+    # and the fingerprint matched forever, so they were never re-derived.
+    #
+    # Only `core/ingestion` and `core/ontology`: those are what turn a raw
+    # file into graph rows. Widening this to all of `core/` would invalidate
+    # every guard on every code push, which is the cost the guards exist to
+    # avoid.
+    for directory in (_DERIVED_DIR, _ROOT / "models", _ROOT / "packs",
+                      _ROOT / "core" / "ingestion", _ROOT / "core" / "ontology"):
         for path in sorted(directory.rglob("*")):
             if path.is_file():
                 # CONTENT, not name:size — a same-length edit to a pack YAML
