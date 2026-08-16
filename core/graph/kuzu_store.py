@@ -79,6 +79,32 @@ def connect(db_path: Path, *, read_only: bool = False) -> kuzu.Connection:
     return conn
 
 
+def sibling(conn: kuzu.Connection) -> kuzu.Connection:
+    """A SECOND connection on an already-open database.
+
+    Kuzu's single-writer rule is per PROCESS, not per connection: the process
+    holding the database may open as many connections to it as it likes. That
+    distinction is what lets the API run background work (core/api/jobs.py)
+    while it serves — the alternative was doing every heavy job inside a boot,
+    where it costs the container's whole downtime.
+
+    Never `connect()` a second time for this: that opens a second
+    `kuzu.Database`, which reserves another 8 TiB of virtual address space and
+    then fails on the lock the same process is already holding.
+    """
+    database = getattr(conn, "_geograph_db", None)
+    if database is None:
+        raise GraphUnavailable(
+            "this connection was not opened by kuzu_store.connect, so its "
+            "database is unreachable — a sibling connection needs it"
+        )
+    twin = kuzu.Connection(database)
+    # Deliberately NOT stamped with _geograph_db: `close` shuts the database
+    # down, and a sibling closing the API's graph would be the worst kind of
+    # helpful. Siblings are closed by dropping them; the owner closes the db.
+    return twin
+
+
 def close(conn: kuzu.Connection | None) -> None:
     """Release a graph: close the connection AND its database.
 

@@ -508,3 +508,93 @@ degenerate.
   the modal one's own share, and the per-kind representative is priced too so
   a named scenario never loses its market row to the cut. `classify` is
   injected into `paths.py` so the walk keeps knowing nothing about naming.
+
+## The convergence loop (2026-08-15): recurring work moved INTO the API
+
+**Every heavy job used to run in the boot, and a boot is downtime here.** Kuzu
+is single-writer per PROCESS and a Railway volume mounts to one instance, so a
+deploy is stop-then-start — `railway.json`'s claim that the `/api/ready`
+healthcheck keeps the previous deployment serving is FALSE for this service
+(measured 2026-08-15: the old deployment stopped at 23:04:47 and the edge
+returned 502 for the whole boot). That made every unit of archive work a
+downtime decision, and the arithmetic never closed: the study takes a 600s
+slice per deploy against a 1.3M-event archive, so production had measured ~10%
+of the wire, had walked as far as 2003, and mena's roster dyads held **351**
+graph events against china's 340,784.
+
+So the work moved to the process that already holds the write lock:
+`core/api/jobs.py` (the scheduler) + `core/api/work.py` (the jobs), on a
+SECOND connection to the API's own open database (`kuzu_store.sibling` — Kuzu's
+single-writer rule is per process, not per connection; verified under
+concurrent read/write). Three rules make it safe under live traffic:
+
+1. **Every tick is bounded.** A job gets a deadline and stops at the next clean
+   boundary. Nothing runs "until done" — `GEOGRAPH_JOB_SLICE` (45s default).
+2. **Every job is resumable.** The study's per-event watermark, the wire's
+   per-artifact markers (the boot's own `.gdelt-loaded` files, shared so a
+   boot-loaded artifact is not re-read), idempotent solve replacement.
+3. **Shutdown drains.** `Scheduler.stop()` joins the thread before the database
+   closes. This is the one risk the child-process boot did not take: a write
+   killed mid-transaction can leave the database unable to take the next one
+   (reproduced locally — a `timeout` kill during a 5,000-row merge left every
+   later write segfaulting, while the same batch wrote cleanly into a fresh
+   graph). A deploy sends SIGTERM and waits, so draining is the mitigation.
+
+Jobs: `study` (the measurement backlog, curated-first), `games` (re-solve when
+`PAYLOAD_VERSION` or the archive moved — this is what makes a version bump
+self-healing instead of a 3.5-minute deploy tax), `wire` (the GDELT artifacts
+into the graph — mena's gap, previously an hour of graph-dark). Status at
+`/api/jobs`; `GEOGRAPH_JOBS=0` disables all, `GEOGRAPH_JOB_<NAME>=0` one.
+Tests set `GEOGRAPH_JOBS=0` in `conftest.py`, because a scheduler loose on a
+three-event fixture would merge the repository's real 1.3M artifacts into it.
+
+**The transmission engine's driver is a library** (`core/transmission/runner.py`),
+so the CLI and the job run the same measurement; `scripts/run_event_study.py` is
+now argument parsing and printing.
+
+## What the archive says about a relationship — three reads, three sources
+
+The relationship surface ran FOUR ladders over one pair and contradicted
+itself: a declared rivalry read "friendly". Fixed by giving each question its
+own source, so they cannot disagree:
+
+- **What the pair IS** — `opening.standing`: the curated RELATES_TO web, dated
+  and sourced (`packs/china/actors.yaml` declares US–China a `rivalry` from the
+  2018 tariffs). This is the ONLY field entitled to characterise a
+  relationship.
+- **How its record READS lately** — `opening.posture`: the material-conflict
+  SHARE of the pair's coded events, with the sample stated. Mean Goldstein was
+  the absolute read until it was measured: the wire codes far more meetings
+  than coercion, so 65% of china's pairs, 64% of eurasia's and 51% of mena's
+  scored "friendly" or better — US–China at +1.65 with 5.3% of 1,542
+  interactions coercive, against Russia–Ukraine's 36% and North Korea–Japan's
+  43%. `tone_label` survives as the raw sign of a number, nothing more, and a
+  pair under `POSTURE_MIN_EVENTS` is "too little coverage to read".
+- **Where it sits and is heading** — the intensity bands, which are departures
+  from the pair's OWN baseline. `web/src/lib/language.ts` no longer re-derives
+  a hostility ladder over them; it renders the backend's `band_labels`.
+
+## The scoreboard exists today (`calibration.walk`)
+
+Every frozen forecast carried `brier_score: null` and would have for three
+years — the near-term question has a three-year horizon by construction (it is
+the base-rate continuation window). `core/reasoning/calibration.walk` re-runs
+the SAME estimator (`forecasting.AsofArchive.forecast`, the locked "never a
+backtest-only estimator" path) at every quarter-end cutoff whose horizon has
+since closed, resolves it against the archive's own later episodes, and
+Brier-scores it with the scorer's own function. Served at
+`/api/forecasts/calibration`, rendered in the relationship page's track record.
+
+Two things it immediately taught us, both kept on the surface:
+- **One call per dyad, not a claim and its complement.** The payload names
+  `further_escalation` at p and `reversion_to_baseline` at 1 − p; scoring both
+  counts every call twice, forces the sample's base rate to exactly 0.5, and
+  credits the estimator for arithmetic (an apparent skill of 0.76 evaporated).
+- **The estimator has NEGATIVE skill in the recent era** — china −0.74, mena
+  −0.19 over the last 20 years, against +0.75/+0.73 across the whole walk. It
+  is systematically under-confident: it says 30% and the thing happens 87% of
+  the time, while the recent base rate is near-certain. The whole-walk number
+  is carried by a sparse deep past where near-zero calls were easy. `recent`
+  is reported beside the headline for exactly this reason, and recalibrating
+  the estimator against it is the next piece of work — not something to fit
+  in-sample on the same walk that measured it.

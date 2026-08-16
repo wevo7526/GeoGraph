@@ -820,6 +820,35 @@ export interface Scenario {
   }>
   rationale: string
   tone_label?: string
+  standing?: Standing | null
+  posture?: Posture | null
+}
+
+/** What a pair IS: the graph's declared, dated, sourced relations in force at
+ *  the solve's as_of. The only field entitled to characterise a relationship —
+ *  mean tone ranks pairs by how much they talk. */
+export interface Standing {
+  relations: Array<{
+    relation_type: string
+    since: string
+    until: string | null
+    source_id: string
+    directed_from: string
+  }>
+  source: string
+  as_of?: string
+}
+
+/** How the coded record READS lately: the coercive share of the pair's events
+ *  over its last few quarters, with the sample that stands behind it. */
+export interface Posture {
+  label: string
+  share: number | null
+  events: number
+  coercive: number
+  tone: number | null
+  quarters: number
+  thin: boolean
 }
 
 export interface OpeningMatrix {
@@ -881,6 +910,8 @@ export interface DyadSolution {
     intensity_label: string
     tone?: number | null
     tone_label?: string
+    standing?: Standing | null
+    posture?: Posture | null
     latest_intensity: number
     scale: number
     active_quarters: number
@@ -911,6 +942,8 @@ export interface RegionRanking {
   opening_label: string
   tone?: number | null
   tone_label?: string
+  standing?: Standing | null
+  posture?: Posture | null
   escalation_probability: number
   sharp_departure_probability: number
   sharp_departure_probability_lp?: number | null
@@ -971,5 +1004,39 @@ export interface RegionMap {
   boundary_statement: string
   computed_at?: string
   persisted?: boolean
+  note?: string
+}
+
+
+/** The calibration walk: the SAME near-term estimator re-run at every
+ *  historical cutoff whose three-year horizon has closed, scored against what
+ *  the archive then recorded. The scoreboard exists today because a call
+ *  frozen this week cannot be scored until 2029. */
+export interface CalibrationBand {
+  band: [number, number]
+  calls: number
+  mean_forecast: number
+  observed_rate: number
+}
+
+export interface CalibrationBlock {
+  cutoffs?: number
+  calls?: number
+  span?: [string, string]
+  brier?: number
+  base_rate_brier?: number
+  /** Against predicting the sample's own frequency: 0 is no better than the
+   *  base rate, negative is worse. */
+  skill?: number | null
+  observed_rate?: number
+  reliability?: CalibrationBand[]
+}
+
+export interface CalibrationWalk extends CalibrationBlock {
+  region_pack: string
+  horizon_years?: number
+  recent?: CalibrationBlock & { years: number }
+  by_cutoff?: Array<{ cutoff: string; brier: number; calls: number }>
+  method?: string
   note?: string
 }

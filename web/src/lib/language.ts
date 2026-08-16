@@ -114,22 +114,69 @@ export function relationshipName(name: string | undefined, fallback: string): st
 // None of that reaches the reader: a band becomes a temperature word, a joint
 // action becomes a sentence, and the match/thin flags become a confidence note.
 
-/** An intensity band (0 = lowest) as a temperature word, scaled to the number
- *  of bands so the vocabulary holds whether the solver uses five bands or three.
- *  Escalation is the alert direction, so the ladder climbs to "open conflict". */
-export function bandLabel(band: number, bands: number): string {
+/** A band as the word the BACKEND gives it. Bands are departures from the
+ *  pair's OWN baseline (core/games/scenarios.py BAND_LABELS: "at baseline" …
+ *  "extreme rupture"), and this file used to re-derive its own hostility
+ *  ladder over them — "calm", "tense", "open conflict". That is the 2026-08-15
+ *  contradiction the reader saw: the same pair could be a declared rivalry, a
+ *  "mild departure" from its own baseline, and "calm" on the forecast badge,
+ *  three vocabularies answering three different questions while looking like
+ *  one. Pass the payload's `band_labels`; the fallback is the backend's own
+ *  list, never a second ladder. */
+const DEPARTURE_LABELS = [
+  'at baseline',
+  'mild departure',
+  'notable departure',
+  'sharp departure',
+  'rupture',
+  'extreme rupture',
+]
+
+export function bandLabel(band: number, bands: number, labels?: string[]): string {
+  if (labels && labels.length) {
+    return labels[Math.max(0, Math.min(Math.round(band), labels.length - 1))]
+  }
   const share = bands > 1 ? band / (bands - 1) : 0
-  if (share <= 0) return 'cooperative'
-  if (share < 0.3) return 'calm'
-  if (share < 0.55) return 'tense'
-  if (share < 0.8) return 'hostile'
-  return 'open conflict'
+  const index = Math.round(share * (DEPARTURE_LABELS.length - 1))
+  return DEPARTURE_LABELS[Math.max(0, Math.min(index, DEPARTURE_LABELS.length - 1))]
 }
 
-/** The expected band — a float — read as the same temperature ladder, so the
- *  fan's right-hand summary is a word ("tense"), never "E 2.35". */
-export function expectedTension(expectedBand: number, bands: number): string {
-  return bandLabel(expectedBand, bands)
+/** The expected band — a float — read on the same departure ladder, so the
+ *  fan's right-hand summary is a phrase ("notable departure"), never "E 2.35". */
+export function expectedTension(expectedBand: number, bands: number, labels?: string[]): string {
+  return bandLabel(expectedBand, bands, labels)
+}
+
+/** WHAT THE PAIR IS — the graph's declared, dated, sourced relation. This is
+ *  the only thing on the surface entitled to characterise a relationship; the
+ *  wire's mean tone is a statistic about how much a pair talks (it called two
+ *  thirds of every region "friendly", the US and China included). */
+export function standingLabel(
+  standing?: { relations?: Array<{ relation_type: string; since?: string }> } | null,
+): string | null {
+  const rows = standing?.relations ?? []
+  if (!rows.length) return null
+  const words: Record<string, string> = {
+    rivalry: 'declared rivalry',
+    alliance: 'formal allies',
+    proxy: 'patron and client',
+    membership: 'shared bloc',
+    trade: 'trade dependence',
+  }
+  const first = rows[0]
+  const word = words[first.relation_type] ?? first.relation_type.replace(/_/g, ' ')
+  const since = (first.since ?? '').slice(0, 4)
+  return since ? `${word} since ${since}` : word
+}
+
+/** HOW THE RECORD READS LATELY — the coercive share of the pair's coded
+ *  events, with its sample. A measurement, worded as one. */
+export function postureNote(
+  posture?: { label?: string; share?: number | null; events?: number; thin?: boolean } | null,
+): string | null {
+  if (!posture || !posture.label) return null
+  if (posture.thin || posture.share == null) return posture.label
+  return `${posture.label} · ${Math.round(posture.share * 100)}% of ${posture.events} coded interactions coercive`
 }
 
 /** A joint move (both sides' actions) as one plain sentence. The solver's

@@ -1,4 +1,5 @@
 import type {
+  CalibrationWalk,
   Assessment,
   BacktestLedger,
   CaseStudy,
@@ -236,6 +237,12 @@ export const exploreGame = (
 // market on $1M notional, quarter by quarter. Region-level, not per-dyad.
 export const getBacktest = (region: string) =>
   get<BacktestLedger>(`/api/trading/backtest?region=${encodeURIComponent(region)}`)
+
+// The scoreboard: the near-term estimator re-run at every closed-horizon
+// cutoff and Brier-scored. Read `recent` before the headline — the whole-walk
+// number is dominated by a sparse deep past.
+export const getCalibration = (region: string) =>
+  get<CalibrationWalk>(`/api/forecasts/calibration?region=${encodeURIComponent(region)}`)
 
 export const getForecasts = (region?: string) =>
   get<{ rows: ForecastSummary[] }>(

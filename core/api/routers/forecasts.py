@@ -45,6 +45,45 @@ def _conn(request: Request) -> Any:
     return conn
 
 
+#: The walk is a pure function of the corpus+graph rows, which are immutable
+#: for the life of a process (the corpus ships in the image; the graph's wire
+#: grows only as the loader writes). ~5s per region, so it is computed once
+#: and kept — the same posture as `core/wire/serving`.
+_WALK_CACHE: dict[str, dict[str, Any]] = {}
+
+
+@router.get("/forecasts/calibration")
+def calibration_walk(request: Request, region: str = "mena") -> dict[str, Any]:
+    """THE SCOREBOARD, and it exists today rather than in 2029.
+
+    The near-term forecast asks a three-year question, so nothing frozen this
+    week can be Brier-scored this week — on 2026-08-15 every frozen forecast
+    carried a null score and would have for three more years. This re-runs the
+    SAME estimator at every historical quarter-end whose horizon has since
+    closed and scores it against what the archive then recorded.
+
+    Read the `recent` block before the headline: the archive's density has
+    moved twice, and the whole-walk number is dominated by a sparse deep past
+    where near-zero calls were easy to get right.
+    """
+    from core.reasoning import calibration, forecasting
+
+    if region in _WALK_CACHE:
+        return _WALK_CACHE[region]
+    settings = request.app.state.settings
+    try:
+        rows = forecasting.all_dyad_event_rows(settings.kuzu_db_path)
+    except Exception as exc:  # noqa: BLE001 - the corpus alone still answers
+        from core.wire import corpus
+
+        if not corpus.installed():
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
+        rows = corpus.forecast_rows()
+    out = calibration.walk(rows, region_pack=region)
+    _WALK_CACHE[region] = out
+    return out
+
+
 @router.get("/forecasts")
 def list_forecasts(
     request: Request, mode: str | None = None, region: str | None = None

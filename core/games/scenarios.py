@@ -53,7 +53,7 @@ REGION_DYADS = 12
 #: play named at 100%, because those rows also predate the belief ceiling that
 #: stopped a filtered belief reaching certainty. A persisted computation
 #: outlives the code that wrote it; the version is what makes that safe.
-PAYLOAD_VERSION = "2026-08-15.4"
+PAYLOAD_VERSION = "2026-08-15.5"
 
 #: A step's market row needs this many measurements before the scenario
 #: names it as an implication (the pricing module's own thinness bar).
@@ -63,20 +63,33 @@ _MARKET_MIN = pricing_module.MIN_MEASUREMENTS
 #: from the pair's OWN baseline, banded against the pair's own scale — so the
 #: labels are departure words, never absolute conflict words. "United States
 #: – Japan in the tense band" was the 2026-08-15 finding: a high-baseline
-#: alliance's routine friction wearing a hostility label. The ABSOLUTE read is
-#: the tone (mean Goldstein), carried beside the band as `tone_label`.
+#: alliance's routine friction wearing a hostility label. The ABSOLUTE reads
+#: are `opening.standing` (what the pair IS — curated, sourced, dated) and
+#: `opening.posture` (how its coded record READS lately — the coercive share
+#: of its events). Mean tone was the absolute read until it called two thirds
+#: of every region "friendly", the United States and China among them.
 BAND_LABELS = (
     "at baseline", "mild departure", "notable departure",
     "sharp departure", "rupture", "extreme rupture",
 )
 BAND_SEMANTICS = (
     "bands are departures from the pair's own baseline (relative friction, "
-    "banded on the pair's own scale), not absolute hostility; the tone is the "
-    "absolute read"
+    "banded on the pair's own scale), not absolute hostility; what the pair IS "
+    "is its declared standing, and how its record reads lately is the coercive "
+    "share of its coded events"
 )
 
 
 def tone_label(tone: float | None) -> str:
+    """The raw SIGN of the mean Goldstein, kept for readers who want it.
+
+    NOT a characterisation of the relationship, and nothing user-facing may
+    present it as one: the wire codes far more meetings than coercion, so this
+    ranks pairs by how much they talk. Measured 2026-08-15 across the three
+    packs: 65% of china's pairs, 64% of eurasia's and 51% of mena's scored
+    "friendly" or better, the United States and China (a declared rivalry
+    since 2018) among them at +1.65.
+    """
     if tone is None:
         return "unread"
     if tone >= 2.0:
@@ -367,10 +380,16 @@ def solve_dyad(
     scale = state_module.dyad_scale([float(r["intensity"]) for r in own])
     latest = max(own, key=lambda r: r["q"])
     band = state_module.intensity_band(float(latest["intensity"]), scale)
-    # The absolute read: mean tone over the last four active quarters.
-    recent = sorted(own, key=lambda r: r["q"])[-4:]
-    tones = [float(r["tone"]) for r in recent if r.get("tone") is not None]
-    tone_now = round(sum(tones) / len(tones), 3) if tones else None
+    # THREE READS, THREE SOURCES, NO OVERLAP — the 2026-08-15 contradiction.
+    # `standing` is what the pair IS (curated RELATES_TO, sourced and dated);
+    # `posture` is how the coded record READS lately (the coercive share of
+    # its events); the band is where it sits against its OWN baseline. They
+    # cannot disagree because they answer different questions — which the old
+    # tone verdict could not say of itself, and so put "friendly" over a
+    # declared rivalry.
+    read = opening_module.posture(own)
+    tone_now = read["tone"]
+    standing_now = opening_module.standing(graph_conn, dyad_id, as_of=context["as_of"])
     capability = opening_module.capability_state(graph_conn, dyad_id)
     beliefs = opening_module.filtered_beliefs(context["joint"], dyad_id, payoffs)
     cap = int(capability["band"])
@@ -431,7 +450,13 @@ def solve_dyad(
             "intensity_band": band,
             "intensity_label": band_label(band, bands),
             "tone": tone_now,
+            # WHAT IT IS (sourced) beside HOW IT READS (measured). `tone_label`
+            # stays only as the raw sign of the mean Goldstein for readers who
+            # want it; nothing on the surface may present it as the pair's
+            # character. See opening.standing / opening.posture.
             "tone_label": tone_label(tone_now),
+            "standing": standing_now,
+            "posture": read,
             "latest_intensity": round(float(latest["intensity"]), 3),
             "scale": round(float(scale or 0.0), 3),
             "active_quarters": len([r for r in own if float(r["intensity"]) > 0]),
@@ -458,6 +483,54 @@ def solve_dyad(
 
 def _pct(x: float) -> str:
     return f"{x:.0%}"
+
+
+#: How a declared relation reads in a sentence. Curated types only — an
+#: unmapped one prints its own name rather than being silently dropped.
+_STANDING_WORDS = {
+    "rivalry": "a declared rivalry",
+    "alliance": "formal allies",
+    "proxy": "a patron and its client",
+    "membership": "members of a shared bloc",
+    "trade": "a declared trade dependence",
+}
+
+
+def describe_standing(opening: dict[str, Any]) -> str:
+    """What the pair IS, from the graph's sourced relations — never inferred
+    from the wire's mood."""
+    relations = (opening.get("standing") or {}).get("relations") or []
+    if not relations:
+        return "under no relation the archive has declared"
+    parts = []
+    for relation in relations[:2]:
+        kind = str(relation["relation_type"])
+        words = _STANDING_WORDS.get(kind, kind.replace("_", " "))
+        since = str(relation.get("since") or "")[:4]
+        parts.append(f"{words}{f' since {since}' if since else ''}")
+    return " and ".join(parts)
+
+
+def describe_posture(opening: dict[str, Any]) -> str:
+    """How the CODED RECORD reads lately — a measurement with its sample
+    stated, so it can never be mistaken for the sentence above."""
+    read = opening.get("posture") or {}
+    if not read or read.get("thin") or read.get("share") is None:
+        return (
+            f"too thinly covered lately to read a posture "
+            f"({int(read.get('events', 0))} coded events in the last "
+            f"{int(read.get('quarters', 0))} quarters)"
+        )
+    return (
+        f"their record over the last {int(read['quarters'])} quarters is "
+        f"{read['label']} ({_pct(float(read['share']))} of "
+        f"{int(read['events'])} coded interactions were coercive, mean tone "
+        f"{float(read['tone']):+.2f})"
+        if read.get("tone") is not None else
+        f"their record over the last {int(read['quarters'])} quarters is "
+        f"{read['label']} ({_pct(float(read['share']))} of "
+        f"{int(read['events'])} coded interactions were coercive)"
+    )
 
 
 def _mix_words(mix: list[float]) -> str:
@@ -492,12 +565,13 @@ def explain(solution: dict[str, Any]) -> list[str]:
         if bel.get("source") == "bayes_filter"
         else "no observed actions to filter, so the prior on resolve is flat"
     )
-    tone_words = (
-        f"{op.get('tone_label', 'unread')} on balance (mean tone "
-        f"{op['tone']:+.2f})" if op.get("tone") is not None else "of unread tone"
-    )
+    # THE SOURCED FACT FIRST. A declared relation is dated and cited; the
+    # coded record is a measurement of the last four quarters; the band is a
+    # departure from this pair's own baseline. Said in that order they nest,
+    # which is what stops the page contradicting itself.
+    tone_words = describe_standing(op) + ", and " + describe_posture(op)
     out.append(
-        f"{side_a} and {side_b} are {tone_words}, and open at a {op['intensity_label']} "
+        f"{side_a} and {side_b} are {tone_words}; they open at a {op['intensity_label']} "
         f"from their own baseline (latest quarterly departure {op['latest_intensity']:.2f} "
         f"against this pair's own scale of {op['scale']:.2f}; {op['active_quarters']} active "
         f"quarters on record), with {cap_words}; {bel_words}. Bands are relative friction, "
@@ -658,6 +732,11 @@ def region_map(
             "opening_label": s["opening"]["intensity_label"],
             "tone": s["opening"].get("tone"),
             "tone_label": s["opening"].get("tone_label"),
+            # The chip's two honest halves: what the pair IS (sourced) and how
+            # its record READS (measured). The old chip showed a mean-Goldstein
+            # verdict, which called two thirds of every region "friendly".
+            "standing": s["opening"].get("standing"),
+            "posture": s["opening"].get("posture"),
             "escalation_probability": c["escalation_probability"],
             "sharp_departure_probability": c["sharp_departure_probability"],
             "escalation_probability_qre": (
@@ -691,6 +770,8 @@ def region_map(
                     "market_implications", "rationale",
                 )},
                 "tone_label": s["opening"].get("tone_label"),
+                "posture": s["opening"].get("posture"),
+                "standing": s["opening"].get("standing"),
             })
     ranking.sort(key=lambda r: (-(r["sharp_departure_probability"] or 0), r["dyad_id"]))
     escalatory = sorted(
@@ -782,7 +863,8 @@ def explain_region(aggregate: dict[str, Any]) -> list[str]:
         f"from their own baseline after {aggregate['horizon']} quarters — friction relative "
         f"to each pair's own history, read beside its tone; the pair carrying the most is "
         f"{lead['dyad_name']} ({_pct(lead['sharp_departure_probability'] or 0)}, "
-        f"{lead.get('tone_label') or 'unread'} on balance, opening at a {lead['opening_label']}"
+        f"{describe_standing(lead)}, {describe_posture(lead)}, opening at a "
+        f"{lead['opening_label']}"
         + (f", most likely course {lead['top_scenario']['kind'].replace('_', ' ')} at "
            f"{_pct(lead['top_scenario']['likelihood'])}" if lead.get("top_scenario") else "")
         + ")."

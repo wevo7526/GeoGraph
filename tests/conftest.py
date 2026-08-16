@@ -21,7 +21,16 @@ from core.wire import corpus, serving
 
 @pytest.fixture(autouse=True)
 def _isolated_corpus(tmp_path, monkeypatch):
-    """Point the corpus at an empty directory and clear the warmed caches."""
+    """Point the corpus at an empty directory and clear the warmed caches.
+
+    ALSO STOPS THE CONVERGENCE LOOP FROM STARTING (2026-08-15). The API starts
+    background jobs as soon as it opens a graph, and a test's graph is an empty
+    one in a tmp directory — so the wire job would happily begin merging the
+    repository's real 1.3M-event artifacts into a three-event fixture. Tests
+    exercise the jobs by calling them (tests/test_jobs.py), never by letting a
+    scheduler loose on a fixture.
+    """
+    monkeypatch.setenv("GEOGRAPH_JOBS", "0")
     monkeypatch.setenv("GEOGRAPH_DERIVED_DIR", str(tmp_path / "no-corpus"))
     serving.reset()
     yield

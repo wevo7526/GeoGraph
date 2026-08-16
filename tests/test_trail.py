@@ -36,12 +36,19 @@ def test_outcomes_resolve_by_episode_quarters_and_brier_follows():
     outcomes = score_forecasts._near_term_outcomes(
         scenarios, episodes, as_of="2020-11-15", horizon_quarters=12
     )
-    assert outcomes == {
-        "further_escalation:dyad:a--b": True,
-        "reversion_to_baseline:dyad:a--b": False,
-    }
-    # Brier by hand: ((0.8-1)^2 + (0.2-0)^2) / 2.
+    # ONE INDEPENDENT CALL PER DYAD since 2026-08-15: `reversion_to_baseline`
+    # is `further_escalation`'s complement stated again, and scoring both
+    # counted every call twice — which forced the sample's base rate to
+    # exactly 0.5 whatever the world did and inflated the measured skill.
+    assert outcomes == {"further_escalation:dyad:a--b": True}
+    # Brier by hand on the one call: (0.8 - 1)^2.
     assert calibration.score_forecast(scenarios, outcomes) == pytest.approx(0.04)
+    # The complement still resolves, for a caller that asks for it.
+    both = score_forecasts._near_term_outcomes(
+        scenarios, episodes, as_of="2020-11-15", horizon_quarters=12,
+        independent_only=False,
+    )
+    assert both["reversion_to_baseline:dyad:a--b"] is False
 
     # An episode BEYOND the horizon does not resolve the scenario true.
     outside = {"dyad:a--b": [2020 * 4 + 3, 2026 * 4 + 0]}

@@ -1005,3 +1005,90 @@ def test_every_solved_payload_carries_its_version():
         dyad_ids=["dyad:x--y"], horizon=2,
     )
     assert mapped["region"]["payload_version"] == scenarios.PAYLOAD_VERSION
+
+
+# ── what a pair IS vs how its record reads (2026-08-15) ──────────────────────
+
+
+def test_the_posture_is_the_coercive_share_not_the_mean_tone():
+    # THE "FRIENDLY RIVALRY". Mean Goldstein ranks pairs by how much they TALK:
+    # the wire codes meetings and statements in far greater number than
+    # anything coercive, so 65% of china's pairs, 64% of eurasia's and 51% of
+    # mena's scored "friendly" or better — the United States and China, a
+    # declared rivalry, at +1.65. The coercive SHARE ranks them by what the
+    # interactions were, which is what the word was trying to say.
+    from core.games import opening
+
+    def quarter(q: int, events: int, conflict: int, tone: float) -> dict[str, Any]:
+        return {"q": q, "events": events, "conflict": conflict, "tone": tone}
+
+    # US–China's actual last four quarters: 1,542 events, 82 coercive, tone +1.65.
+    read = opening.posture([quarter(q, 385, 20, 1.65) for q in range(4)])
+    assert read["thin"] is False
+    assert read["share"] == pytest.approx(20 / 385, abs=1e-3)
+    assert read["label"] == "mostly talk"
+    assert read["tone"] == pytest.approx(1.65)  # kept, as a number
+
+    # Russia–Ukraine's shape: a third of everything coded is material conflict.
+    hot = opening.posture([quarter(q, 800, 290, -2.57) for q in range(4)])
+    assert hot["label"] == "often coercive"
+    assert opening.posture_label(0.0) == "almost all talk"
+    assert opening.posture_label(0.6) == "mostly coercive"
+
+    # A pair the wire barely covers gets no verdict at all — the thin pairs are
+    # where a share of a handful looked most confident (Sweden–Norway 0.0%).
+    thin = opening.posture([quarter(0, 6, 0, 4.76)])
+    assert thin["thin"] and thin["share"] is None
+    assert "coverage" in thin["label"]
+
+
+def test_the_standing_is_the_graphs_declared_relation_in_force(monkeypatch):
+    from core.games import opening
+    from core.graph import kuzu_store
+
+    declared = [
+        {"relation_type": "rivalry", "valid_from": "2018-03-22", "valid_to": "",
+         "source_id": "source:crs-taiwan", "from_id": "actor:cow-710",
+         "to_id": "actor:cow-2"},
+        # An expired COW alliance over the same pair: real, and not in force.
+        {"relation_type": "alliance", "valid_from": "1962-07-23",
+         "valid_to": "1964-07-12", "source_id": "source:cow-alliances",
+         "from_id": "actor:cow-2", "to_id": "actor:cow-710"},
+    ]
+    monkeypatch.setattr(kuzu_store, "query", lambda *a, **k: declared)
+    out = opening.standing(object(), "dyad:cow-2--cow-710", as_of="2026-07-01")
+    assert [r["relation_type"] for r in out["relations"]] == ["rivalry"]
+    assert out["relations"][0]["source_id"] == "source:crs-taiwan"
+    # Asked in 1963 the same graph says something else, and says it from the
+    # same rows — the window is the fact, not a footnote on it.
+    then = opening.standing(object(), "dyad:cow-2--cow-710", as_of="1963-01-01")
+    assert [r["relation_type"] for r in then["relations"]] == ["alliance"]
+    # No graph is not "no relation".
+    assert opening.standing(None, "dyad:cow-2--cow-710", as_of="2026-07-01") == {
+        "relations": [], "source": "no graph",
+    }
+
+
+def test_a_declared_rivalry_is_never_described_by_its_mean_tone():
+    # The regression the reader caught: "The call" and "Where it stands"
+    # contradicting each other over the same pair. The sentence must lead with
+    # the sourced relation and describe the wire as a record, never as a
+    # character.
+    from core.games import scenarios
+
+    opening_state = {
+        "standing": {"relations": [
+            {"relation_type": "rivalry", "since": "2018-03-22", "until": None,
+             "source_id": "source:crs-taiwan", "directed_from": "actor:cow-710"},
+        ]},
+        "posture": {"label": "mostly talk", "share": 0.0532, "events": 1542,
+                    "coercive": 82, "tone": 1.651, "quarters": 4, "thin": False},
+        "tone": 1.651,
+    }
+    said = scenarios.describe_standing(opening_state)
+    assert said == "a declared rivalry since 2018"
+    record = scenarios.describe_posture(opening_state)
+    assert "coded interactions were coercive" in record
+    assert "friendly" not in f"{said} {record}"
+    # And with nothing declared, the absence is stated rather than filled.
+    assert "no relation" in scenarios.describe_standing({"standing": {"relations": []}})

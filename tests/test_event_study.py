@@ -485,16 +485,11 @@ def test_an_annual_era_market_measures_one_year():
 
 
 def _study_module() -> Any:
-    """scripts/ is not a package; load the runner by path."""
-    import importlib.util
-    import pathlib
+    """The engine's driver — a library since 2026-08-15, so the API can run the
+    same measurement as a background job instead of only inside a boot."""
+    from core.transmission import runner
 
-    path = pathlib.Path(__file__).resolve().parent.parent / "scripts" / "run_event_study.py"
-    spec = importlib.util.spec_from_file_location("run_event_study", path)
-    assert spec and spec.loader
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
+    return runner
 
 
 def test_the_curated_spine_is_measured_before_the_deep_archive():

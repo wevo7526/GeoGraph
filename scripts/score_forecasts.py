@@ -33,41 +33,12 @@ from core import settings as settings_module
 from core.graph import kuzu_store
 from core.reasoning import calibration, forecasting
 
-
-def _episode_quarters(rows: list[dict[str, Any]]) -> dict[str, list[int]]:
-    """Per dyad, the sorted quarter indices holding an escalating event."""
-    quarters: dict[str, set[int]] = {}
-    for row in rows:
-        if row["direction"] != "escalating":
-            continue
-        year, q = forecasting.quarter(str(row["event_time"]))
-        quarters.setdefault(row["dyad_id"], set()).add(year * 4 + (q - 1))
-    return {dyad: sorted(idx) for dyad, idx in quarters.items()}
-
-
-def _near_term_outcomes(
-    scenarios: list[dict[str, Any]],
-    episodes: dict[str, list[int]],
-    *,
-    as_of: str,
-    horizon_quarters: int,
-) -> dict[str, bool]:
-    """Resolve each scenario against what the archive then recorded."""
-    year, q = forecasting.quarter(as_of)
-    cutoff_index = year * 4 + (q - 1)
-    outcomes: dict[str, bool] = {}
-    for scenario in scenarios:
-        name = str(scenario["scenario_name"])
-        dyad_id = name.split(":", 1)[1] if ":" in name else ""
-        escalated = any(
-            0 < index - cutoff_index <= horizon_quarters
-            for index in episodes.get(dyad_id, [])
-        )
-        if name.startswith("further_escalation"):
-            outcomes[name] = escalated
-        elif name.startswith("reversion_to_baseline"):
-            outcomes[name] = not escalated
-    return outcomes
+#: ONE IMPLEMENTATION, in `core/reasoning/calibration.py`. These two helpers
+#: used to live here, and the calibration walk needed the same arithmetic — two
+#: copies of "did this dyad escalate again inside the horizon" would drift, and
+#: the walk's entire claim is that it scores the estimator this scorer scores.
+_episode_quarters = calibration.episode_quarters
+_near_term_outcomes = calibration.near_term_outcomes
 
 
 def main() -> None:

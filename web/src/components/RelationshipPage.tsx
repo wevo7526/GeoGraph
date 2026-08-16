@@ -17,6 +17,7 @@ import { useEffect, useMemo, useState } from 'react'
 import {
   exploreGame,
   getBacktest,
+  getCalibration,
   getDyadSeries,
   getDyadTimeline,
   getForecast,
@@ -30,6 +31,8 @@ import {
 } from '../api'
 import {
   bandLabel,
+  postureNote,
+  standingLabel,
   jointAction,
   relationshipName,
   tensionLevel,
@@ -40,6 +43,7 @@ import {
 import { toggle as toggleWatch, useIsWatched } from '../lib/watchlist'
 import { useRegionLabel } from '../regions'
 import type {
+  CalibrationWalk,
   BacktestLedger,
   DyadSeries,
   DyadTimeline,
@@ -85,6 +89,7 @@ export default function RelationshipPage({ region, onNavigate }: { region: strin
   const [game, setGame] = useState<GameExplore | null | undefined>(undefined)
   const [outlook, setOutlook] = useState<ForecastDetail | null | undefined>(undefined)
   const [backtest, setBacktest] = useState<BacktestLedger | null | undefined>(undefined)
+  const [calibration, setCalibration] = useState<CalibrationWalk | null | undefined>(undefined)
   const [precedent, setPrecedent] = useState<Precedent | null | undefined>(undefined)
   const [coverage, setCoverage] = useState<ImpactCoverage | null | undefined>(undefined)
   const [solution, setSolution] = useState<DyadSolution | null | undefined>(undefined)
@@ -179,6 +184,7 @@ export default function RelationshipPage({ region, onNavigate }: { region: strin
       getForecast(near.node_id).then((d) => live && setOutlook(d))
     })
     getBacktest(region).then((r) => live && setBacktest(r))
+    getCalibration(region).then((r) => live && setCalibration(r))
     return () => {
       live = false
     }
@@ -203,12 +209,21 @@ export default function RelationshipPage({ region, onNavigate }: { region: strin
     drift == null ? 'steady' : drift > 0.1 ? 'rising' : drift < -0.1 ? 'falling' : 'steady'
   const topPath = game?.paths?.[0]
   const nextStep = topPath?.steps?.[0]
-  const nextType = nextStep ? bandLabel(nextStep.intensity_band, bands) : null
+  const bandNames = solution?.band_labels
+  // ONE HIERARCHY FOR THE PAGE (2026-08-15): what the pair IS comes from the
+  // graph's declared relations, how its record READS lately from the coercive
+  // share of its coded events, and where it is HEADING from the solved game's
+  // departure bands. Three questions, three sources, one vocabulary each —
+  // the page used to run four ladders at once and call a declared rivalry
+  // "friendly" beside a "severe" tension reading.
+  const standing = standingLabel(solution?.opening.standing)
+  const posture = postureNote(solution?.opening.posture)
+  const nextType = nextStep ? bandLabel(nextStep.intensity_band, bands, bandNames) : null
   const nextMove = nextStep ? jointAction(nextStep.action_a, nextStep.action_b) : null
   // The badge tracks where the relationship is HEADING (the trajectory
   // endpoint), so it agrees with the lede rather than the immediate step —
   // a near-term escalation inside a medium-term easing read as a contradiction.
-  const headingType = expectedEnd != null ? bandLabel(Math.round(expectedEnd), bands) : nextType
+  const headingType = expectedEnd != null ? bandLabel(Math.round(expectedEnd), bands, bandNames) : nextType
   const moves = stepMoves(nextStep)
   const horizonQuarters = marginal.length
 
@@ -245,6 +260,7 @@ export default function RelationshipPage({ region, onNavigate }: { region: strin
         standfirst={
           level ? (
             <span>
+              {standing ? <><strong>{standing}</strong> · </> : null}
               {tensionSentence(level, trend)}
               {series ? ` · ${yearOf(series.span[0])}–${yearOf(series.span[1])}` : ''}
             </span>
@@ -338,9 +354,11 @@ export default function RelationshipPage({ region, onNavigate }: { region: strin
             {solution && (
               <div className="mt-3 text-sm">
                 <p>
-                  The pair is <strong>{solution.opening.tone_label ?? 'unread'}</strong> on balance
-                  {solution.opening.tone != null ? ` (tone ${solution.opening.tone >= 0 ? '+' : ''}${solution.opening.tone.toFixed(2)})` : ''};
-                  the solved game puts <strong>{pct(solution.concepts[solution.primary_solver]?.sharp_departure_probability ?? 0, 0)}</strong> on a
+                  {standing
+                    ? <>The archive declares this pair a <strong>{standing}</strong>.</>
+                    : <>The archive declares no standing relation for this pair.</>}
+                  {posture ? <> Its coded record lately: <strong>{posture}</strong>.</> : null}
+                  {' '}The solved game puts <strong>{pct(solution.concepts[solution.primary_solver]?.sharp_departure_probability ?? 0, 0)}</strong> on a
                   sharper-than-usual departure from its own baseline within {solution.horizon} quarters
                   {solution.concepts.lp && solution.primary_solver !== 'lp' ? ` (LP benchmark ${pct(solution.concepts.lp.sharp_departure_probability, 0)})` : ''}
                   {solution.opening.tilt ? `, with the learned layer tilting the kernel by η ${solution.opening.tilt.eta >= 0 ? '+' : ''}${solution.opening.tilt.eta.toFixed(3)}` : ', untilted by the learned layer'}.
@@ -356,7 +374,7 @@ export default function RelationshipPage({ region, onNavigate }: { region: strin
             {/* Show me why — the trajectory fan behind the one-line call. */}
             {marginal.length > 1 && (
               <Disclosure label="show me the trajectory">
-                <TrajectoryStrip marginal={marginal} bands={bands} />
+                <TrajectoryStrip marginal={marginal} bands={bands} bandNames={bandNames} />
                 {game?.boundary_statement && (
                   <p className="mono text-[10px] mt-3" style={{ color: 'var(--muted)' }}>
                     {game.boundary_statement}
@@ -486,7 +504,7 @@ export default function RelationshipPage({ region, onNavigate }: { region: strin
           </Beat>
 
           {/* ── TRACK RECORD (region-wide) ───────────────────────────────── */}
-          {(hasRetro || outlook?.brier_score != null || backtest?.summary) && (
+          {(hasRetro || outlook?.brier_score != null || backtest?.summary || calibration?.brier != null) && (
             <Beat n={4} title="Track record" aside={`${regionLabel} calls`}>
               {outlook?.scenarios?.some((sc) => sc.scenario_name.endsWith(selected)) && (
                 <div className="mb-3">
@@ -505,6 +523,63 @@ export default function RelationshipPage({ region, onNavigate }: { region: strin
                   <strong>{Math.round(retro.hit_rate! * 100)}%</strong> of the time — versus{' '}
                   {Math.round(retro.base_rate! * 100)}% for an average period.
                 </p>
+              )}
+
+              {/* THE SCOREBOARD. A near-term call asks a three-year question,
+                  so nothing frozen this week can be scored this week — every
+                  frozen forecast read `brier_score: null`. The same estimator
+                  re-run at each closed-horizon cutoff can be scored today, and
+                  the RECENT era leads because the whole-walk number is
+                  dominated by a sparse deep past where near-zero calls were
+                  easy to get right. */}
+              {calibration?.brier != null && (
+                <div className="mt-4">
+                  <div className="kicker mb-1">
+                    Scored against history — the same estimator, {calibration.cutoffs} closed-horizon cutoffs
+                  </div>
+                  {calibration.recent?.brier != null ? (
+                    <p className="text-sm">
+                      Over the last {calibration.recent.years} years it scores a Brier of{' '}
+                      <strong>{calibration.recent.brier.toFixed(3)}</strong> across {calibration.recent.calls} calls —{' '}
+                      {calibration.recent.skill != null && calibration.recent.skill > 0
+                        ? <>better than predicting the era's own base rate ({calibration.recent.base_rate_brier?.toFixed(3)}).</>
+                        : <><strong>no better than predicting the era's own base rate</strong> ({calibration.recent.base_rate_brier?.toFixed(3)}), which in this era is close to certain.</>}
+                      {' '}Over the whole archive it scores {calibration.brier.toFixed(3)}.
+                    </p>
+                  ) : (
+                    <p className="text-sm">
+                      Brier <strong>{calibration.brier.toFixed(3)}</strong> across {calibration.calls} calls
+                      {calibration.base_rate_brier != null ? ` against ${calibration.base_rate_brier.toFixed(3)} for the base rate` : ''}.
+                    </p>
+                  )}
+                  {(calibration.recent?.reliability ?? calibration.reliability ?? []).length > 0 && (
+                    <div className="mt-2 scroll-x">
+                      <table className="text-xs mono">
+                        <thead>
+                          <tr style={{ color: 'var(--muted)' }}>
+                            <th className="text-left pr-3 font-normal">when it said</th>
+                            <th className="text-left pr-3 font-normal">it happened</th>
+                            <th className="text-left font-normal">calls</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {(calibration.recent?.reliability ?? calibration.reliability ?? []).map((b) => (
+                            <tr key={String(b.band)}>
+                              <td className="pr-3">{pct(b.mean_forecast, 0)}</td>
+                              <td className="pr-3" style={{ color: b.observed_rate > b.mean_forecast + 0.1 ? 'var(--alert)' : 'var(--text)' }}>
+                                {pct(b.observed_rate, 0)}
+                              </td>
+                              <td style={{ color: 'var(--muted)' }}>{b.calls}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                      <p className="mono text-[10px] mt-1" style={{ color: 'var(--muted)' }}>
+                        oxblood marks a band the estimator is under-confident in — it happened more often than it said.
+                      </p>
+                    </div>
+                  )}
+                </div>
               )}
 
               {/* The paper backtest: the region's frozen calls marked to market
@@ -558,9 +633,11 @@ export default function RelationshipPage({ region, onNavigate }: { region: strin
 function TrajectoryStrip({
   marginal,
   bands,
+  bandNames,
 }: {
   marginal: GameExplore['marginal']
   bands: number
+  bandNames?: string[]
 }) {
   return (
     <div className="scroll-x">
@@ -575,7 +652,7 @@ function TrajectoryStrip({
                 const p = m.distribution[b] ?? 0
                 const share = bands > 1 ? b / (bands - 1) : 0
                 return (
-                  <td key={b} style={{ padding: '2px' }} title={`${bandLabel(b, bands)} · ${Math.round(p * 100)}%`}>
+                  <td key={b} style={{ padding: '2px' }} title={`${bandLabel(b, bands, bandNames)} · ${Math.round(p * 100)}%`}>
                     <span
                       style={{
                         display: 'block',
@@ -589,7 +666,7 @@ function TrajectoryStrip({
                 )
               })}
               <td className="mono pl-2" style={{ color: 'var(--muted)', whiteSpace: 'nowrap' }}>
-                {bandLabel(Math.round(m.expected_band), bands)}
+                {bandLabel(Math.round(m.expected_band), bands, bandNames)}
               </td>
             </tr>
           ))}

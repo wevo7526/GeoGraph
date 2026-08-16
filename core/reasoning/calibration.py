@@ -187,3 +187,232 @@ def retrodict(
             "base rate, never adjudicated"
         ),
     }
+
+
+# ── the calibration walk (2026-08-15) ───────────────────────────────────────
+
+
+#: Cutoffs per year in the walk. Quarterly is the panel's own grain, and the
+#: grain the base rate counts in.
+_WALK_PER_YEAR = 4
+
+#: Reliability bins. Ten would be honest and mostly empty at this sample size;
+#: five keeps each bin's count large enough to read.
+_RELIABILITY_BINS = (0.0, 0.2, 0.4, 0.6, 0.8, 1.0)
+
+#: The recent era reported beside the whole walk. Density is coverage, not
+#: history — see the aggregate's comment.
+_RECENT_YEARS = 20
+
+
+def episode_quarters(rows: list[dict[str, Any]]) -> dict[str, list[int]]:
+    """Per dyad, the sorted quarter indices holding an escalating event.
+
+    Moved here from `scripts/score_forecasts.py` so the live scorer and the
+    walk resolve outcomes through ONE implementation — two would drift, and
+    the walk's whole claim is that it scores the estimator the freeze uses.
+    """
+    from core.reasoning import forecasting
+
+    quarters: dict[str, set[int]] = {}
+    for row in rows:
+        if row["direction"] != "escalating":
+            continue
+        year, q = forecasting.quarter(str(row["event_time"]))
+        quarters.setdefault(row["dyad_id"], set()).add(year * 4 + (q - 1))
+    return {dyad: sorted(index) for dyad, index in quarters.items()}
+
+
+def near_term_outcomes(
+    scenarios: list[dict[str, Any]],
+    episodes: dict[str, list[int]],
+    *,
+    as_of: str,
+    horizon_quarters: int,
+    independent_only: bool = True,
+) -> dict[str, bool]:
+    """Resolve each scenario against what the archive then recorded.
+
+    ONE CALL PER DYAD BY DEFAULT. The near-term payload names two scenarios per
+    focal dyad — `further_escalation` at p and `reversion_to_baseline` at 1 − p
+    — which are the same claim stated twice. Scoring both counts every call
+    twice, forces the sample's base rate to exactly 0.5 whatever the world did,
+    and flatters the skill number by giving the estimator credit for arithmetic
+    (measured 2026-08-15: an apparent skill of 0.76 over a 0.5 "base rate" that
+    was an artifact of the pairing). The complement resolves as the complement;
+    it carries no independent information, so it is not an independent call.
+    """
+    from core.reasoning import forecasting
+
+    year, q = forecasting.quarter(as_of)
+    cutoff_index = year * 4 + (q - 1)
+    outcomes: dict[str, bool] = {}
+    for scenario in scenarios:
+        name = str(scenario["scenario_name"])
+        dyad_id = name.split(":", 1)[1] if ":" in name else ""
+        escalated = any(
+            0 < index - cutoff_index <= horizon_quarters
+            for index in episodes.get(dyad_id, [])
+        )
+        if name.startswith("further_escalation"):
+            outcomes[name] = escalated
+        elif not independent_only and name.startswith("reversion_to_baseline"):
+            outcomes[name] = not escalated
+    return outcomes
+
+
+def walk(
+    rows: list[dict[str, Any]],
+    *,
+    region_pack: str,
+    horizon_years: int = 3,
+    per_year: int = _WALK_PER_YEAR,
+    min_cutoffs: int = 8,
+) -> dict[str, Any]:
+    """SCORE THE ESTIMATOR OVER HISTORY, at every cutoff whose horizon closed.
+
+    The near-term forecast asks a three-year question, so a call frozen today
+    cannot be scored until 2029 — and on 2026-08-15 all eighteen frozen
+    forecasts carried `brier_score: null`. A platform whose central claim is
+    "forecast, then be scored" had never once been scored, and on that
+    schedule would not have been for three years.
+
+    This closes it without touching the estimator or the horizon. The same
+    body the live freeze calls (`forecasting.AsofArchive.forecast` — the
+    LOCKED "never a backtest-only estimator" rule) is evaluated at each
+    historical cutoff, its scenarios resolved against what the archive then
+    recorded, and Brier-scored with the same function the live scorer uses.
+    The archive at each cutoff is a strict prefix, so the result is genuinely
+    out of sample, and it exists TODAY.
+
+    A reliability table rides along, because one aggregate Brier hides the
+    question a reader actually has: when it says 70%, does it happen 70% of
+    the time?
+    """
+    from core.reasoning import forecasting
+
+    archive = forecasting.AsofArchive.build(rows)
+    episodes = episode_quarters(rows)
+    horizon_quarters = horizon_years * 4
+    times = sorted({str(r["event_time"])[:10] for r in rows})
+    if not times:
+        return {
+            "region_pack": region_pack, "cutoffs": 0,
+            "note": "no dyad-coded events for this region",
+        }
+    first_year = int(times[0][:4])
+    last_year = int(times[-1][:4])
+    # ONLY CLOSED HORIZONS. A cutoff whose window still runs past the archive's
+    # edge would be scored against a future that has not happened — which is
+    # how a walk-forward quietly becomes a lookahead.
+    final_year = last_year - horizon_years
+    months = [12 // per_year * (i + 1) for i in range(per_year)]
+
+    scored: list[dict[str, Any]] = []
+    for year in range(first_year, final_year + 1):
+        for month in months:
+            day = 30 if month in (6, 9) else 31
+            cutoff = f"{year}-{month:02d}-{day:02d}"
+            if cutoff > times[-1]:
+                continue
+            try:
+                payload = archive.forecast(
+                    "Which focal dyads escalate again within the horizon?",
+                    region_pack=region_pack,
+                    horizon_years=horizon_years,
+                    cutoff=cutoff,
+                )
+            except Exception:  # noqa: BLE001 - a cutoff too thin to forecast is a skip
+                continue
+            scenarios = payload.get("scenarios") or []
+            outcomes = near_term_outcomes(
+                scenarios, episodes, as_of=cutoff, horizon_quarters=horizon_quarters,
+            )
+            pairs = [
+                (float(s["likelihood"]), outcomes[str(s["scenario_name"])])
+                for s in scenarios
+                if s.get("likelihood") is not None
+                and str(s["scenario_name"]) in outcomes
+            ]
+            if not pairs:
+                continue
+            scored.append({
+                "cutoff": cutoff,
+                "brier": round(brier_score(pairs), 4),
+                "calls": len(pairs),
+                "pairs": pairs,
+            })
+
+    if len(scored) < min_cutoffs:
+        return {
+            "region_pack": region_pack,
+            "cutoffs": len(scored),
+            "note": (
+                f"only {len(scored)} closed-horizon cutoffs cleared the "
+                f"estimator's own evidence bar (< {min_cutoffs}) — too few to "
+                "report a score"
+            ),
+        }
+
+    def _aggregate(rows: list[dict[str, Any]]) -> dict[str, Any]:
+        pairs = [pair for row in rows for pair in row["pairs"]]
+        if not pairs:
+            return {"calls": 0}
+        # The reference a Brier score is meaningless without: what predicting
+        # the sample's own frequency, every time, would have earned.
+        rate = sum(1 for _, outcome in pairs if outcome) / len(pairs)
+        reference = brier_score([(rate, outcome) for _, outcome in pairs])
+        measured = brier_score(pairs)
+        bins = []
+        for low, high in zip(_RELIABILITY_BINS[:-1], _RELIABILITY_BINS[1:], strict=True):
+            bucket = [
+                (p, o) for p, o in pairs
+                if (low <= p < high) or (high == 1.0 and p == 1.0)
+            ]
+            if not bucket:
+                continue
+            bins.append({
+                "band": [low, high],
+                "calls": len(bucket),
+                "mean_forecast": round(sum(p for p, _ in bucket) / len(bucket), 4),
+                "observed_rate": round(
+                    sum(1 for _, o in bucket if o) / len(bucket), 4
+                ),
+            })
+        return {
+            "cutoffs": len(rows),
+            "calls": len(pairs),
+            "span": [rows[0]["cutoff"], rows[-1]["cutoff"]],
+            "brier": round(measured, 4),
+            "base_rate_brier": round(reference, 4),
+            "skill": round(1.0 - measured / reference, 4) if reference else None,
+            "observed_rate": round(rate, 4),
+            "reliability": bins,
+        }
+
+    overall = _aggregate(scored)
+    # AND THE SAME NUMBERS OVER THE RECENT ERA, because coverage is not
+    # history: the archive's density has moved twice (the 1979 wire, then the
+    # 2026 modern harvest), and an aggregate that opens in 1920 is dominated
+    # by cutoffs whose base rates rest on a handful of coded events. A reader
+    # deciding whether to believe today's call wants the recent number.
+    recent_cut = f"{int(scored[-1]['cutoff'][:4]) - _RECENT_YEARS}-01-01"
+    recent = _aggregate([row for row in scored if row["cutoff"] >= recent_cut])
+
+    return {
+        "region_pack": region_pack,
+        "horizon_years": horizon_years,
+        **overall,
+        "recent": {"years": _RECENT_YEARS, **recent},
+        "by_cutoff": [
+            {k: v for k, v in row.items() if k != "pairs"} for row in scored
+        ],
+        "method": (
+            "the live estimator (forecasting.AsofArchive.forecast) re-run at "
+            "each quarter-end cutoff whose horizon has since closed, resolved "
+            "against the archive's own later episodes and Brier-scored with the "
+            "scorer's own function; skill is against predicting the sample's "
+            "base rate, so 0 is no better than the frequency and negative is "
+            "worse"
+        ),
+    }

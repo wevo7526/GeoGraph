@@ -8,7 +8,8 @@ import { useEffect, useMemo, useState } from 'react'
 import { getDyadSolution, getRegionMap, lastFailureFor } from '../api'
 import { useRegionLabel } from '../regions'
 import type { ConceptSolution, DyadSolution, RegionMap, Scenario } from '../types'
-import { Beat, Chip, Disclosure, Empty, StoryHead, toneOf } from '../ui'
+import { Beat, Chip, Disclosure, Empty, StoryHead } from '../ui'
+import { postureNote, standingLabel } from '../lib/language'
 import { BandHeat, Bars, MultiLine, PayoffMatrix, Tiles, pct } from './charts/Kit'
 
 const KIND_LABEL: Record<string, string> = {
@@ -102,7 +103,7 @@ function RegionGames({ region, onPick }: { region: string; onPick: (dyad: string
       <Beat n={1} title="Where sharper-than-usual friction is likeliest" major aside={`P(departure above the pair's own usual band after 4 quarters), ${map.primary_solver.toUpperCase()}`}>
         {lead && (
           <p className="text-sm mb-4" style={{ maxWidth: '64ch' }}>
-            <b>{lead.dyad_name}</b> — {lead.tone_label ?? 'unread'} on balance — carries the most: {pct(lead.sharp_departure_probability, 0)}
+            <b>{lead.dyad_name}</b>{standingLabel(lead.standing) ? ` — ${standingLabel(lead.standing)}` : ''} — carries the most: {pct(lead.sharp_departure_probability, 0)}
             {lead.sharp_departure_probability_lp != null ? ` (LP benchmark ${pct(lead.sharp_departure_probability_lp, 0)})` : ''}, opening at a {lead.opening_label}
             {lead.top_scenario ? `; the likeliest kind of course is ${kind(lead.top_scenario.kind)} at ${pct(lead.top_scenario.likelihood, 0)} of its walk` : ''}.
             Bands are departures from each pair's own baseline, not absolute hostility — the tone chip is the absolute read. Click a pair to open its solved game.
@@ -112,7 +113,10 @@ function RegionGames({ region, onPick }: { region: string; onPick: (dyad: string
           {ranking.map((r) => (
             <div key={r.dyad_id} className="flex items-center gap-3 text-xs cursor-pointer" onClick={() => onPick(r.dyad_id)}>
               <span className="w-44 shrink-0 truncate">{r.dyad_name}</span>
-              <span className="w-24 shrink-0"><Chip label={r.tone_label ?? 'unread'} tone={toneOf(r.tone_label)} /></span>
+              <span className="w-28 shrink-0" title={postureNote(r.posture) ?? undefined}>
+                <Chip label={standingLabel(r.standing) ?? r.posture?.label ?? 'no declared standing'}
+                      tone={r.standing?.relations?.length ? 'ink' : 'muted'} />
+              </span>
               <span className="relative flex-1 h-3" style={{ background: 'var(--panel)' }}>
                 <span className="absolute top-0 bottom-0 left-0" style={{ width: `${r.sharp_departure_probability * 100}%`, background: r.sharp_departure_probability >= 0.5 ? 'var(--alert)' : 'var(--accent)' }} />
               </span>
@@ -223,7 +227,7 @@ function ScenarioList({ rows, onPick }: { rows: Scenario[]; onPick?: (dyad: stri
               {pct(sc.likelihood, 0)}
             </span>
             <span className="truncate"><b>{sc.dyad_name}</b> — {kind(sc.kind)}</span>
-            {sc.tone_label && <Chip label={sc.tone_label} tone={toneOf(sc.tone_label)} />}
+            {standingLabel(sc.standing) && <Chip label={standingLabel(sc.standing) as string} tone="ink" />}
           </div>
           <div className="relative h-1 mt-1 ml-14" style={{ background: 'var(--panel)' }}>
             <div className="absolute inset-y-0 left-0" style={{
@@ -318,8 +322,14 @@ function DyadGame({
             {s === 'qre' ? 'fitted QRE' : 'LP correlated equilibrium'}
           </button>
         ))}
-        <span className="kicker" style={{ marginLeft: '0.75rem' }}>tone</span>
-        <Chip label={sol.opening.tone_label ?? 'unread'} tone={toneOf(sol.opening.tone_label)} />
+        <span className="kicker" style={{ marginLeft: '0.75rem' }}>standing</span>
+        <Chip label={standingLabel(sol.opening.standing) ?? 'no declared standing'}
+              tone={sol.opening.standing?.relations?.length ? 'ink' : 'muted'} />
+        {postureNote(sol.opening.posture) && (
+          <span className="mono text-[11px]" style={{ color: 'var(--muted)' }}>
+            record: {postureNote(sol.opening.posture)}
+          </span>
+        )}
         <span className="mono text-[11px]" style={{ color: 'var(--muted)', marginLeft: 'auto' }}>
           {sol.persisted ? `solved ${sol.computed_at?.slice(0, 16).replace('T', ' ')} UTC` : 'solved on request'} · as of {sol.as_of}
         </span>
@@ -328,9 +338,9 @@ function DyadGame({
       <div className={`call mt-6 ${concept.sharp_departure_probability >= 0.5 ? 'call--rising' : ''}`}>
         <div className="kicker">The call</div>
         <p className="call-lede">
-          {pct(concept.sharp_departure_probability, 0)} that {sol.sides[0]} and {sol.sides[1]} — {sol.opening.tone_label ?? 'unread'} on balance
-          {sol.opening.tone != null ? ` (tone ${sol.opening.tone >= 0 ? '+' : ''}${sol.opening.tone.toFixed(2)})` : ''} — see a sharper-than-usual
-          departure from their own baseline within {sol.horizon} quarters
+          {pct(concept.sharp_departure_probability, 0)} that {sol.sides[0]} and {sol.sides[1]}
+          {standingLabel(sol.opening.standing) ? ` — ${standingLabel(sol.opening.standing)} — ` : ' '}
+          see a sharper-than-usual departure from their own baseline within {sol.horizon} quarters
           {lp && qre ? ` (QRE ${pct(qre.sharp_departure_probability, 0)}, LP ${pct(lp.sharp_departure_probability, 0)})` : ''}.
         </p>
         <p className="mono text-[11px] mt-1" style={{ color: 'var(--muted)' }}>

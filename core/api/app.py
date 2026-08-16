@@ -108,6 +108,56 @@ def _open_graph(app: FastAPI, settings: Any) -> None:
     except Exception as exc:  # noqa: BLE001 - see docstring
         app.state.graph = None
         app.state.graph_error = str(exc)
+    _start_jobs(app, settings)
+
+
+def _start_jobs(app: FastAPI, settings: Any) -> None:
+    """THE CONVERGENCE LOOP (core/api/jobs.py), started once the graph is open.
+
+    This process holds the single-writer lock, so it is the only place that
+    can do the archive's recurring work without a deploy — and a deploy is
+    downtime here, because the volume mounts to one instance. Off with
+    GEOGRAPH_JOBS=0; individual jobs with GEOGRAPH_JOB_<NAME>=0.
+    """
+    if os.getenv("GEOGRAPH_JOBS", "1").strip().lower() in {"0", "false", "no"}:
+        app.state.jobs = None
+        return
+    if getattr(app.state, "jobs", None) is not None or app.state.graph is None:
+        return
+    try:
+        from core.api import jobs as jobs_module
+        from core.api import work
+
+        scheduler = jobs_module.Scheduler(app, settings, [
+            # Cadences are about the writer's share of the process, not about
+            # urgency: a slice every few minutes converges a hundred-thousand
+            # event archive in days while staying invisible to a reader.
+            jobs_module.Job(
+                name="study", every=180.0, run=work.study,
+                enabled=jobs_module._enabled("study"),
+            ),
+            jobs_module.Job(
+                name="games", every=300.0, run=work.games,
+                enabled=jobs_module._enabled("games"),
+                slice_seconds=240.0,  # one region's solve is ~70s and atomic
+            ),
+            # The wire load is the heaviest writer (~145 events/sec into Kuzu)
+            # and the one that was a downtime decision: mena's 450k artifact
+            # events never reached the graph after the 2026-08-15 rebuild, so
+            # its roster dyads held 351 events and nothing could be measured
+            # against them. A 50% duty cycle converges it in a few hours with
+            # the site up.
+            jobs_module.Job(
+                name="wire", every=60.0, run=work.wire,
+                enabled=jobs_module._enabled("wire"),
+                slice_seconds=60.0,
+            ),
+        ])
+        scheduler.start()
+        app.state.jobs = scheduler
+    except Exception as exc:  # noqa: BLE001 - the API serves with or without it
+        app.state.jobs = None
+        app.state.jobs_error = str(exc)
 
 
 def _run_boot_behind_the_api(app: FastAPI, settings: Any) -> None:
@@ -184,6 +234,14 @@ def create_app() -> FastAPI:
         try:
             yield
         finally:
+            # Stop the convergence loop BEFORE the database goes: a job mid-
+            # write against a closed database is the one way this could
+            # corrupt something, and the loop's own bound makes waiting short.
+            if getattr(app.state, "jobs", None) is not None:
+                # Blocks until the batch in flight commits (bounded). A write
+                # killed mid-transaction is the one way this loop could damage
+                # the volume, and a deploy is exactly when that would happen.
+                app.state.jobs.stop()
             # Hand the write lock back on shutdown, so a batch job can take it
             # without waiting for the process to be reaped.
             kuzu_store.close(app.state.graph)
@@ -196,6 +254,8 @@ def create_app() -> FastAPI:
     app.state.graph = None
     app.state.graph_error = None
     app.state.corpus_error = None
+    app.state.jobs = None
+    app.state.jobs_error = None
 
     @app.get("/api/health")
     def health() -> dict[str, Any]:
@@ -208,7 +268,34 @@ def create_app() -> FastAPI:
             # Live state when the boot runs behind this API (api-first),
             # else whatever the serialised boot handed over in the env.
             "boot": getattr(app.state, "boot", None) or _boot_status(),
+            # The boot is now a small part of the story: the archive converges
+            # in the background (core/api/jobs.py) rather than per deploy.
+            "jobs": (
+                app.state.jobs.status() if getattr(app.state, "jobs", None)
+                else {"running": False, "error": app.state.jobs_error}
+            ),
         }
+
+    @app.get("/api/jobs")
+    def jobs_status() -> dict[str, Any]:
+        """What the convergence loop has done and what is left.
+
+        A background process nobody can watch is a background process nobody
+        trusts — and the honest number here (how much of the archive is still
+        unmeasured) is one a reader is entitled to before believing a coverage
+        figure anywhere else on the surface.
+        """
+        if getattr(app.state, "jobs", None) is None:
+            return {
+                "running": False,
+                "error": app.state.jobs_error,
+                "note": (
+                    "the convergence loop is off (GEOGRAPH_JOBS=0) or the graph "
+                    "is not open yet; recurring work then happens only on a boot"
+                ),
+                "jobs": [],
+            }
+        return app.state.jobs.status()
 
     @app.get("/api/ready")
     def ready(response: Response) -> dict[str, Any]:

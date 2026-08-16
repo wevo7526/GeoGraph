@@ -78,6 +78,128 @@ def capability_state(conn: Any | None, dyad_id: str) -> dict[str, Any]:
     return {"band": 1, "ratio": None, "source": "default"}
 
 
+def standing(conn: Any | None, dyad_id: str, *, as_of: str) -> dict[str, Any]:
+    """WHAT THE PAIR IS, from the curated RELATES_TO web — not from wire mood.
+
+    The surface used to characterise a relationship by the mean Goldstein of
+    its recent coded events, which is a statistic about COVERAGE: GDELT codes
+    meetings, calls and statements in far greater number than anything
+    coercive, so two thirds of every region's pairs scored positive and the
+    chip read "friendly" over the United States and China. The archive already
+    holds the answer as a sourced fact — `packs/china/actors.yaml` declares
+    that pair a `rivalry` from the 2018 tariffs, with a citation — and a
+    curated, dated, sourced relation outranks an average of press coverage.
+
+    Returns every relation in force at `as_of` (a pair can be both allied and
+    rivalrous over different windows; the dates are what disambiguate), most
+    recently entered first. Empty is a real answer — "no declared standing" —
+    and is reported rather than filled in with a guess.
+    """
+    if conn is None:
+        return {"relations": [], "source": "no graph"}
+    actor_a, actor_b = dyad_actors(dyad_id)
+    rows = kuzu_store.query(
+        conn,
+        # Both directions: RELATES_TO is stored as declared, and a rivalry is
+        # symmetric even when the row is not. `proxy` is the one directed type
+        # (patron → client), so the direction is carried through, not erased.
+        "MATCH (a:Actor)-[r:RELATES_TO]->(b:Actor) "
+        "WHERE (a.node_id = $a AND b.node_id = $b) "
+        "   OR (a.node_id = $b AND b.node_id = $a) "
+        "RETURN r.relation_type AS relation_type, r.valid_from AS valid_from, "
+        "r.valid_to AS valid_to, r.source_id AS source_id, "
+        "a.node_id AS from_id, b.node_id AS to_id "
+        "ORDER BY r.valid_from DESC",
+        {"a": actor_a, "b": actor_b},
+    )
+    live = [
+        row for row in rows
+        if str(row["valid_from"] or "") <= as_of
+        and (not row["valid_to"] or str(row["valid_to"]) >= as_of)
+    ]
+    return {
+        "relations": [
+            {
+                "relation_type": str(row["relation_type"]),
+                "since": str(row["valid_from"] or ""),
+                "until": str(row["valid_to"] or "") or None,
+                "source_id": str(row["source_id"] or ""),
+                "directed_from": str(row["from_id"]),
+            }
+            for row in live
+        ],
+        "source": "relates_to",
+        "as_of": as_of,
+    }
+
+
+#: Coded events in the window below which the posture is UNREAD rather than
+#: named. Four quarters of a dozen wire records is a sample, not a posture —
+#: and the wire's thin pairs are exactly where a share of a handful produced
+#: the most confident-looking numbers (Sweden–Norway at 0.0%, United
+#: States–Belarus at tone +5.07).
+POSTURE_MIN_EVENTS = 25
+
+#: Share of a window's coded events classed `material_conflict` → the word.
+#: Cut on the archive's OWN distribution, measured 2026-08-15 over the pairs
+#: with enough coverage to rank: the median busy pair sits near 5%, the upper
+#: decile near 25%, and the pairs everyone would name as wars sit above 30%
+#: (Russia–Ukraine 36% of 3,348 events, North Korea–Japan 43%). The words
+#: describe THE CODED RECORD, never the relationship — that is `standing`'s
+#: job — so no reading of them can contradict a declared rivalry.
+POSTURE_EDGES = (
+    (0.02, "almost all talk"),
+    (0.10, "mostly talk"),
+    (0.25, "mixed record"),
+    (0.45, "often coercive"),
+)
+
+
+def posture_label(share: float) -> str:
+    for edge, label in POSTURE_EDGES:
+        if share < edge:
+            return label
+    return "mostly coercive"
+
+
+def posture(rows: list[dict[str, Any]], *, quarters: int = 4) -> dict[str, Any]:
+    """HOW THE RECORD READS LATELY: the coercive share of the pair's coded
+    events over its last `quarters` active quarters.
+
+    Replaces the mean-Goldstein "tone" as the absolute read. Mean tone is
+    dominated by the volume of routine diplomacy, so it ranked the pairs by
+    how much they TALK; the material-conflict share ranks them by how much of
+    what they do is coercive, which is the thing the word was trying to say.
+    Tone is kept beside it — it is still the sign the escalation coder reads —
+    but it is a number now, not a verdict.
+    """
+    recent = sorted(rows, key=lambda r: r["q"])[-quarters:]
+    events = sum(int(r.get("events") or 0) for r in recent)
+    coercive = sum(int(r.get("conflict") or 0) for r in recent)
+    tones = [float(r["tone"]) for r in recent if r.get("tone") is not None]
+    tone = round(sum(tones) / len(tones), 3) if tones else None
+    if events < POSTURE_MIN_EVENTS:
+        return {
+            "label": "too little coverage to read",
+            "share": None,
+            "events": events,
+            "coercive": coercive,
+            "tone": tone,
+            "quarters": len(recent),
+            "thin": True,
+        }
+    share = coercive / events
+    return {
+        "label": posture_label(share),
+        "share": round(share, 4),
+        "events": events,
+        "coercive": coercive,
+        "tone": tone,
+        "quarters": len(recent),
+        "thin": False,
+    }
+
+
 def filtered_beliefs(
     joint: dict[tuple[str, int], tuple[str, str]],
     dyad_id: str,
