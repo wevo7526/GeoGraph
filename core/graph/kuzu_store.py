@@ -217,20 +217,60 @@ def container_memory_bytes() -> int | None:
 BUFFER_POOL_SHARE = float(os.getenv("GEOGRAPH_BUFFER_POOL_SHARE", "0.24"))
 
 
-def memory_in_use_bytes() -> int | None:
-    """What the cgroup says this container is holding RIGHT NOW.
+#: The cgroup's memory breakdown, v2 then v1.
+CGROUP_STAT_FILES = (
+    Path("/sys/fs/cgroup/memory.stat"),
+    Path("/sys/fs/cgroup/memory/memory.stat"),
+)
 
-    The scheduler reads this before starting a job. Nothing else in the
-    process knows how close the kernel's kill line is, and the kill is not
-    catchable — by the time a MemoryError would be raised the container is
-    already gone, mid-write.
-    """
+
+def memory_raw_bytes() -> int | None:
+    """`memory.current` as the cgroup reports it — anon + kernel + FILE CACHE."""
     for candidate in CGROUP_USAGE_FILES:
         try:
             return int(candidate.read_text(encoding="utf-8").strip())
         except (OSError, ValueError):
             continue
     return None
+
+
+def memory_file_cache_bytes() -> int:
+    """The reclaimable file cache the cgroup counts in `memory.current`
+    (v2 `file`, v1 `cache`). Zero when unreadable."""
+    for candidate in CGROUP_STAT_FILES:
+        try:
+            text = candidate.read_text(encoding="utf-8")
+        except OSError:
+            continue
+        for line in text.splitlines():
+            key, _, value = line.partition(" ")
+            if key in ("file", "cache") and value.strip().isdigit():
+                return int(value)
+    return 0
+
+
+def memory_in_use_bytes() -> int | None:
+    """What this container is holding RIGHT NOW that the kernel cannot
+    reclaim — `memory.current` LESS the file page cache.
+
+    THE FILE CACHE IS NOT PRESSURE. `memory.current` counts every page the
+    kernel caches for the graph file, its WAL and shadow, and the artifacts
+    read at warm; under steady I/O it sits pinned just under the limit and
+    the kernel reclaims it lazily. On 2026-08-16 the raw number read 7.0 of
+    7.45 GB, the loop paused every job for "memory", 586 reclaims freed
+    nothing, and no OOM kill came — because ~1.7 GB of that was cache. The
+    kill line is about anonymous memory; that is what the guard reads now,
+    which is also what `docker stats` reports as usage.
+
+    The scheduler reads this before starting a job. Nothing else in the
+    process knows how close the kernel's kill line is, and the kill is not
+    catchable — by the time a MemoryError would be raised the container is
+    already gone, mid-write.
+    """
+    raw = memory_raw_bytes()
+    if raw is None:
+        return None
+    return max(0, raw - memory_file_cache_bytes())
 
 
 #: Free bytes the volume must keep. Kuzu writes a shadow file and a WAL beside

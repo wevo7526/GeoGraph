@@ -531,9 +531,14 @@ class Scheduler:
         from core import settings as settings_module
 
         disk = kuzu_store.disk_usage(settings_module.load().kuzu_db_path)
+        raw = kuzu_store.memory_raw_bytes()
         return {
             "limit_gb": round(limit / 2**30, 2) if limit else None,
             "used_gb": round(used / 2**30, 2) if used is not None else None,
+            # The cgroup's raw number and the file cache it includes — the
+            # difference is what `used_gb` measures (see memory_in_use_bytes).
+            "raw_gb": round(raw / 2**30, 2) if raw is not None else None,
+            "file_cache_gb": round(kuzu_store.memory_file_cache_bytes() / 2**30, 2),
             "headroom": round(headroom, 3) if headroom is not None else None,
             "buffer_pool_gb": round(kuzu_store.buffer_pool_bytes() / 2**30, 2),
             "paused_for_memory": self.paused_for_memory,
