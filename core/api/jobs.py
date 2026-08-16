@@ -528,6 +528,9 @@ class Scheduler:
         limit = kuzu_store.container_memory_bytes()
         used = kuzu_store.memory_in_use_bytes()
         headroom = self._headroom()
+        from core import settings as settings_module
+
+        disk = kuzu_store.disk_usage(settings_module.load().kuzu_db_path)
         return {
             "limit_gb": round(limit / 2**30, 2) if limit else None,
             "used_gb": round(used / 2**30, 2) if used is not None else None,
@@ -535,4 +538,8 @@ class Scheduler:
             "buffer_pool_gb": round(kuzu_store.buffer_pool_bytes() / 2**30, 2),
             "paused_for_memory": self.paused_for_memory,
             "reclaims": self.memory_reclaims,
+            # THE VOLUME, because a full one is a crash the code cannot catch:
+            # 2026-08-16, 5 GB, "No space left on device" on every write.
+            "disk_free_gb": round(disk["free"] / 2**30, 2) if disk else None,
+            "disk_total_gb": round(disk["total"] / 2**30, 2) if disk else None,
         }

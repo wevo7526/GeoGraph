@@ -20,6 +20,7 @@ Order of value, which is also the order they were written:
 
 from __future__ import annotations
 
+import contextlib
 import os
 import sys
 import time
@@ -184,6 +185,11 @@ def study(conn: Any, deadline: float) -> dict[str, Any]:
     records: mena, always last, measured nothing for weeks).
     """
     global _PREFER_CHILD, _events_per_tick
+    from core.graph import kuzu_store as _store
+
+    graph_path = settings_module.load().kuzu_db_path
+    if _store.disk_is_tight(graph_path):
+        return {"stopped": "volume nearly full", "disk": _store.disk_usage(graph_path)}
     if _PREFER_CHILD:
         return _study_child_plan(deadline)
     try:
@@ -325,6 +331,10 @@ def _study_in_process(conn: Any, deadline: float) -> dict[str, Any]:
 #: this here rather than in a boot is that the site stays up.
 REFILL_CHUNK_EVENTS = 200
 
+#: Left beside the graph by a reset: "this graph needs its measured effects
+#: projected back from the panel once the wire's lean copy is in".
+REFILL_PENDING = ".affected-refill-pending"
+
 
 def refill(conn: Any, deadline: float) -> dict[str, Any]:
     """Finish an AFFECTED re-projection the boot's repair step left unfinished.
@@ -338,11 +348,26 @@ def refill(conn: Any, deadline: float) -> dict[str, Any]:
     Idempotent: `write_edges` reads before it creates, and the marker says
     where to resume. Nothing to do when no marker exists.
     """
+    from core.graph import kuzu_store
     from core.transmission import rebuild
 
-    marker_path = settings_module.load().kuzu_db_path.with_name(".affected-refill.json")
+    graph_path = settings_module.load().kuzu_db_path
+    marker_path = graph_path.with_name(".affected-refill.json")
+    pending_path = graph_path.with_name(REFILL_PENDING)
     if not marker_path.exists():
-        return {"note": "no refill pending"}
+        # A rebuilt graph asks for a refill by leaving `REFILL_PENDING`; it
+        # can only start once the wire's lean copy is in, because the panel's
+        # rows project onto Event nodes and an event that is not there yet
+        # would be dropped as "no longer in the graph".
+        if not pending_path.exists():
+            return {"note": "no refill pending"}
+        if not wire_complete():
+            return {"waiting": "the wire's lean copy is still loading"}
+        rebuild.Marker(marker_path).save()
+        with contextlib.suppress(OSError):
+            pending_path.unlink()
+    if kuzu_store.disk_is_tight(graph_path):
+        return {"stopped": "volume nearly full", "disk": kuzu_store.disk_usage(graph_path)}
     marker = rebuild.Marker(marker_path)
     panel = _panel()
     if panel is None:
@@ -486,188 +511,199 @@ def games(conn: Any, deadline: float) -> dict[str, Any]:
         panel.close()
 
 
-# ── the wire, into the graph ───────────────────────────────────────────────
+# ── the wire, into the graph — the LEAN copy ───────────────────────────────
 
 
-#: Lines merged per write. The loader's own batch size, and the reason it is
-#: batched at all: an interrupted load keeps the batches it completed, so a
-#: load too slow to finish once can still finish.
-WIRE_BATCH_LINES = 5_000
+#: The materiality bar for the GRAPH's copy of the wire — the same bar the
+#: transmission engine measures at (`runner.DEFAULT_MIN_GDELT_GOLDSTEIN`). An
+#: event under it is never measured, so it carries no AFFECTED edge and no
+#: surface reads it off the graph: the explorer, the panel, the games and the
+#: forecasts all read the CORPUS. It stays in the corpus; it does not need a
+#: node. Measured 2026-08-16: 1.07M wire events in the graph took the Kuzu
+#: file to 4.75 GB of a 5 GB volume and every write died on "No space left on
+#: device"; ~a third of them clear the bar.
+GRAPH_MIN_GOLDSTEIN = float(os.getenv("GEOGRAPH_GRAPH_MIN_GOLDSTEIN", "7.0"))
 
-#: Per (pack) memo of the event ids the graph already holds. Built once —
-#: it is a set of a few hundred thousand strings — and grown as this process
-#: writes, because rebuilding it per tick would cost more than the loading.
+#: Events per write inside the API. Small — every statement is one a reader
+#: waits behind — and the CREATE fast path makes small batches cheap.
+WIRE_BATCH_EVENTS = int(os.getenv("GEOGRAPH_WIRE_BATCH_EVENTS", "500"))
+
+#: Per (pack) memo of the wire event ids the graph already holds. Built once
+#: per pack — a set of a few hundred thousand strings — and grown as this
+#: process writes, because rebuilding it per tick would cost more than the
+#: loading.
 _wire_seen: dict[str, set[str]] = {}
 _wire_done: set[str] = set()
 
-#: Lines scanned between deadline checks. A pass over an artifact whose events
-#: are ALL already held writes nothing, so without this the tick only noticed
-#: its deadline between files — measured locally at 22 artifacts and 454k
-#: lines, which is minutes of holding a slice meant to last one.
-_WIRE_SCAN_CHECK = 20_000
 
-
-def _artifacts(pack_name: str) -> list[Any]:
-    from pathlib import Path
-
-    root = Path(__file__).resolve().parents[2] / "data" / "derived"
-    return sorted(root.glob(f"gdelt-{pack_name}-*.tsv.gz"))
-
-
-def _marker(pack_name: str, artifact: Any) -> Any:
-    """THE ARTIFACT IS THE UNIT OF COMPLETENESS — the boot's own marker file,
-    the same path and the same name (`scripts/boot.py::_pending_artifacts`).
-
-    Shared deliberately: a boot that loaded an artifact and a job that loaded
-    it are the same fact, and the marker lives beside the graph so a rebuilt
-    volume loses both together. Comparing event counts instead looks airtight
-    and is not — the same GDELT id appears in more than one lens's artifacts,
-    so a lens can never reach its own count and the load never ends.
-    """
-    from core import settings as settings_module
-
+def _lean_marker(pack_name: str) -> Any:
+    """THE PACK IS THE UNIT OF COMPLETENESS for the lean copy: one marker per
+    lens beside the graph, so a rebuilt volume loses both together."""
     root = settings_module.load().kuzu_db_path.parent / ".gdelt-loaded"
-    return root / f"{pack_name}-{artifact.stem}.done"
+    return root / f"{pack_name}-lean.done"
 
 
-def _mark_loaded(pack_name: str, artifact: Any) -> None:
-    marker = _marker(pack_name, artifact)
-    try:
-        marker.parent.mkdir(parents=True, exist_ok=True)
-        marker.write_text(artifact.name, encoding="utf-8")
-    except OSError:  # a read-only volume must not fail the loop
-        pass
+def wire_complete() -> bool:
+    """Every installed lens's lean copy is in the graph — what the refill
+    waits for, because it can only project effects onto events that exist."""
+    from core.wire import corpus
+
+    return all(_lean_marker(name).exists() for name in corpus.installed())
+
+
+def measurable(row: dict[str, Any]) -> bool:
+    """Does this wire event clear the graph's bar?"""
+    goldstein = row.get("goldstein")
+    return goldstein is not None and abs(float(goldstein)) >= GRAPH_MIN_GOLDSTEIN
 
 
 def wire(conn: Any, deadline: float) -> dict[str, Any]:
-    """Merge the committed GDELT artifacts into the graph, a batch at a time.
+    """Project the SCORED corpus onto the graph — measurable events only.
 
-    THE GAP THIS CLOSES. The wire's read path is the corpus (a pure function of
-    the artifacts in the image), so the graph copy exists for one reason: the
-    transmission engine measures events IN THE GRAPH, and effects are the
-    market half of every surface. After the 2026-08-15 volume rebuild the load
-    ran alphabetically and never reached mena, so the flagship region held 351
-    graph events on its roster dyads against china's 340,784 — and its measured
-    effects were the deep tier alone.
+    THE GRAPH COPY OF THE WIRE IS A PROJECTION OF THE CORPUS, not a second
+    load. The corpus is the wire, parsed once per process and scored by Head B
+    over every dyad's COMPLETE record; the graph needs a node only for an
+    event the transmission engine can measure (the materiality bar), and it
+    needs that node to carry the escalation coding the corpus already
+    computed — re-folding Head B over the graph's filtered record would give
+    a different, wrong baseline. So each event lands with its
+    `escalation_direction / magnitude / baseline` from the corpus row, its
+    Dyad node and OF_DYAD edge (the rescore job never has to touch it), and
+    its INITIATED_BY / DIRECTED_AT / DERIVED_FROM edges CREATEd (the ids are
+    read off the graph first, so nothing merges against an actor's or the
+    source's adjacency list — the scan that made the old loader 145 events/s).
 
-    Reloading it was a downtime decision (~1h of graph-dark) for as long as
-    bulk writes could only happen in a boot. Here it is a background slice:
-    events already in the graph are skipped, batches commit as they go, and the
-    deadline stops the tick.
-
-    Escalation fields are NOT scored here — Head B folds per dyad in time order
-    across the whole archive, which is an archive-wide pass and belongs in its
-    own job. Measurement does not read them (the study selects on goldstein and
-    date), so the market half converges without waiting for it.
+    Idempotent and resumable: ids already in the graph are skipped; a pack is
+    marked done when every measurable id is held. Stops at its deadline, on
+    memory pressure, and on a full volume — a write that meets a full disk
+    dies mid-transaction, which is how the container restart-looped on
+    2026-08-16.
     """
-    import gzip
-
     from core.api.jobs import memory_is_tight as jobs_tight
+    from core.classifier import escalation
     from core.graph import kuzu_store
     from core.ingestion import gdelt
+    from core.wire import corpus, serving
 
-    names = [n for n in _pack_names() if n not in _wire_done]
+    graph_path = settings_module.load().kuzu_db_path
+    names = [n for n in corpus.installed() if n not in _wire_done]
     if not names:
-        return {"note": "every pack's wire is loaded"}
+        return {"note": "every pack's lean wire is in the graph"}
 
     for name in names:
-        artifacts = _artifacts(name)
-        if not artifacts:
-            _wire_done.add(name)
-            continue
-        pending_now = [a for a in artifacts if not _marker(name, a).exists()]
-        if not pending_now:
-            # Marked complete — return before building the id set, which is a
-            # few hundred thousand strings per pack and pure waste here.
+        if _lean_marker(name).exists():
             _wire_done.add(name)
             continue
         pack = packs.load(name)
+        rows = [r for r in serving.rows_of(name) if measurable(r)]
         seen = _wire_seen.get(name)
         if seen is None:
-            rows = kuzu_store.query(
+            found = kuzu_store.query(
                 conn,
                 "MATCH (e:Event) WHERE e.region_pack = $pack "
                 "AND starts_with(e.node_id, 'event:gdelt-') "
                 "RETURN e.node_id AS id",
                 {"pack": name},
             )
-            seen = {str(r["id"]) for r in rows}
+            seen = {str(r["id"]) for r in found}
             _wire_seen[name] = seen
-        actors_by_iso3 = {
-            str(a["iso3"]): {"node_id": a["id"], "name": a["name"]}
-            for a in pack.actors if a.get("iso3")
-        }
+        pending = [r for r in rows if r["node_id"] not in seen]
+        if not pending:
+            _mark(_lean_marker(name))
+            _wire_done.add(name)
+            continue
 
+        names_by_id = {str(a["id"]): str(a["name"]) for a in pack.actors}
+        kuzu_store.merge_nodes(conn, "Source", [gdelt._SOURCE_META])
         written = 0
-        pending = pending_now
-        for artifact in pending:
-            if time.monotonic() >= deadline:
+        for start in range(0, len(pending), WIRE_BATCH_EVENTS):
+            if time.monotonic() >= deadline or jobs_tight():
                 return {"pack": name, "written": written, "held": len(seen),
-                        "artifacts_left": len(pending), "stopped_early": True}
-            batch: list[str] = []
-            scanned = 0
-            with gzip.open(artifact, "rt", encoding="latin-1") as fh:
-                for line in fh:
-                    scanned += 1
-                    if scanned % _WIRE_SCAN_CHECK == 0 and (
-                        time.monotonic() >= deadline or jobs_tight()
-                    ):
-                        # Stop mid-artifact WITHOUT a marker: the ids already
-                        # written are skipped next tick, so resuming costs a
-                        # scan and never a re-merge. The same boundary serves
-                        # the memory check — the scheduler's before-each-job
-                        # look cannot help a job already inside its run, and
-                        # this one holds a few hundred thousand strings plus
-                        # its merge batches.
-                        if batch:
-                            written += _merge_wire_batch(
-                                conn, gdelt, batch, pack, actors_by_iso3, seen
-                            )
-                        return {"pack": name, "written": written,
-                                "held": len(seen), "artifact": artifact.name,
-                                "artifacts_left": len(pending),
-                                "stopped_early": True}
-                    event_id = f"event:gdelt-{line.split(chr(9), 1)[0]}"
-                    if event_id in seen:
-                        continue
-                    batch.append(line)
-                    if len(batch) < WIRE_BATCH_LINES:
-                        continue
-                    written += _merge_wire_batch(
-                        conn, gdelt, batch, pack, actors_by_iso3, seen
-                    )
-                    batch = []
-            if batch:
-                written += _merge_wire_batch(
-                    conn, gdelt, batch, pack, actors_by_iso3, seen
-                )
-            # A COMPLETE PASS is what earns the marker, whether it wrote a
-            # hundred thousand events or none: an artifact whose events are
-            # all held is loaded, and re-reading it every tick is how a
-            # resumable loader stops being cheap.
-            _mark_loaded(name, artifact)
+                        "pending": len(pending) - start, "stopped_early": True}
+            if kuzu_store.disk_is_tight(graph_path):
+                return {"pack": name, "written": written, "held": len(seen),
+                        "pending": len(pending) - start, "stopped": "volume nearly full",
+                        "disk": kuzu_store.disk_usage(graph_path)}
+            batch = pending[start:start + WIRE_BATCH_EVENTS]
+            written += _write_lean_batch(conn, batch, name, names_by_id, escalation)
+            for row in batch:
+                seen.add(str(row["node_id"]))
+        _mark(_lean_marker(name))
+        _wire_done.add(name)
         return {"pack": name, "written": written, "held": len(seen),
-                "artifacts": len(pending)}
-    return {"note": "every pack's wire is loaded"}
+                "measurable": len(rows), "complete": True}
+    return {"note": "every pack's lean wire is in the graph"}
 
 
-def _merge_wire_batch(
-    conn: Any, gdelt: Any, batch: list[str], pack: Any,
-    actors_by_iso3: dict[str, dict[str, Any]], seen: set[str],
+def _mark(marker: Any) -> None:
+    try:
+        marker.parent.mkdir(parents=True, exist_ok=True)
+        marker.write_text("lean", encoding="utf-8")
+    except OSError:  # a read-only volume must not fail the loop
+        pass
+
+
+def _write_lean_batch(
+    conn: Any, batch: list[dict[str, Any]], pack_name: str,
+    names_by_id: dict[str, str], escalation: Any,
 ) -> int:
-    events, edges, result = gdelt.parse_lines(
-        batch,
-        actors_by_iso3=actors_by_iso3,
-        region_pack=pack.name,
-        external_powers=pack.external_powers,
-    )
-    gdelt.write_events(conn, events, edges)
-    # The memo grows with what we wrote AND with what the parser dropped: a
-    # line that fails the roster or the mention floor will fail it again next
-    # tick, and re-reading it forever is how a resumable loader stops resuming.
-    for line in batch:
-        seen.add(f"event:gdelt-{line.split(chr(9), 1)[0]}")
-    return int(result.written)
+    """One batch of scored corpus rows → Event + Dyad nodes, four edge kinds."""
+    from core.graph import kuzu_store
+    from core.ingestion import gdelt
+
+    events: list[dict[str, Any]] = []
+    dyads: dict[str, dict[str, Any]] = {}
+    initiated: list[dict[str, Any]] = []
+    directed: list[dict[str, Any]] = []
+    derived: list[dict[str, Any]] = []
+    of_dyad: list[dict[str, Any]] = []
+    for row in batch:
+        event_id = str(row["node_id"])
+        events.append({
+            "node_id": event_id,
+            "name": row.get("name") or "",
+            "event_time": row["event_time"],
+            "action_cameo_code": row.get("cameo_code") or "",
+            "goldstein": row.get("goldstein"),
+            "quad_class": row.get("quad_class") or "",
+            "region_pack": pack_name,
+            "fidelity_tier": row.get("fidelity_tier") or "modern_coded",
+            "temporal_resolution": row.get("temporal_resolution") or "day",
+            "source_scale": row.get("source_scale") or "goldstein",
+            "escalation_direction": row.get("escalation_direction") or "",
+            "escalation_magnitude": row.get("escalation_magnitude"),
+            "escalation_baseline": row.get("escalation_baseline"),
+        })
+        dyad_id = str(row["dyad_id"])
+        a, b = sorted((str(row["initiator_id"]), str(row["target_id"])))
+        # The Dyad's standing baseline: the tracker's state after THIS row —
+        # the last row of the batch wins, in time order, so it is the standing
+        # baseline as of the newest event written.
+        dyads[dyad_id] = {
+            "node_id": dyad_id,
+            "name": f"{names_by_id.get(a, a)}–{names_by_id.get(b, b)}",
+            "actor_a_id": a, "actor_b_id": b,
+            "ewma_baseline": (
+                escalation.update_baseline(row["escalation_baseline"], float(row["goldstein"]))
+                if row.get("escalation_baseline") is not None and row.get("goldstein") is not None
+                else None
+            ),
+            "ewma_as_of": row["event_time"],
+        }
+        initiated.append({"src": event_id, "dst": str(row["initiator_id"]),
+                          "source_id": gdelt.SOURCE_GDELT})
+        directed.append({"src": event_id, "dst": str(row["target_id"]),
+                         "source_id": gdelt.SOURCE_GDELT})
+        derived.append({"src": event_id, "dst": gdelt.SOURCE_GDELT})
+        of_dyad.append({"src": event_id, "dst": dyad_id})
+    kuzu_store.merge_nodes(conn, "Event", events)
+    # A Dyad node the rescore or an earlier batch already wrote keeps its
+    # newer standing: MERGE by id, SET what this batch knows.
+    kuzu_store.merge_nodes(conn, "Dyad", list(dyads.values()))
+    for rel, rows in (("INITIATED_BY", initiated), ("DIRECTED_AT", directed),
+                      ("DERIVED_FROM", derived), ("OF_DYAD", of_dyad)):
+        kuzu_store.write_edges(conn, rel, rows, check_existing=False)
+    return len(events)
 
 
 # ── the scoreboard, warmed ─────────────────────────────────────────────────

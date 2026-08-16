@@ -77,8 +77,9 @@ def rescore_escalation(conn: Any) -> dict[str, int]:
         of_dyad.append({"src": coded["node_id"], "dst": coded["dyad_id"]})
 
     kuzu_store.merge_nodes(conn, "Dyad", coding.dyads)
-    kuzu_store.merge_nodes(conn, "Event", updates)
-    kuzu_store.merge_edges(conn, "OF_DYAD", of_dyad)
+    if updates:
+        kuzu_store.merge_nodes(conn, "Event", updates)
+        kuzu_store.merge_edges(conn, "OF_DYAD", of_dyad)
     return {"events_rescored": len(updates), "dyads": len(coding.dyads)}
 
 
@@ -187,6 +188,14 @@ def rescore_dyad(conn: Any, dyad_id: str) -> dict[str, int]:
     updates: list[dict[str, Any]] = []
     of_dyad: list[dict[str, Any]] = []
     for coded in coding.events:
+        # WIRE EVENTS KEEP THE CORPUS'S CODING. Since the lean graph (2026-08-16)
+        # holds only the wire's MEASURABLE events, a fold over the graph's
+        # record is a fold over a filtered record — the baseline it would
+        # write is not the pair's. Those events arrive coded by the corpus
+        # (`work.wire`), which folded the COMPLETE record; the deep tier's
+        # events, which live only in the graph, are what this writes.
+        if str(coded["node_id"]).startswith("event:gdelt-"):
+            continue
         base = {k: v for k, v in by_id[coded["node_id"]].items()
                 if k in _EVENT_PROPS or k == "node_id"}
         for key in ("name", "region_pack", "fidelity_tier",
@@ -197,6 +206,7 @@ def rescore_dyad(conn: Any, dyad_id: str) -> dict[str, int]:
         of_dyad.append({"src": coded["node_id"], "dst": coded["dyad_id"]})
 
     kuzu_store.merge_nodes(conn, "Dyad", coding.dyads)
-    kuzu_store.merge_nodes(conn, "Event", updates)
-    kuzu_store.merge_edges(conn, "OF_DYAD", of_dyad)
+    if updates:
+        kuzu_store.merge_nodes(conn, "Event", updates)
+        kuzu_store.merge_edges(conn, "OF_DYAD", of_dyad)
     return {"events_rescored": len(updates), "dyads": len(coding.dyads)}

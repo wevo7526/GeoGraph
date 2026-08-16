@@ -1518,8 +1518,16 @@ def _reset_graph_if_asked() -> dict[str, Any] | None:
     _log("=" * 68)
 
     removed: list[dict[str, Any]] = []
-    for target in (path, path.with_name(path.name + ".wal"),
-                   path.with_name(path.name + ".tmp")):
+    # Everything Kuzu leaves beside the database, and the repair's own
+    # markers: the shadow file, quarantined WALs (`.wal.broken-*`, kept as
+    # evidence until a reset), the refill marker and the rebuild ledger. A
+    # 5 GB volume has no room for evidence.
+    siblings = [path, path.with_name(path.name + ".wal"), path.with_name(path.name + ".tmp"),
+                path.with_name(path.name + ".shadow"),
+                path.with_name(".affected-refill.json"),
+                path.with_name(_REBUILD_AFFECTED_LEDGER)]
+    siblings += sorted(path.parent.glob(path.name + ".wal.broken-*"))
+    for target in siblings:
         if not target.exists():
             continue
         size = (target.stat().st_size if target.is_file()
@@ -1548,6 +1556,14 @@ def _reset_graph_if_asked() -> dict[str, Any] | None:
     with contextlib.suppress(OSError):
         _fingerprints_path().unlink()
     _log("fingerprints cleared — every guarded step will re-run")
+
+    # THE MEASURED EFFECTS COME BACK FROM THE PANEL, not from the study: the
+    # study's watermark says they are measured, so it would never re-measure
+    # them. This file asks the `refill` job to project them back once the
+    # wire's lean copy is in (core/api/work.py).
+    with contextlib.suppress(OSError):
+        path.with_name(".affected-refill-pending").write_text("reset", encoding="utf-8")
+    _log("refill requested — the refill job projects the panel's effects back after the wire")
 
     # Record it BEFORE returning, and unconditionally — including when there
     # was nothing to delete. The ledger's claim is "this value has been acted
@@ -1612,25 +1628,11 @@ def _rebuild_affected_if_asked() -> dict[str, Any] | None:
         _log("GEOGRAPH_REBUILD_AFFECTED set but there is no graph yet — nothing to repair")
         return {"ok": True, "skipped": "no graph", "token": requested}
     if marker.exists():
-        _log("=" * 68)
-        _log("an AFFECTED refill was left unfinished — resuming it from its marker")
-        _log("=" * 68)
-        started = time.monotonic()
-        resumed = _run_step(
-            "affected refill (resume)",
-            [sys.executable, str(_REBUILD_AFFECTED_SCRIPT), "--refill",
-             "--budget-seconds", str(_REBUILD_AFFECTED_TIMEOUT_SECONDS - 120)],
-            timeout=_REBUILD_AFFECTED_TIMEOUT_SECONDS,
-        )
-        resumed_outcome: dict[str, Any] = {
-            "token": requested, "resumed": resumed,
-            "ok": bool(resumed["ok"]) and not marker.exists(),
-            "seconds": round(time.monotonic() - started, 1),
-        }
-        if resumed_outcome["ok"]:
-            with contextlib.suppress(OSError):
-                ledger.write_text(requested, encoding="utf-8")
-        return resumed_outcome
+        # NOT IN THE BOOT. A refill is ~200 edges/s (measured 2026-08-16),
+        # so a million edges is over an hour of graph-dark time in a boot; the
+        # `refill` job finishes it with the site up.
+        _log("an AFFECTED refill is unfinished — the refill job completes it behind the API")
+        return {"ok": True, "skipped": "refill in progress (the refill job)", "token": requested}
     if honoured == requested:
         _log(f"GEOGRAPH_REBUILD_AFFECTED={requested} already honoured — skipped")
         return {"ok": True, "skipped": "already honoured", "token": requested}
@@ -1687,11 +1689,41 @@ def _rebuild_affected_if_asked() -> dict[str, Any] | None:
     return outcome
 
 
+def _log_disk() -> None:
+    """What the volume holds and how much is left — printed once per boot,
+    because on 2026-08-16 the answer was 'nothing' and the container
+    restart-looped for want of the number."""
+    from core import settings as settings_module
+    from core.graph import kuzu_store
+
+    path = settings_module.load().kuzu_db_path
+    usage = kuzu_store.disk_usage(path)
+    if usage:
+        _log(f"volume: {usage['used'] / 1e9:.2f} GB used of {usage['total'] / 1e9:.2f} GB, "
+             f"{usage['free'] / 1e9:.2f} GB free")
+    try:
+        entries = []
+        for entry in sorted(path.parent.iterdir()):
+            try:
+                size = (entry.stat().st_size if entry.is_file()
+                        else sum(f.stat().st_size for f in entry.rglob("*") if f.is_file()))
+            except OSError:
+                continue
+            if size >= 10_000_000:
+                entries.append(f"{entry.name} {size / 1e9:.2f} GB")
+        if entries:
+            _log("volume holds: " + ", ".join(entries))
+    except OSError:
+        pass
+
+
 def _boot_status() -> dict[str, Any]:
     if _disabled():
         _log("seeding disabled by GEOGRAPH_SEED_ON_BOOT")
         return {"seeded": False, "reason": "disabled by GEOGRAPH_SEED_ON_BOOT"}
 
+    # THE VOLUME, FIRST: a full one is the failure nothing below can survive.
+    _log_disk()
     # BEFORE anything opens the graph — a reset that runs after the seed has
     # taken the single-writer lock deletes a database out from under a live
     # connection.

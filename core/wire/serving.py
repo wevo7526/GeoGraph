@@ -198,6 +198,19 @@ def joint_actions(
     return cached
 
 
+def rows_of(pack: str) -> list[dict[str, Any]]:
+    """Every scored row of one lens, from the retained slim view — the wire's
+    events with Head B's coding, in (event_time, node_id) order, at ~1/5 the
+    memory of the parsed rows. `dyad_id`, `initiator_id`, `target_id`,
+    `escalation_*` and `goldstein` all ride on it, which is everything the
+    graph's lean copy of the wire needs (see `core.api.work.wire`)."""
+    if not available():
+        return []
+    if not _WARMED:
+        warm()
+    return [_unslim(line) for line in _EVENTS.get(pack, [])]
+
+
 # ── the explorer view: window queries over the wire ─────────────────────────
 
 

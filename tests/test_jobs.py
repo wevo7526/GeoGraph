@@ -679,12 +679,14 @@ def test_a_long_job_can_stop_itself_when_memory_tightens(monkeypatch):
     assert not jobs_module.memory_is_tight()
 
     # And the wire actually consults it, at the boundary where it already
-    # stops for the deadline.
+    # stops for the deadline — the batch boundary of the lean loader — and
+    # the volume beside it, because a full disk is the other uncatchable kill.
     source = Path(work.__file__).read_text(encoding="utf-8")
-    scan = source[source.index("_WIRE_SCAN_CHECK == 0"):]
-    assert "jobs_tight()" in scan[:200], (
-        "the wire's periodic check must cover memory as well as the deadline"
+    loop = source[source.index("for start in range(0, len(pending), WIRE_BATCH_EVENTS)"):]
+    assert "jobs_tight()" in loop[:200], (
+        "the wire's per-batch check must cover memory as well as the deadline"
     )
+    assert "disk_is_tight" in loop[:600], "and the volume"
 
 
 def test_a_persisted_game_map_goes_stale_when_what_it_read_moves():

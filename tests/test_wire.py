@@ -189,7 +189,7 @@ def test_the_game_view_carries_both_sides_and_the_initiator(real_corpus):
     view = corpus._as_game_row(rows[0])
     assert set(view) == {
         "dyad_id", "actor_a", "actor_b", "initiator",
-        "event_time", "quad_class", "region_pack",
+        "event_time", "quad_class", "region_pack", "co_participation",
     }
     assert view["actor_a"] < view["actor_b"], "the pair is stored sorted"
     assert view["initiator"] in {view["actor_a"], view["actor_b"]}

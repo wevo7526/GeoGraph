@@ -34,6 +34,7 @@ def write_effects(
     *,
     market_node_ids: dict[str, str],
     source_id: str,
+    check_existing: bool = True,
 ) -> int:
     """Persist results as AFFECTED edges.
 
@@ -77,7 +78,7 @@ def write_effects(
     # rest and SETs the matches. Same validation, same key_slots identity,
     # same provenance; measured 30% faster on inserts, which is what the
     # watermarked study almost always does.
-    return kuzu_store.write_edges(conn, "AFFECTED", rows)
+    return kuzu_store.write_edges(conn, "AFFECTED", rows, check_existing=check_existing)
 
 
 # ── reading effects back ─────────────────────────────────────────────────────

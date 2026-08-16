@@ -43,6 +43,7 @@ import time
 from pathlib import Path
 from typing import Any
 
+from core.graph import kuzu_store
 from core.transmission import calendar as trading_calendar
 from core.transmission import effects as effects_writer
 from core.transmission import event_study, runner
@@ -82,6 +83,16 @@ def event_dates(graph: Any) -> dict[str, dt.date]:
     return {
         str(e["id"]): event_study.parse_event_date(e["date"])
         for e in runner.archive(graph, with_names=False)
+    }
+
+
+def events_with_effects(graph: Any) -> set[str]:
+    """Every event that already carries an AFFECTED edge — the collision set a
+    refill checks against, read once per run."""
+    return {
+        str(r["id"]) for r in kuzu_store.query(
+            graph, "MATCH (e:Event)-[:AFFECTED]->(:Market) RETURN DISTINCT e.node_id AS id"
+        )
     }
 
 
@@ -169,7 +180,8 @@ def results_for_pack(
 
 
 def write_results(
-    graph: Any, results: list[event_study.EffectResult], pack: Any
+    graph: Any, results: list[event_study.EffectResult], pack: Any, *,
+    check_existing: bool = True,
 ) -> int:
     """Through the one door, grouped by the source each number came from."""
     market_node_ids = {m["ticker"]: m["id"] for m in pack.markets}
@@ -179,7 +191,8 @@ def write_results(
     written = 0
     for source_id, group in by_source.items():
         written += effects_writer.write_effects(
-            graph, group, market_node_ids=market_node_ids, source_id=source_id
+            graph, group, market_node_ids=market_node_ids, source_id=source_id,
+            check_existing=check_existing,
         )
     return written
 
@@ -233,6 +246,7 @@ def refill(
     for row in rows:
         rows_by_event.setdefault(str(row["event_node_id"]), []).append(row)
     ordered_events = sorted(rows_by_event)
+    already = events_with_effects(graph)
 
     state = marker.state if marker is not None else {"done_packs": [], "pack": None, "after": None}
     written = 0
@@ -261,6 +275,13 @@ def refill(
         after = state["after"] if state.get("pack") == pack.name else None
         pending = [e for e in ordered_events if after is None or e > after]
         state["pack"] = pack.name
+        # A CHUNK CHECKS ONLY IF IT COULD COLLIDE. `already` is every event
+        # that carries an AFFECTED edge when this run starts (one query); a
+        # chunk with none of them is new by construction and CREATEs straight
+        # away. The existence read is most of the refill's cost (~200 edges/s
+        # with it on every chunk, measured 2026-08-16), and on a fresh table
+        # the only edges are the spine study's few dozen — plus, after a stop,
+        # the boundary chunk the marker was saved before.
         for start in range(0, len(pending), chunk_events):
             if deadline is not None and time.monotonic() > deadline:
                 stopped_early = True
@@ -272,7 +293,10 @@ def refill(
             for reason, count in dropped.items():
                 dropped_total[reason] = dropped_total.get(reason, 0) + count
             if results:
-                written += write_results(graph, results, pack)
+                written += write_results(
+                    graph, results, pack,
+                    check_existing=any(e in already for e in batch),
+                )
             events_done += len(batch)
             state["after"] = batch[-1]
             if marker is not None:

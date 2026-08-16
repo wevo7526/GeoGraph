@@ -233,6 +233,32 @@ def memory_in_use_bytes() -> int | None:
     return None
 
 
+#: Free bytes the volume must keep. Kuzu writes a shadow file and a WAL beside
+#: the database, and a write that meets a full disk fails mid-transaction —
+#: on 2026-08-16 the AFFECTED refill filled a 5 GB volume, every write step
+#: died on `No space left on device`, and the container restart-looped.
+DISK_FLOOR_BYTES = int(os.getenv("GEOGRAPH_DISK_FLOOR_BYTES", str(400 << 20)))
+
+
+def disk_usage(path: Path) -> dict[str, int] | None:
+    """(total, used, free) bytes for the filesystem holding `path` — the
+    volume, in production. None when unreadable."""
+    import shutil
+
+    try:
+        probe = path if path.exists() else path.parent
+        usage = shutil.disk_usage(str(probe))
+    except OSError:
+        return None
+    return {"total": int(usage.total), "used": int(usage.used), "free": int(usage.free)}
+
+
+def disk_is_tight(path: Path, floor: int = DISK_FLOOR_BYTES) -> bool:
+    """Is the volume too full for another write? Unknown means not tight."""
+    usage = disk_usage(path)
+    return usage is not None and usage["free"] < floor
+
+
 def buffer_pool_bytes() -> int:
     """How much page cache to allow — sized to the CONTAINER, never the host."""
     override = os.getenv("GEOGRAPH_BUFFER_POOL_BYTES")
@@ -557,8 +583,21 @@ def merge_edges(conn: kuzu.Connection, rel: str, rows: list[dict[str, Any]]) -> 
     return written
 
 
-def write_edges(conn: kuzu.Connection, rel: str, rows: list[dict[str, Any]]) -> int:
+def write_edges(
+    conn: kuzu.Connection, rel: str, rows: list[dict[str, Any]], *,
+    check_existing: bool = True,
+) -> int:
     """Upsert edges WITHOUT asking MERGE to walk an adjacency list.
+
+    `check_existing=False` skips the existence read and CREATEs every row — for
+    a caller that KNOWS the rows are new (a loader writing events it has just
+    confirmed absent, a refill past its resume marker). The read is a scan of
+    the source table's forward adjacency per batch; over a million rows it is
+    most of the write's cost, and it exists to keep the upsert an upsert, not
+    to double-check a fact the caller already holds. Duplicated rel edges are
+    silent in Kuzu (no unique constraint), so the caller's knowledge must be
+    real: the loaders here derive it from a set of ids read off the graph or a
+    marker saved after every chunk.
 
     Same contract as `merge_edges` — same validation, same key_slots identity,
     same provenance — but the existence check is an ordinary read instead of a
@@ -598,20 +637,22 @@ def write_edges(conn: kuzu.Connection, rel: str, rows: list[dict[str, Any]]) -> 
         # 1. WHICH ALREADY EXIST. Scoped to this batch's source nodes, so the
         #    read walks the FORWARD adjacency (an Event has a handful of
         #    AFFECTED edges) rather than the backward one that is the problem.
-        returned = ", ".join(
-            ["a.node_id AS src", "b.node_id AS dst"]
-            + [f"r.{k} AS {k}" for k in keys]
-        )
-        found = query(
-            conn,
-            f"MATCH (a:{spec.src})-[r:{rel}]->(b:{spec.dst}) "
-            f"WHERE a.node_id IN $srcs RETURN {returned}",
-            {"srcs": sorted({str(r["src"]) for r in batch})},
-        )
-        existing: set[tuple[Any, ...]] = {
-            (record["src"], record["dst"], *(record[k] for k in keys))
-            for record in found
-        }
+        existing: set[tuple[Any, ...]] = set()
+        if check_existing:
+            returned = ", ".join(
+                ["a.node_id AS src", "b.node_id AS dst"]
+                + [f"r.{k} AS {k}" for k in keys]
+            )
+            found = query(
+                conn,
+                f"MATCH (a:{spec.src})-[r:{rel}]->(b:{spec.dst}) "
+                f"WHERE a.node_id IN $srcs RETURN {returned}",
+                {"srcs": sorted({str(r["src"]) for r in batch})},
+            )
+            existing = {
+                (record["src"], record["dst"], *(record[k] for k in keys))
+                for record in found
+            }
 
         def _identity(row: dict[str, Any], keys: list[str] = keys) -> tuple[Any, ...]:
             return (row["src"], row["dst"], *(row[k] for k in keys))
