@@ -37,7 +37,7 @@ _MODEL_DYADS = 12
 
 
 def _model_forecast(
-    db_path: Path, *, region_pack: str, generated_at: str
+    db_path: Path, *, region_pack: str, generated_at: str, conn: Any = None
 ) -> dict[str, str] | None:
     """The learned trajectory, frozen as a THIRD mode — or None.
 
@@ -66,7 +66,11 @@ def _model_forecast(
     if corpus.installed():
         table = panel.build(corpus.all_panel_rows(), region_pack=region_pack)
     else:
-        table = panel.build(panel.load_rows(db_path), region_pack=region_pack)
+        table = panel.build(
+            panel.dyad_event_rows(conn) if conn is not None
+            else panel.load_rows(db_path),
+            region_pack=region_pack,
+        )
     if not table:
         print(f"{region_pack}: model not frozen — no dyad has enough occupied quarters")
         return None
@@ -161,6 +165,7 @@ def _load_game_artifact(region_pack: str) -> dict[str, Any] | None:
 
 def _sequence_forecast(
     db_path: Path,
+    conn: Any = None,
     *,
     region_pack: str,
     generated_at: str,
@@ -188,7 +193,8 @@ def _sequence_forecast(
     # The panel and the joint actions come corpus-first, matching what
     # `fit_game.py` fitted the payoffs over. The graph stays the only source
     # for measured effects and CINC capability — opened read-only for both.
-    conn = kuzu_store.connect(db_path, read_only=True)
+    opened_here = conn is None
+    conn = kuzu_store.connect(db_path, read_only=True) if opened_here else conn
     try:
         effects = pricing.measured_effects(conn, region_pack=region_pack)
         if corpus.artifacts_for(region_pack):
@@ -209,7 +215,10 @@ def _sequence_forecast(
             for s in summaries
         }
     finally:
-        kuzu_store.close(conn)
+        # Only close what THIS function opened: closing a connection the caller
+        # handed us would shut the API's own database (`close` shuts both).
+        if opened_here:
+            kuzu_store.close(conn)
 
     joint = transition.joint_actions(events, quarter_of=panel_module.quarter_index)
     kernel, observed = transition.kernel(transition.count(table, joint))
@@ -325,10 +334,22 @@ def _sequence_forecast(
     }
 
 
-def freeze(db_path: Path, *, region_pack: str) -> list[dict[str, str]]:
-    """Compute both modes, then persist. Returns the written node summaries."""
-    near = forecasting.forecast(db_path, _NEAR_QUESTION, region_pack=region_pack)
-    long_horizon = structural.structural_forecast(db_path, region_pack=region_pack)
+def freeze(
+    db_path: Path, *, region_pack: str, conn: Any = None
+) -> list[dict[str, str]]:
+    """Compute every mode, then persist. Returns the written node summaries.
+
+    `conn` lets this run INSIDE the API process (core/api/work.py), which is
+    the only process allowed to hold Kuzu's write lock while it serves. Given
+    one, nothing here opens a graph of its own — a second `kuzu.Database` in
+    the writer's process fails on the lock it already holds.
+    """
+    near = forecasting.forecast(
+        db_path, _NEAR_QUESTION, region_pack=region_pack, conn=conn
+    )
+    long_horizon = structural.structural_forecast(
+        db_path, region_pack=region_pack, conn=conn
+    )
 
     cutoff = near["as_of"]
     generated_at = dt.datetime.now(dt.UTC).isoformat(timespec="seconds")
@@ -375,7 +396,7 @@ def freeze(db_path: Path, *, region_pack: str) -> list[dict[str, str]]:
     # The learned mode is optional by design: the two counted forecasts above
     # do not depend on a model existing, passing, or being retrained.
     model_row = _model_forecast(
-        db_path, region_pack=region_pack, generated_at=generated_at
+        db_path, region_pack=region_pack, generated_at=generated_at, conn=conn
     )
     if model_row is not None:
         rows.append(model_row)
@@ -386,7 +407,7 @@ def freeze(db_path: Path, *, region_pack: str) -> list[dict[str, str]]:
     # a gated trajectory can tilt its dyad's kernel, with provenance.
     try:
         sequence_row = _sequence_forecast(
-            db_path, region_pack=region_pack, generated_at=generated_at,
+            db_path, conn=conn, region_pack=region_pack, generated_at=generated_at,
             model_inputs=(
                 json.loads(model_row["frozen_inputs_json"])
                 if model_row is not None else None
@@ -398,11 +419,14 @@ def freeze(db_path: Path, *, region_pack: str) -> list[dict[str, str]]:
     if sequence_row is not None:
         rows.append(sequence_row)
 
-    conn = kuzu_store.connect(db_path)
-    try:
+    if conn is not None:
         kuzu_store.merge_nodes(conn, "Forecast", rows)
-    finally:
-        kuzu_store.close(conn)
+    else:
+        writer = kuzu_store.connect(db_path)
+        try:
+            kuzu_store.merge_nodes(writer, "Forecast", rows)
+        finally:
+            kuzu_store.close(writer)
     return [{"node_id": r["node_id"], "mode": r["mode"]} for r in rows]
 
 

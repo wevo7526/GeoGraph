@@ -159,6 +159,13 @@ def _start_jobs(app: FastAPI, settings: Any) -> None:
                 enabled=jobs_module._enabled("rescore"),
                 slice_seconds=60.0,
             ),
+            # The frozen calls, re-frozen as the archive converges. Expensive
+            # (minutes) and gated on real growth, so it runs rarely.
+            jobs_module.Job(
+                name="forecasts", every=1800.0, run=work.forecasts,
+                enabled=jobs_module._enabled("forecasts"),
+                slice_seconds=600.0,
+            ),
             # The scoreboard: seconds per region, and it must not be the first
             # reader's problem — the archive read alone grows with the wire.
             jobs_module.Job(

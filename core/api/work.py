@@ -431,3 +431,67 @@ def rescore(conn: Any, deadline: float) -> dict[str, Any]:
         "events": events,
         "dyads_pending_at_least": len(dyads) - len(done),
     }
+
+
+# ── the frozen forecasts ───────────────────────────────────────────────────
+
+
+#: The archive must move by this share before the freeze is worth re-running.
+#: A freeze is minutes of solving, and 5,000 new wire events do not change a
+#: base rate counted over a million — but 500,000 of them do, which is exactly
+#: what the wire and study jobs are adding.
+FREEZE_GROWTH = 0.05
+
+#: Event count at the last freeze, per process. The Forecast nodes carry their
+#: own `generated_at`, so a restart simply re-freezes once — cheap insurance
+#: against a stale call, which is the failure that matters here.
+_frozen_at: dict[str, int] = {}
+
+
+def forecasts(conn: Any, deadline: float) -> dict[str, Any]:
+    """Re-freeze each region's Forecast nodes as the archive converges.
+
+    THE CALL GOES STALE OTHERWISE. Every mode — the counted near-term base
+    rates, the structural pressure, the model trajectory, the solved sequence
+    — is a function of the archive, and the archive is now growing by hundreds
+    of thousands of events in the background. Frozen on 2026-08-15 and never
+    re-frozen, "the call" would describe a graph that no longer exists while
+    the pages around it moved on.
+
+    Runs INSIDE this process on the API's connection (`freeze(..., conn=...)`),
+    because a second `kuzu.Database` here would fail on the write lock this
+    process already holds.
+    """
+    import importlib.util
+    from pathlib import Path
+
+    from core.graph import kuzu_store
+
+    rows = kuzu_store.query(conn, "MATCH (e:Event) RETURN count(e) AS n")
+    size = int(rows[0]["n"]) if rows else 0
+    if not size:
+        return {"skipped": "empty graph"}
+
+    root = Path(__file__).resolve().parents[2]
+    spec = importlib.util.spec_from_file_location(
+        "run_forecasts", root / "scripts" / "run_forecasts.py"
+    )
+    if spec is None or spec.loader is None:
+        return {"skipped": "run_forecasts unavailable"}
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    settings = settings_module.load()
+    done: list[dict[str, Any]] = []
+    for name in _pack_names():
+        was = _frozen_at.get(name)
+        if was is not None and was > 0 and abs(size - was) / was < FREEZE_GROWTH:
+            continue
+        if time.monotonic() >= deadline:
+            return {"frozen": done, "skipped": "slice spent", "archive": size}
+        written = module.freeze(settings.kuzu_db_path, region_pack=name, conn=conn)
+        _frozen_at[name] = size
+        done.append({"region": name, "modes": [r["mode"] for r in written]})
+    if not done:
+        return {"note": "every region's forecast is current", "archive": size}
+    return {"frozen": done, "archive": size}

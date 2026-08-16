@@ -144,27 +144,37 @@ class PressureArchive:
         self.region_pack = region_pack
 
     @classmethod
+    def from_conn(cls, conn: Any, *, region_pack: str | None = None) -> PressureArchive:
+        """The archive off a connection the caller holds — the freeze runs
+        inside the API process, which owns the write lock."""
+        return cls._read(conn, region_pack=region_pack)
+
+    @classmethod
     def load(cls, db_path: Path, *, region_pack: str | None = None) -> PressureArchive:
-        roster = _roster(region_pack)
         conn = kuzu_store.connect(db_path, read_only=True)
         try:
-            estimates = kuzu_store.query(
-                conn,
-                "MATCH (a:Actor)-[:HAS_ESTIMATE]->(s:AttributeEstimate) "
-                "WHERE s.attribute = 'clout' "
-                "RETURN a.node_id AS actor_id, s.as_of AS as_of, "
-                "s.value_mean AS value ORDER BY s.as_of",
-            )
-            events = kuzu_store.query(
-                conn,
-                "MATCH (e:Event) RETURN e.node_id AS node_id, "
-                "e.event_time AS event_time, "
-                "e.goldstein AS goldstein, e.quad_class AS quad_class, "
-                "e.region_pack AS region_pack, "
-                "e.escalation_direction AS direction ORDER BY e.event_time",
-            )
+            return cls._read(conn, region_pack=region_pack)
         finally:
             kuzu_store.close(conn)
+
+    @classmethod
+    def _read(cls, conn: Any, *, region_pack: str | None = None) -> PressureArchive:
+        roster = _roster(region_pack)
+        estimates = kuzu_store.query(
+            conn,
+            "MATCH (a:Actor)-[:HAS_ESTIMATE]->(s:AttributeEstimate) "
+            "WHERE s.attribute = 'clout' "
+            "RETURN a.node_id AS actor_id, s.as_of AS as_of, "
+            "s.value_mean AS value ORDER BY s.as_of",
+        )
+        events = kuzu_store.query(
+            conn,
+            "MATCH (e:Event) RETURN e.node_id AS node_id, "
+            "e.event_time AS event_time, "
+            "e.goldstein AS goldstein, e.quad_class AS quad_class, "
+            "e.region_pack AS region_pack, "
+            "e.escalation_direction AS direction ORDER BY e.event_time",
+        )
 
         if region_pack is not None:
             events = [e for e in events if str(e["region_pack"]) == region_pack]
@@ -287,6 +297,7 @@ def structural_forecast(
     region_pack: str,
     horizon_years: int = 20,
     as_of: str | None = None,
+    conn: Any = None,
 ) -> dict[str, Any]:
     """A long-horizon Forecast payload: mode='long_horizon', pressure
     trajectory, crisis-probability windows, scenario space with likelihoods
@@ -296,7 +307,11 @@ def structural_forecast(
     payload; nothing here reads a clock, which is what keeps a retrodiction
     identical to what a real run would have produced on that date.
     """
-    return PressureArchive.load(db_path, region_pack=region_pack).forecast(
+    archive = (
+        PressureArchive.from_conn(conn, region_pack=region_pack) if conn is not None
+        else PressureArchive.load(db_path, region_pack=region_pack)
+    )
+    return archive.forecast(
         region_pack=region_pack, horizon_years=horizon_years, as_of=as_of
     )
 

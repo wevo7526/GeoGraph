@@ -92,6 +92,23 @@ def dyad_event_rows(conn: Any) -> list[dict[str, Any]]:
     return rows
 
 
+def rows_from_conn(conn: Any) -> list[dict[str, Any]]:
+    """The same union as `all_dyad_event_rows`, on a connection the caller
+    already holds — so the freeze can run inside the API process, which is the
+    one process allowed to hold the write lock (core/api/jobs.py)."""
+    rows = dyad_event_rows(conn)
+
+    from core.wire import corpus as wire_corpus
+
+    if wire_corpus.installed():
+        seen = {str(row["event_id"]) for row in rows}
+        rows.extend(
+            row for row in wire_corpus.forecast_rows() if row["event_id"] not in seen
+        )
+        rows.sort(key=lambda r: (str(r["event_time"]), str(r["event_id"])))
+    return rows
+
+
 def all_dyad_event_rows(db_path: Any) -> list[dict[str, Any]]:
     """THE UNION OF BOTH STORES, BY EVENT ID — the read behind the freeze, the
     walk-forward backtest and the scorer, so the three can never disagree
@@ -106,19 +123,9 @@ def all_dyad_event_rows(db_path: Any) -> list[dict[str, Any]]:
     """
     conn = kuzu_store.connect(db_path, read_only=True)
     try:
-        rows = dyad_event_rows(conn)
+        return rows_from_conn(conn)
     finally:
         kuzu_store.close(conn)
-
-    from core.wire import corpus as wire_corpus
-
-    if wire_corpus.installed():
-        seen = {str(row["event_id"]) for row in rows}
-        rows.extend(
-            row for row in wire_corpus.forecast_rows() if row["event_id"] not in seen
-        )
-        rows.sort(key=lambda r: (str(r["event_time"]), str(r["event_id"])))
-    return rows
 
 
 def quarter(date: str) -> tuple[int, int]:
@@ -625,11 +632,12 @@ def forecast(
     *,
     region_pack: str,
     horizon_years: int = _DEFAULT_HORIZON_YEARS,
+    conn: Any = None,
 ) -> dict[str, Any]:
     """A near-term Forecast payload: mode='near_term', scenario pairs with
     base-rate likelihoods, frozen inputs. The caller stamps generated_at and
     persists — nothing here reads a clock."""
-    rows = all_dyad_event_rows(db_path)
+    rows = rows_from_conn(conn) if conn is not None else all_dyad_event_rows(db_path)
     if not rows:
         raise ValueError("no dyad-coded events in either store — seed first")
     return forecast_from_rows(
