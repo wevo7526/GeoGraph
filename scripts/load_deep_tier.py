@@ -124,6 +124,23 @@ def main() -> None:
     conn = kuzu_store.connect(settings.kuzu_db_path)
     try:
         kuzu_store.apply_schema(conn)
+        # THE PACKS DEFINE THE SCOPE. The state-system loader used to invent an
+        # Actor for every COW state (754 against a roster union of 75) and the
+        # volume still holds them, with the alliances, estimates, metrics and
+        # disputes that arrived with them. Prune BEFORE loading, against the
+        # union of every pack's roster, so this step leaves the graph in the
+        # shape its own loader now promises. Idempotent — zero on a clean graph.
+        from core import packs as packs_module
+
+        roster = {
+            str(actor["id"])
+            for name in packs_module.available()
+            for actor in packs_module.load(name).actors
+        }
+        pruned = cow.prune_off_roster_actors(conn, roster)
+        if any(pruned.values()):
+            print("pruned off-roster: " + ", ".join(
+                f"{table} {count}" for table, count in pruned.items() if count))
         steps: list[tuple[str, Callable[[], cow.LoadResult]]] = [
             ("state system", lambda: cow.load_state_system(conn, _RAW / "states2016.csv")),
             ("cinc clout", lambda: cow.load_cinc(conn, _RAW / "NMC-70-wsupplementary.csv")),

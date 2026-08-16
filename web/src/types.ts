@@ -835,6 +835,24 @@ export interface Scenario {
   tone_label?: string
   standing?: Standing | null
   posture?: Posture | null
+  family?: Family | null
+}
+
+/** WHICH GAME THIS PAIR PLAYS — ally / rival / adversary — from what it IS
+ *  (standing) and how its record READS (posture). The solver has one game, a
+ *  crisis-bargaining model, and it is the right one only for adversaries:
+ *  `native` says whether the solved game is this family's own, and `headline`
+ *  is the word the surface may use for the solved probability (friction,
+ *  hardening, escalation) — calling an alliance's friction "escalation" is
+ *  the specific thing that made US–Japan read as a war. */
+export interface Family {
+  family: 'ally' | 'rival' | 'adversary'
+  why: string
+  native: boolean
+  question: string
+  headline: string
+  bad_end: string
+  note: string
 }
 
 /** What a pair IS: the graph's declared, dated, sourced relations in force at
@@ -927,6 +945,7 @@ export interface DyadSolution {
     tone_label?: string
     standing?: Standing | null
     posture?: Posture | null
+    family?: Family | null
     latest_intensity: number
     scale: number
     active_quarters: number
@@ -967,6 +986,7 @@ export interface RegionRanking {
   tone_label?: string
   standing?: Standing | null
   posture?: Posture | null
+  family?: Family | null
   escalation_probability: number
   /** P(this pair leaves its OWN usual band) — relative, not absolute. */
   sharp_departure_probability: number

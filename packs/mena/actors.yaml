@@ -2,9 +2,9 @@
 # the model. COW ccodes anchor state actors to the deep tier; SWFs are the
 # actors whose 13F FLOW edges tie geopolitics to the market layer.
 #
-# Deep-tier ingestion (Phase 3) EXTENDS this roster from COW state-system
-# membership — this file seeds the modern network, it does not bound the
-# archive.
+# THIS ROSTER BOUNDS THE ARCHIVE (2026-08-16): the deep tier dates and enriches
+# the actors named here and invents none — the packs define the scope, and an
+# actor no pack names is pruned with everything hanging off it.
 
 actors:
   # ── states ─────────────────────────────────────────────────────────────────

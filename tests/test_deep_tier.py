@@ -562,3 +562,94 @@ def test_the_deep_tier_dates_pack_actors_and_invents_none(conn, tmp_path):
     assert rows[0]["name"] == "United States", (
         "pack curation still wins on names — not 'United States of America'"
     )
+
+
+def test_the_prune_removes_off_roster_actors_and_everything_hanging_off_them(conn, tmp_path):
+    """THE OTHER HALF OF THE SCOPE RULE. Stopping the loader inventing actors
+    leaves the ones already on the volume — with their alliances, estimates,
+    metrics and disputes. The prune takes them, and only them, and leaves no
+    one-sided event behind.
+    """
+    # Colombia arrives off-roster the way the old loader would have created it,
+    # with a CINC estimate, a metric, an alliance to a roster actor, a MID
+    # against one, and a dyad — every kind of thing that hung off the 754.
+    kuzu_store.merge_nodes(conn, "Actor", [
+        {"node_id": "actor:cow-100", "name": "Colombia", "actor_type": "state",
+         "cow_ccode": 100, "iso3": "COL"},
+    ])
+    kuzu_store.merge_nodes(conn, "Source", [
+        {"node_id": "source:test", "name": "Test", "kind": "dataset", "url": "", "citation": ""},
+    ])
+    kuzu_store.merge_nodes(conn, "AttributeEstimate", [
+        {"node_id": "estimate:col-clout-1913", "attribute": "clout", "value_mean": 0.001,
+         "value_std": 0.0, "method": "cinc", "as_of": "1913-12-31"},
+        {"node_id": "estimate:usa-clout-1913", "attribute": "clout", "value_mean": 0.22,
+         "value_std": 0.0, "method": "cinc", "as_of": "1913-12-31"},
+    ])
+    kuzu_store.merge_edges(conn, "HAS_ESTIMATE", [
+        {"src": "actor:cow-100", "dst": "estimate:col-clout-1913"},
+        {"src": "actor:cow-2", "dst": "estimate:usa-clout-1913"},
+    ])
+    kuzu_store.merge_nodes(conn, "NetworkMetric", [
+        {"node_id": "metric:col-1", "subject_id": "actor:cow-100", "metric_name": "degree",
+         "value": 1.0, "window_start": "1990-01-01", "window_end": "1999-12-31",
+         "method": "test"},
+        {"node_id": "metric:usa-1", "subject_id": "actor:cow-2", "metric_name": "degree",
+         "value": 9.0, "window_start": "1990-01-01", "window_end": "1999-12-31",
+         "method": "test"},
+    ])
+    kuzu_store.merge_edges(conn, "RELATES_TO", [
+        {"src": "actor:cow-100", "dst": "actor:cow-2", "relation_type": "alliance",
+         "valid_from": "1947-09-02", "source_id": "source:test"},
+        {"src": "actor:cow-2", "dst": "actor:cow-200", "relation_type": "alliance",
+         "valid_from": "1949-04-04", "source_id": "source:test"},
+    ])
+    kuzu_store.merge_nodes(conn, "Event", [
+        {"node_id": "event:cow-mid-col", "name": "MID", "event_time": "1990-06-01",
+         "action_cameo_code": "190", "goldstein": -9.0, "quad_class": "material_conflict",
+         "fidelity_tier": "deep_structured", "temporal_resolution": "day",
+         "source_scale": "cow_hostility", "region_pack": ""},
+        {"node_id": "event:cow-mid-usuk", "name": "MID", "event_time": "1991-06-01",
+         "action_cameo_code": "190", "goldstein": -9.0, "quad_class": "material_conflict",
+         "fidelity_tier": "deep_structured", "temporal_resolution": "day",
+         "source_scale": "cow_hostility", "region_pack": ""},
+    ])
+    kuzu_store.merge_edges(conn, "INITIATED_BY", [
+        {"src": "event:cow-mid-col", "dst": "actor:cow-2", "source_id": "source:test"},
+        {"src": "event:cow-mid-usuk", "dst": "actor:cow-2", "source_id": "source:test"},
+    ])
+    kuzu_store.merge_edges(conn, "DIRECTED_AT", [
+        {"src": "event:cow-mid-col", "dst": "actor:cow-100", "source_id": "source:test"},
+        {"src": "event:cow-mid-usuk", "dst": "actor:cow-200", "source_id": "source:test"},
+    ])
+    kuzu_store.merge_nodes(conn, "Dyad", [
+        {"node_id": "dyad:cow-100--cow-2", "name": "Colombia–United States",
+         "actor_a_id": "actor:cow-100", "actor_b_id": "actor:cow-2"},
+        {"node_id": "dyad:cow-2--cow-200", "name": "United States–United Kingdom",
+         "actor_a_id": "actor:cow-2", "actor_b_id": "actor:cow-200"},
+    ])
+
+    roster = {str(a["node_id"]) for a in _ROSTER}
+    removed = cow.prune_off_roster_actors(conn, roster)
+    assert removed == {"Event": 1, "AttributeEstimate": 1, "NetworkMetric": 1,
+                       "Dyad": 1, "Actor": 1}, removed
+
+    def _count(query: str) -> int:
+        return int(kuzu_store.query(conn, query)[0]["n"])
+
+    assert _count("MATCH (a:Actor) RETURN count(a) AS n") == len(_ROSTER)
+    assert _count("MATCH (a:Actor {node_id: 'actor:cow-100'}) RETURN count(a) AS n") == 0
+    # The roster's own things are untouched, one of each.
+    assert _count("MATCH (s:AttributeEstimate) RETURN count(s) AS n") == 1
+    assert _count("MATCH (m:NetworkMetric) RETURN count(m) AS n") == 1
+    assert _count("MATCH ()-[r:RELATES_TO]->() RETURN count(r) AS n") == 1
+    assert _count("MATCH (e:Event) RETURN count(e) AS n") == 1
+    assert _count("MATCH (d:Dyad) RETURN count(d) AS n") == 1
+    # NO ONE-SIDED EVENT: what remains carries both actor edges.
+    assert _count(
+        "MATCH (e:Event)-[:INITIATED_BY]->(:Actor) WITH e "
+        "MATCH (e)-[:DIRECTED_AT]->(:Actor) RETURN count(e) AS n"
+    ) == 1
+    assert kuzu_store.check_provenance(conn) == []
+    # Idempotent.
+    assert cow.prune_off_roster_actors(conn, roster) == {"Actor": 0}

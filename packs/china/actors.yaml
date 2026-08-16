@@ -3,9 +3,9 @@
 # against this file unchanged or the contract is broken.
 #
 # COW ccodes anchor states to the deep tier; iso3 anchors them to GDELT's
-# country codes. Deep-tier ingestion EXTENDS this roster from COW state-system
-# membership — this file seeds the modern network, it does not bound the
-# archive.
+# country codes. THIS ROSTER BOUNDS THE ARCHIVE (2026-08-16): the deep tier
+# dates and enriches the actors named here and invents none — the packs define
+# the scope, and an actor no pack names is pruned with everything hanging off it.
 
 # What to CALL this lens. The pack is KEYED `china` — that string is written
 # into every record's region_pack, into gdelt-china-1979-2005.tsv.gz and into

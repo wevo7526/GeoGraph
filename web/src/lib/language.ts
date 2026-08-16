@@ -230,3 +230,28 @@ export function evidenceNote(n: number, thin: boolean, looseMatch: boolean): str
   if (looseMatch) return `${base} · loose match`
   return base
 }
+
+/** WHICH GAME THE PAIR PLAYS — ally / rival / adversary — and the words the
+ *  solved number may wear. The solver has one game (crisis bargaining) and it
+ *  is the right one only for adversaries; for an ally the "escalation
+ *  probability" describes departures from the pair's own usual FRICTION and
+ *  must not be read as odds of conflict. `label` is the chip; `headline` is
+ *  the noun for the call ("friction", "hardening", "escalation"); `caveat` is
+ *  the sentence a non-native family owes the reader, or null. */
+export function familyRead(
+  family?: { family: string; native?: boolean; headline?: string; bad_end?: string; note?: string; why?: string } | null,
+): { label: string; headline: string; badEnd: string; caveat: string | null; why: string; tone: 'good' | 'bad' | 'ink' } | null {
+  if (!family || !family.family) return null
+  const label = family.family === 'ally' ? 'ally pair'
+    : family.family === 'adversary' ? 'adversary pair' : 'rival pair'
+  const tone: 'good' | 'bad' | 'ink' = family.family === 'ally' ? 'good'
+    : family.family === 'adversary' ? 'bad' : 'ink'
+  const headline = family.headline ?? (family.family === 'ally' ? 'friction'
+    : family.family === 'adversary' ? 'escalation' : 'hardening')
+  const badEnd = family.bad_end ?? (family.family === 'ally' ? 'a rift'
+    : family.family === 'adversary' ? 'open conflict' : 'a coercive turn')
+  const caveat = family.native === false
+    ? `The solver runs the adversarial crisis-bargaining game for every pair, so these numbers describe departures from this pair's own usual level of ${headline} — not odds of ${badEnd}.`
+    : null
+  return { label, headline, badEnd, caveat, why: family.why ?? '', tone }
+}

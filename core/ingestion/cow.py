@@ -131,6 +131,70 @@ def _existing_actors(conn: Any) -> dict[str, dict[str, Any]]:
     return {row["node_id"]: row for row in rows}
 
 
+def prune_off_roster_actors(conn: Any, roster: set[str]) -> dict[str, int]:
+    """Remove every Actor no pack names, and everything that hangs off it.
+
+    THE OTHER HALF of `load_state_system`'s scope rule. The loader used to
+    invent an Actor for every COW state — 754 against a pack union of 75 — and
+    stopping it inventing new ones leaves the old ones on the volume: 21,614
+    RELATES_TO edges (COW alliances among states nobody models), 13,984 CINC
+    estimates, 37,930 NetworkMetric rows, the militarised disputes between
+    them, and Colombia–Venezuela as the first row /api/relations served.
+
+    `roster` is the union of every pack's actor node_ids — the source of
+    truth, not `region_pack` on the node (a pack actor could carry an empty
+    one). Order matters and every step goes through kuzu_store's delete
+    paths, batched under the lock:
+
+      1. Events whose initiator OR target is off-roster — deep-tier MIDs among
+         (or against) states the platform does not model. Removing the actor
+         alone would DETACH the event's INITIATED_BY / DIRECTED_AT edge and
+         leave an event with one side, which breaks the provenance shape every
+         reader relies on; the event goes whole, with its AFFECTED edges
+         (measurements of an event no surface can reach).
+      2. AttributeEstimate nodes attached to off-roster actors — the CINC
+         clout that arrived with them.
+      3. NetworkMetric rows whose subject is an off-roster actor.
+      4. Dyad nodes naming an off-roster actor.
+      5. The actors themselves — DETACH DELETE takes their RELATES_TO web.
+
+    Returns what was removed, by table. Idempotent: on a pruned graph every
+    count is zero.
+    """
+    def _ids(query: str) -> list[str]:
+        return [str(r["id"]) for r in kuzu_store.query(conn, query, {"roster": sorted(roster)})]
+
+    removed: dict[str, int] = {}
+    off = _ids("MATCH (a:Actor) WHERE NOT a.node_id IN $roster RETURN a.node_id AS id")
+    if not off:
+        return {"Actor": 0}
+    params = {"off": off}
+
+    def _ids_off(query: str) -> list[str]:
+        return [str(r["id"]) for r in kuzu_store.query(conn, query, params)]
+
+    events = sorted(set(
+        _ids_off("MATCH (e:Event)-[:INITIATED_BY]->(a:Actor) WHERE a.node_id IN $off "
+                 "RETURN DISTINCT e.node_id AS id")
+        + _ids_off("MATCH (e:Event)-[:DIRECTED_AT]->(a:Actor) WHERE a.node_id IN $off "
+                   "RETURN DISTINCT e.node_id AS id")
+    ))
+    removed["Event"] = kuzu_store.delete_nodes(conn, "Event", events)
+    estimates = _ids_off(
+        "MATCH (a:Actor)-[:HAS_ESTIMATE]->(s:AttributeEstimate) WHERE a.node_id IN $off "
+        "RETURN DISTINCT s.node_id AS id")
+    removed["AttributeEstimate"] = kuzu_store.delete_nodes(conn, "AttributeEstimate", estimates)
+    metrics = _ids_off(
+        "MATCH (m:NetworkMetric) WHERE m.subject_id IN $off RETURN m.node_id AS id")
+    removed["NetworkMetric"] = kuzu_store.delete_nodes(conn, "NetworkMetric", metrics)
+    dyads = _ids_off(
+        "MATCH (d:Dyad) WHERE d.actor_a_id IN $off OR d.actor_b_id IN $off "
+        "RETURN d.node_id AS id")
+    removed["Dyad"] = kuzu_store.delete_nodes(conn, "Dyad", dyads)
+    removed["Actor"] = kuzu_store.delete_nodes(conn, "Actor", off)
+    return removed
+
+
 def load_state_system(conn: Any, csv_path: Path) -> LoadResult:
     """COW state-system membership → Actor nodes with membership windows.
 

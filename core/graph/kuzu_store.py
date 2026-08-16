@@ -649,6 +649,70 @@ def write_edges(conn: kuzu.Connection, rel: str, rows: list[dict[str, Any]]) -> 
     return written
 
 
+def delete_edges(conn: kuzu.Connection, rel: str, rows: list[dict[str, Any]]) -> int:
+    """Delete specific edges by identity — {"src", "dst", **key_slots}.
+
+    THE ONLY EDGE-DELETE PATH, for the same reason `merge_edges` is the only
+    write path: every statement takes the process-wide lock here. Deletion is
+    by the ontology's key_slots for the rel (a keyless rel deletes every edge
+    between the pair), through a MATCH on the source's forward adjacency — never
+    a scan of the destination's, which is the shape that dies on AFFECTED.
+    Callers: the repair probe (`scripts/rebuild_affected.py`), which removes
+    the one edge it created to prove the CREATE path.
+    """
+    spec = ontology.edges().get(rel)
+    if spec is None:
+        raise ontology.OntologyError(f"{rel!r} is not an edge table.")
+    if not rows:
+        return 0
+    deleted = 0
+    for batch in _batches(rows, lambda r: tuple(sorted(k for k in r if k not in ("src", "dst")))):
+        keys = [k for k in spec.key_slots if k in batch[0]]
+        key_pattern = (
+            (" {" + ", ".join(f"{k}: row.{k}" for k in keys) + "}") if keys else ""
+        )
+        payload = [
+            {"src": r["src"], "dst": r["dst"], **{k: r[k] for k in keys}} for r in batch
+        ]
+        with ACCESS.write():
+            conn.execute(
+                f"UNWIND $rows AS row "
+                f"MATCH (a:{spec.src} {{node_id: row.src}})"
+                f"-[r:{rel}{key_pattern}]->"
+                f"(b:{spec.dst} {{node_id: row.dst}}) DELETE r",
+                parameters={"rows": payload},
+            )
+        deleted += len(batch)
+    return deleted
+
+
+def delete_nodes(conn: kuzu.Connection, table: str, node_ids: list[str]) -> int:
+    """DETACH DELETE nodes by id, in batches — every edge touching them goes too.
+
+    THE ONLY NODE-DELETE PATH. Destructive, and the caller is expected to
+    know why it is safe for the nodes it names: `cow.prune_off_roster_actors`
+    removes the actors no pack names, with the estimates, metrics, relations
+    and deep-tier events that hang off them. Batched so a reader waits at most
+    one statement (the lock is FIFO; see BATCH_ROWS).
+    """
+    spec = ontology.nodes().get(table)
+    if spec is None:
+        raise ontology.OntologyError(f"{table!r} is not a node table.")
+    if not node_ids:
+        return 0
+    deleted = 0
+    size = max(1, BATCH_ROWS)
+    for start in range(0, len(node_ids), size):
+        chunk = list(node_ids[start:start + size])
+        with ACCESS.write():
+            conn.execute(
+                f"UNWIND $ids AS id MATCH (n:{table} {{node_id: id}}) DETACH DELETE n",
+                parameters={"ids": chunk},
+            )
+        deleted += len(chunk)
+    return deleted
+
+
 def recreate_edge_table(conn: kuzu.Connection, rel: str) -> None:
     """DROP and CREATE one rel table, from the ONTOLOGY's own DDL.
 
@@ -665,8 +729,12 @@ def recreate_edge_table(conn: kuzu.Connection, rel: str) -> None:
     spec = ontology.edges().get(rel)
     if spec is None:
         raise ontology.OntologyError(f"{rel!r} is not an edge table.")
+    # `DROP TABLE`, not `DROP REL TABLE`: Kuzu 0.11 has one DROP for node and
+    # rel tables and rejects the qualified form with a parser error — which is
+    # how the first version of this function would have died on its first
+    # statement in production. Caught by `test_rebuild.py` on a fixture graph.
     with ACCESS.write():
-        conn.execute(f"DROP REL TABLE {rel}")
+        conn.execute(f"DROP TABLE {rel}")
     with ACCESS.write():
         conn.execute(spec.ddl())
 

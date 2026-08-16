@@ -685,3 +685,34 @@ def test_a_long_job_can_stop_itself_when_memory_tightens(monkeypatch):
     assert "jobs_tight()" in scan[:200], (
         "the wire's periodic check must cover memory as well as the deadline"
     )
+
+
+def test_a_persisted_game_map_goes_stale_when_what_it_read_moves():
+    """THE FINGERPRINT COVERS WHAT THE SOLVE READS. The maps used to re-solve
+    on a PAYLOAD_VERSION bump and nothing else — so a corrected relationship
+    reached the game page only through a code deploy. Now the RELATES_TO web,
+    the frozen model and AFFECTED growth all count; a stored map without a
+    fingerprint re-solves once; the same inputs stand."""
+    from core.api import work
+
+    current = {"version": "v1", "relates": 100, "relates_latest": "2018-03-04",
+               "affected": 1_000_000, "model_frozen": "2026-08-16T18:27:01"}
+    assert work.games_stale(None, current) == "no persisted map"
+    assert "no inputs fingerprint" in (work.games_stale({}, current) or "")
+    assert work.games_stale({"inputs": dict(current)}, current) is None
+    # A standing change: one more RELATES_TO edge, or a later declaration.
+    assert "relates moved" in (
+        work.games_stale({"inputs": {**current, "relates": 99}}, current) or "")
+    assert "relates_latest moved" in (
+        work.games_stale({"inputs": {**current, "relates_latest": "2012-09-11"}}, current) or "")
+    # A re-frozen model changes the tilt.
+    assert "model_frozen moved" in (
+        work.games_stale({"inputs": {**current, "model_frozen": "2026-08-15T00:00:00"}}, current)
+        or "")
+    # AFFECTED: under the threshold stands, past it re-prices.
+    assert work.games_stale({"inputs": {**current, "affected": 990_000}}, current) is None
+    assert "AFFECTED moved" in (
+        work.games_stale({"inputs": {**current, "affected": 900_000}}, current) or "")
+    # A version bump still counts.
+    assert "version moved" in (
+        work.games_stale({"inputs": {**current, "version": "v0"}}, current) or "")

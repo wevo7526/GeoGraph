@@ -31,6 +31,7 @@ import {
 } from '../api'
 import {
   bandLabel,
+  familyRead,
   postureNote,
   standingLabel,
   jointAction,
@@ -218,6 +219,7 @@ export default function RelationshipPage({ region, onNavigate }: { region: strin
   // "friendly" beside a "severe" tension reading.
   const standing = standingLabel(solution?.opening?.standing)
   const posture = postureNote(solution?.opening?.posture)
+  const family = familyRead(solution?.opening?.family)
   const nextType = nextStep ? bandLabel(nextStep.intensity_band, bands, bandNames) : null
   const nextMove = nextStep ? jointAction(nextStep.action_a, nextStep.action_b) : null
   // The badge tracks where the relationship is HEADING (the trajectory
@@ -358,14 +360,16 @@ export default function RelationshipPage({ region, onNavigate }: { region: strin
                     ? <>The archive declares this pair a <strong>{standing}</strong>.</>
                     : <>The archive declares no standing relation for this pair.</>}
                   {posture ? <> Its coded record lately: <strong>{posture}</strong>.</> : null}
+                  {family ? <> It is read as an <strong>{family.label}</strong> ({family.why}).</> : null}
                   {' '}The solved game puts <strong>{pct(solution.concepts[solution.primary_solver]?.sharp_departure_probability ?? 0, 0)}</strong> on a
-                  sharper-than-usual departure from its own baseline within {solution.horizon} quarters
+                  sharper-than-usual departure from its own usual level of {family?.headline ?? 'friction'} within {solution.horizon} quarters
                   {solution.concepts.lp && solution.primary_solver !== 'lp' ? ` (LP benchmark ${pct(solution.concepts.lp.sharp_departure_probability, 0)})` : ''}
                   {solution.opening.tilt
                     ? (solution.opening.tilt.features
                         ? ', over a kernel conditioned on this pair’s own measured record rather than the region’s pooled table'
                         : `, with the learned layer tilting the kernel by η ${(solution.opening.tilt.eta ?? 0) >= 0 ? '+' : ''}${(solution.opening.tilt.eta ?? 0).toFixed(3)}`)
                     : ', over the region’s counted kernel'}.
+                  {family?.caveat ? <> <em>{family.caveat}</em></> : null}
                 </p>
                 <p className="mt-2">
                   <button className="btn" onClick={() => onNavigate(`/games?dyad=${encodeURIComponent(selected)}&region=${encodeURIComponent(region)}`)}>

@@ -320,14 +320,72 @@ def _study_in_process(conn: Any, deadline: float) -> dict[str, Any]:
 # ── the region scenario maps ───────────────────────────────────────────────
 
 
+#: How far AFFECTED must grow before a persisted map is re-priced. The study
+#: adds ~5,000 edges a tick; re-solving on every tick would re-solve forever
+#: for a market row that moved in the fourth decimal.
+GAMES_REPRICE_GROWTH = 0.05
+
+
+def games_inputs(conn: Any) -> dict[str, Any]:
+    """What a region solve READS from the graph, as cheap facets.
+
+    THE FINGERPRINT COVERS WHAT THE SOLVE READS — the lesson the deep-tier
+    guard taught on 2026-08-16. The persisted maps were re-solved on a
+    PAYLOAD_VERSION change and on nothing else, so correcting a relationship
+    (US-Israel re-dated, US-Iran declared) reached the game page only through
+    a code deploy that bumped the version by hand. Now: the RELATES_TO web
+    (the standing every classification and chip reads), the AFFECTED count
+    (the pricing), and the frozen model (the tilt).
+    """
+    from core.games import scenarios
+    from core.graph import kuzu_store
+
+    def _one(query: str) -> Any:
+        rows = kuzu_store.query(conn, query)
+        return rows[0]["n"] if rows else None
+
+    return {
+        "version": str(scenarios.PAYLOAD_VERSION),
+        "relates": _one("MATCH ()-[r:RELATES_TO]->() RETURN count(r) AS n"),
+        "relates_latest": _one("MATCH ()-[r:RELATES_TO]->() RETURN max(r.valid_from) AS n"),
+        "affected": _one("MATCH ()-[a:AFFECTED]->() RETURN count(a) AS n"),
+        "model_frozen": _one(
+            "MATCH (f:Forecast) WHERE f.mode = 'model' RETURN max(f.generated_at) AS n"
+        ),
+    }
+
+
+def games_stale(stored: dict[str, Any] | None, current: dict[str, Any]) -> str | None:
+    """Why a persisted region map should be re-solved, or None if it stands.
+
+    A missing row and a version mismatch are the old rules; a standing change
+    (any movement in the RELATES_TO web), a re-frozen model, or AFFECTED
+    growth past `GAMES_REPRICE_GROWTH` are the new ones. A map solved before
+    this check existed carries no fingerprint and is re-solved once.
+    """
+    if stored is None:
+        return "no persisted map"
+    was = stored.get("inputs")
+    if not isinstance(was, dict):
+        return "persisted map carries no inputs fingerprint"
+    for key in ("version", "relates", "relates_latest", "model_frozen"):
+        if was.get(key) != current.get(key):
+            return f"{key} moved ({was.get(key)!r} -> {current.get(key)!r})"
+    before, now = was.get("affected"), current.get("affected")
+    if (isinstance(before, int) and isinstance(now, int) and before > 0
+            and abs(now - before) / before >= GAMES_REPRICE_GROWTH):
+        return f"AFFECTED moved {before:,} -> {now:,}"
+    return None
+
+
 def games(conn: Any, deadline: float) -> dict[str, Any]:
     """Re-solve a region whose persisted map is stale, one region per tick.
 
-    STALE MEANS THREE THINGS, all of them cheap to check: no persisted row, a
-    row of a different `PAYLOAD_VERSION` (the reader would reject it and the
-    endpoint would solve live on every request), or a row older than the
-    archive's own as_of. Nothing else triggers a solve — a re-solve costs ~70s
-    and produces the same numbers from the same inputs.
+    STALE is decided by `games_stale` over `games_inputs`: no row, a different
+    `PAYLOAD_VERSION` (the reader would reject it and the endpoint would solve
+    live on every request), a moved RELATES_TO web, a re-frozen model, or
+    AFFECTED grown past the re-price threshold. Nothing else triggers a solve
+    — a re-solve costs ~70s and produces the same numbers from the same inputs.
     """
     from core.games import context as context_module
     from core.games import scenarios
@@ -340,13 +398,15 @@ def games(conn: Any, deadline: float) -> dict[str, Any]:
     solved_now: list[dict[str, Any]] = []
     try:
         pg_store.apply_schema(panel)
+        current = games_inputs(conn)
         for name in _pack_names():
             if time.monotonic() >= deadline:
                 return {"solved": solved_now, "skipped": "slice spent"}
             stored = pg_store.game_solution(
                 panel, name, scope="region", version=scenarios.PAYLOAD_VERSION
             )
-            if stored is not None:
+            why = games_stale(stored, current)
+            if why is None:
                 continue
             try:
                 context = context_module.build(conn, name)
@@ -358,6 +418,9 @@ def games(conn: Any, deadline: float) -> dict[str, Any]:
                 context, region=name, payoffs=payoffs, graph_conn=conn,
                 dyad_ids=context_module.active_dyads(context, scenarios.REGION_DYADS),
             )
+            # The fingerprint travels WITH the map, so the next tick can ask
+            # whether what it read has moved without re-solving to find out.
+            solved["region"]["inputs"] = current
             written = pg_store.record_game_solutions(
                 panel, name, solved, solver=solved["region"]["primary_solver"]
             )
@@ -366,7 +429,7 @@ def games(conn: Any, deadline: float) -> dict[str, Any]:
             # answered "being re-solved" for as long as it took to come round.
             solved_now.append({
                 "region": name, "rows": written,
-                "dyads": solved["region"]["dyads_solved"],
+                "dyads": solved["region"]["dyads_solved"], "why": why,
             })
         if solved_now:
             return {"solved": solved_now, "version": scenarios.PAYLOAD_VERSION}

@@ -9,7 +9,7 @@ import { getDyadSolution, getRegionMap, lastFailureFor } from '../api'
 import { useRegionLabel } from '../regions'
 import type { ConceptSolution, DyadSolution, RegionMap, Scenario } from '../types'
 import { Beat, Chip, Disclosure, Empty, StoryHead } from '../ui'
-import { postureNote, standingChip, standingLabel } from '../lib/language'
+import { familyRead, postureNote, standingChip, standingLabel } from '../lib/language'
 import { BandHeat, Bars, MultiLine, PayoffMatrix, Tiles, pct } from './charts/Kit'
 
 const KIND_LABEL: Record<string, string> = {
@@ -117,7 +117,7 @@ function RegionGames({ region, onPick }: { region: string; onPick: (dyad: string
       <Beat n={1} title="Where coercion is being measured" major aside="coercive events in the last four quarters, and the game's own departure odds beside them">
         {lead && (
           <p className="text-sm mb-4" style={{ maxWidth: '64ch' }}>
-            <b>{lead.dyad_name}</b>{standingLabel(lead.standing) ? ` — ${standingLabel(lead.standing)}` : ''} — carries the most: {(lead.coercive_events ?? 0).toLocaleString('en-US')} coercive events
+            <b>{lead.dyad_name}</b>{standingLabel(lead.standing) ? ` — ${standingLabel(lead.standing)}` : ''}{familyRead(lead.family) ? `, read as ${familyRead(lead.family)!.label}` : ''} — carries the most: {(lead.coercive_events ?? 0).toLocaleString('en-US')} coercive events
             {lead.coercive_share != null ? `, ${pct(lead.coercive_share, 0)} of its record` : ''}, opening at a {lead.opening_label}
             {lead.top_scenario ? `; the likeliest kind of course is ${kind(lead.top_scenario.kind)} at ${pct(lead.top_scenario.likelihood, 0)} of its walk` : ''}.
             {' '}The <b>bar</b> is that measured count. The <b>percentage</b> beside it is a different
@@ -135,6 +135,13 @@ function RegionGames({ region, onPick }: { region: string; onPick: (dyad: string
                     title={[standingLabel(r.standing), postureNote(r.posture)].filter(Boolean).join(' · ')}>
                 <Chip label={standingChip(r.standing) ?? r.posture?.label ?? 'unaligned'}
                       tone={r.standing?.relations?.length ? 'ink' : 'muted'} />
+              </span>
+              {/* WHICH GAME: an ally's number is friction, not odds of war. */}
+              <span className="w-20 shrink-0 overflow-hidden whitespace-nowrap"
+                    title={familyRead(r.family)?.why ?? 'unclassified'}>
+                {familyRead(r.family)
+                  ? <Chip label={familyRead(r.family)!.label.replace(' pair', '')} tone={familyRead(r.family)!.tone} />
+                  : <Chip label="—" tone="muted" />}
               </span>
               {/* THE BAR IS THE MEASURED COUNT, scaled against the region's
                   own leader — the ordering and the length now agree. It used
@@ -317,6 +324,7 @@ function DyadGame({
   const lp = sol.concepts.lp
   const qre = sol.concepts.qre
   const top = concept.scenarios[0]
+  const fam = familyRead(sol.opening.family)
   const beliefSteps = top?.steps ?? []
   const propensity = concept.escalation_propensity
 
@@ -351,6 +359,10 @@ function DyadGame({
         <span className="kicker" style={{ marginLeft: '0.75rem' }}>standing</span>
         <Chip label={standingLabel(sol.opening.standing) ?? 'no declared standing'}
               tone={sol.opening.standing?.relations?.length ? 'ink' : 'muted'} />
+        {fam && (<>
+          <span className="kicker" style={{ marginLeft: '0.75rem' }}>read as</span>
+          <span title={fam.why}><Chip label={fam.label} tone={fam.tone} /></span>
+        </>)}
         {postureNote(sol.opening.posture) && (
           <span className="mono text-[11px]" style={{ color: 'var(--muted)' }}>
             record: {postureNote(sol.opening.posture)}
@@ -361,16 +373,25 @@ function DyadGame({
         </span>
       </div>
 
-      <div className={`call mt-6 ${concept.sharp_departure_probability >= 0.5 ? 'call--rising' : ''}`}>
-        <div className="kicker">The call</div>
+      <div className={`call mt-6 ${concept.sharp_departure_probability >= 0.5 && (fam?.tone !== 'good') ? 'call--rising' : ''}`}>
+        <div className="kicker">The call{fam ? ` · ${fam.label}` : ''}</div>
         <p className="call-lede">
           {pct(concept.sharp_departure_probability, 0)} that {sol.sides[0]} and {sol.sides[1]}
           {standingLabel(sol.opening.standing) ? ` — ${standingLabel(sol.opening.standing)} — ` : ' '}
-          see a sharper-than-usual departure from their own baseline within {sol.horizon} quarters
+          see a sharper-than-usual departure from their own usual level of {fam?.headline ?? 'friction'} within {sol.horizon} quarters
           {lp && qre ? ` (QRE ${pct(qre.sharp_departure_probability, 0)}, LP ${pct(lp.sharp_departure_probability, 0)})` : ''}.
         </p>
+        {/* THE FAMILY'S OWN QUESTION, and the caveat a non-native game owes the
+            reader — said here, in the call, not buried under "how it was
+            solved": a treaty ally at 77% was being read as a war. */}
+        {fam && (
+          <p className="text-sm mt-2" style={{ maxWidth: '62ch' }}>
+            {fam.why.charAt(0).toUpperCase() + fam.why.slice(1)}. The question worth asking of this pair is {sol.opening.family?.question}.
+            {fam.caveat ? <> <em>{fam.caveat}</em></> : null}
+          </p>
+        )}
         <p className="mono text-[11px] mt-1" style={{ color: 'var(--muted)' }}>
-          opening at a {sol.opening.intensity_label} · P(above the opening band) {pct(concept.escalation_probability, 0)} · bands are relative friction, not absolute hostility
+          opening at a {sol.opening.intensity_label} · P(above the opening band) {pct(concept.escalation_probability, 0)} · bands are relative {fam?.headline ?? 'friction'}, not absolute hostility
         </p>
         {top && (
           <p className="text-sm mt-2" style={{ maxWidth: '62ch' }}>

@@ -820,6 +820,9 @@ def region_map(
             # verdict, which called two thirds of every region "friendly".
             "standing": s["opening"].get("standing"),
             "posture": s["opening"].get("posture"),
+            # WHICH GAME THIS PAIR PLAYS, so the row can say "ally" beside a
+            # number that would otherwise read as odds of war.
+            "family": s["opening"].get("family"),
             "escalation_probability": c["escalation_probability"],
             "sharp_departure_probability": c["sharp_departure_probability"],
             "escalation_probability_qre": (
@@ -860,6 +863,7 @@ def region_map(
                 "tone_label": s["opening"].get("tone_label"),
                 "posture": s["opening"].get("posture"),
                 "standing": s["opening"].get("standing"),
+                "family": s["opening"].get("family"),
             })
     # RANKED BY AN ABSOLUTE MEASURE, not by the game's own departure
     # probability — the fix for the finding that opened this audit.

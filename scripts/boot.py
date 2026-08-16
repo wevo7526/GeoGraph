@@ -100,12 +100,23 @@ _SCORE_SCRIPT = _ROOT / "scripts" / "score_forecasts.py"
 _DERIVED_DIR = _ROOT / "data" / "derived"
 _DEEP_TIER_SCRIPT = _ROOT / "scripts" / "load_deep_tier.py"
 _LOAD_13F_SCRIPT = _ROOT / "scripts" / "load_13f.py"
+_REBUILD_AFFECTED_SCRIPT = _ROOT / "scripts" / "rebuild_affected.py"
 
 #: Filename of the reset ledger, written beside the graph on the VOLUME — the
 #: only place that outlives a container and so the only place that can answer
 #: "have I already done this?". A sibling of the database, not a child, so
 #: deleting the database does not delete the record that it was deleted.
 _RESET_LEDGER = ".graph-reset-honoured"
+
+#: The same shape for the AFFECTED repair: which GEOGRAPH_REBUILD_AFFECTED
+#: value has already been acted on. Same reasoning — an env var is sticky, and
+#: a repair that re-ran on every restart would drop a table for nothing.
+_REBUILD_AFFECTED_LEDGER = ".affected-rebuild-honoured"
+
+#: The repair's ceiling. A probe is seconds; a full re-projection of a
+#: million-edge table from the panel is ~10 minutes at batch rate, and the
+#: refill is resumable from its marker if this is ever hit.
+_REBUILD_AFFECTED_TIMEOUT_SECONDS = int(os.getenv("GEOGRAPH_REBUILD_AFFECTED_TIMEOUT", "2700"))
 
 #: What to exec when no command is given. Railway can override by setting a
 #: start command; the default is the app.
@@ -1556,6 +1567,97 @@ def _reset_graph_if_asked() -> dict[str, Any] | None:
             "token": requested}
 
 
+def _rebuild_affected_if_asked() -> dict[str, Any] | None:
+    """Repair the AFFECTED rel table — ONCE per value of GEOGRAPH_REBUILD_AFFECTED.
+
+    THE FAILURE THIS ANSWERS. On 2026-08-16 every AFFECTED write in production
+    died with SIGSEGV — in the API's process and in a child alike — after a
+    kill mid-write earlier that day, while every other writer wrote clean and
+    AFFECTED itself read clean. The study could not add a measurement without
+    taking the site down, so it was switched off, and the market half of every
+    surface froze at 1,051,722 edges.
+
+    The repair is `scripts/rebuild_affected.py --repair`: PROBE the table with
+    the actual failing operation (a SET and a CREATE through the one writer);
+    if the probe returns clean nothing is dropped; if the child dies with a
+    signal, DROP and recreate the table and RE-PROJECT it from the panel's
+    `event_study_runs`, which holds every computed effect's numbers — minutes,
+    not the day and a half a re-measurement would take. Resumable from a
+    marker if the ceiling is hit; a second boot with the same value is inert
+    (the ledger), so the variable can stay set.
+
+    Runs BEFORE the seeds, while nothing holds the graph — the probe and the
+    rebuild both need the single-writer lock, and a seed running first would
+    take it.
+    """
+    requested = os.getenv("GEOGRAPH_REBUILD_AFFECTED", "").strip()
+    if not requested or requested.lower() in {"0", "false", "no", "off"}:
+        return None
+
+    from core import settings as settings_module
+
+    path = settings_module.load().kuzu_db_path
+    ledger = path.with_name(_REBUILD_AFFECTED_LEDGER)
+    try:
+        honoured = ledger.read_text(encoding="utf-8").strip()
+    except OSError:
+        honoured = ""
+    if honoured == requested:
+        _log(f"GEOGRAPH_REBUILD_AFFECTED={requested} already honoured — skipped")
+        return {"ok": True, "skipped": "already honoured", "token": requested}
+    if not path.exists():
+        _log("GEOGRAPH_REBUILD_AFFECTED set but there is no graph yet — nothing to repair")
+        return {"ok": True, "skipped": "no graph", "token": requested}
+
+    _log("=" * 68)
+    _log("GEOGRAPH_REBUILD_AFFECTED is set — probing the AFFECTED table, "
+         "rebuilding from the panel if it cannot be written")
+    _log("=" * 68)
+    started = time.monotonic()
+    # THE PROBE FIRST, ON ITS OWN. If the table is damaged the child dies with
+    # a signal — that is the diagnosis, and it must not be confused with a
+    # refill that failed for an ordinary reason.
+    probe = _run_step(
+        "affected probe",
+        [sys.executable, str(_REBUILD_AFFECTED_SCRIPT), "--probe"],
+        timeout=600,
+    )
+    outcome: dict[str, Any] = {"token": requested, "probe": probe}
+    if probe["ok"]:
+        _log("affected probe: the table takes writes — nothing to rebuild")
+        outcome["ok"] = True
+        outcome["rebuilt"] = False
+    else:
+        _log("affected probe: FAILED — dropping and re-projecting from the panel")
+        rebuilt = _run_step(
+            "affected rebuild",
+            [sys.executable, str(_REBUILD_AFFECTED_SCRIPT), "--rebuild",
+             "--budget-seconds", str(_REBUILD_AFFECTED_TIMEOUT_SECONDS - 120)],
+            timeout=_REBUILD_AFFECTED_TIMEOUT_SECONDS,
+        )
+        outcome["rebuild"] = rebuilt
+        outcome["rebuilt"] = True
+        # And PROVE it: the same probe against the rebuilt table.
+        again = _run_step(
+            "affected probe (after rebuild)",
+            [sys.executable, str(_REBUILD_AFFECTED_SCRIPT), "--probe"],
+            timeout=600,
+        )
+        outcome["probe_after"] = again
+        outcome["ok"] = bool(rebuilt["ok"] and again["ok"])
+    outcome["seconds"] = round(time.monotonic() - started, 1)
+
+    # Recorded whether or not the rebuild was clean: a repair that failed for
+    # an ordinary reason should be re-run deliberately with a new value, not
+    # silently on every restart against a table it may have half-filled.
+    try:
+        ledger.write_text(requested, encoding="utf-8")
+    except OSError as exc:
+        _log(f"WARNING: could not record the rebuild ledger ({exc}) — "
+             f"unset GEOGRAPH_REBUILD_AFFECTED by hand so this does not repeat")
+    return outcome
+
+
 def _boot_status() -> dict[str, Any]:
     if _disabled():
         _log("seeding disabled by GEOGRAPH_SEED_ON_BOOT")
@@ -1565,12 +1667,15 @@ def _boot_status() -> dict[str, Any]:
     # taken the single-writer lock deletes a database out from under a live
     # connection.
     reset = _reset_graph_if_asked()
+    repaired = _rebuild_affected_if_asked()
 
     status: dict[str, Any] = {
         "seeded": True, "packs": [], "panel": None, "prices": None, "study": None,
     }
     if reset is not None:
         status["reset"] = reset
+    if repaired is not None:
+        status["affected_rebuild"] = repaired
     try:
         names = _pack_names()
     except Exception as exc:  # noqa: BLE001 - a broken pack must not stop the boot
