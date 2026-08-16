@@ -188,3 +188,75 @@ def test_an_unreplayable_write_ahead_log_is_moved_aside_not_kept(tmp_path):
     assert not shadow.exists(), "the shadow pages go with it"
     assert db.read_bytes() == b"the checkpointed database", "the data is untouched"
     assert kuzu_store._quarantine_wal(db) is None, "nothing to do twice"
+
+
+def test_write_edges_upserts_by_key_slots_without_a_merge_scan(tmp_path):
+    """THE PATH AFFECTED TAKES, and why it is not `merge_edges`.
+
+    `MERGE (a)-[r {key}]->(b)` decides whether to create by walking b's
+    adjacency list. AFFECTED points 756,025 edges at twenty Market nodes, so
+    that list is enormous, and production died inside the scan on four
+    separate write topologies — sibling connection, the API's own connection,
+    the API's connection behind a fair lock, and a child process — every time
+    with `csr_node_group.cpp KU_UNREACHABLE`, the `default:` arm of
+    `CSRNodeGroup::scan()`.
+
+    `write_edges` gets the same answer from an ordinary read (the same table
+    /api/stats scans without trouble), then CREATEs and SETs. What must hold
+    is that it is still an UPSERT: two values of a key slot are two edges, the
+    same value twice is one edge updated. A CREATE-only path that lost that
+    would silently double every re-measured effect.
+    """
+    conn = kuzu_store.connect(tmp_path / "edges.kuzu")
+    try:
+        kuzu_store.apply_schema(conn)
+        kuzu_store.merge_nodes(conn, "Actor", [
+            {"node_id": "actor:a", "name": "A", "actor_type": "state"},
+            {"node_id": "actor:b", "name": "B", "actor_type": "state"},
+        ])
+        kuzu_store.merge_nodes(conn, "Source", [
+            {"node_id": "source:s", "name": "S", "source_type": "dataset",
+             "url": "https://example.invalid", "retrieved_at": "2026-08-16"},
+        ])
+
+        def _edge(relation_type: str, valid_from: str, until: str):
+            return {"src": "actor:a", "dst": "actor:b",
+                    "relation_type": relation_type, "valid_from": valid_from,
+                    "source_id": "source:s", "valid_to": until}
+
+        # RELATES_TO's identity is (relation_type, valid_from) — read from the
+        # ontology, never hardcoded.
+        kuzu_store.write_edges(conn, "RELATES_TO", [
+            _edge("alliance", "1949-01-01", "1989-12-31"),
+            _edge("rivalry", "1949-01-01", "1972-02-21"),
+        ])
+        rows = kuzu_store.query(
+            conn, "MATCH (:Actor)-[r:RELATES_TO]->(:Actor) "
+                  "RETURN r.relation_type AS t, r.valid_to AS c ORDER BY t")
+        assert [r["t"] for r in rows] == ["alliance", "rivalry"], (
+            "two key values must be two edges")
+
+        # The same key again is an UPDATE, not a second edge.
+        kuzu_store.write_edges(conn, "RELATES_TO", [
+            _edge("alliance", "1949-01-01", "1991-12-26")])
+        rows = kuzu_store.query(
+            conn, "MATCH (:Actor)-[r:RELATES_TO]->(:Actor) "
+                  "RETURN r.relation_type AS t, r.valid_to AS c ORDER BY t")
+        assert len(rows) == 2, f"re-writing a key duplicated the edge: {rows}"
+        assert rows[0]["c"] == "1991-12-26", "the update did not land"
+
+        # A different valid_from is a different edge, per key_slots.
+        kuzu_store.write_edges(conn, "RELATES_TO", [
+            _edge("alliance", "1990-01-01", "")])
+        rows = kuzu_store.query(
+            conn, "MATCH (:Actor)-[r:RELATES_TO]->(:Actor) RETURN r.valid_from AS v")
+        assert len(rows) == 3, rows
+
+        # And provenance is enforced on this path too — it is not a bypass.
+        with pytest.raises(OntologyError):
+            kuzu_store.write_edges(conn, "RELATES_TO", [{
+                "src": "actor:a", "dst": "actor:b",
+                "relation_type": "trade", "valid_from": "2000-01-01",
+            }])
+    finally:
+        kuzu_store.close(conn)

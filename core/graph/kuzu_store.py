@@ -549,6 +549,98 @@ def merge_edges(conn: kuzu.Connection, rel: str, rows: list[dict[str, Any]]) -> 
     return written
 
 
+def write_edges(conn: kuzu.Connection, rel: str, rows: list[dict[str, Any]]) -> int:
+    """Upsert edges WITHOUT asking MERGE to walk an adjacency list.
+
+    Same contract as `merge_edges` — same validation, same key_slots identity,
+    same provenance — but the existence check is an ordinary read instead of a
+    MERGE pattern match.
+
+    WHY IT EXISTS. `MERGE (a)-[r:AFFECTED {window}]->(b)` has to scan b's
+    adjacency list to decide whether the edge is already there, and for
+    AFFECTED that list is one of twenty: 756,025 edges between them, so every
+    Market node's CSR group is enormous. Production died in exactly that scan
+    — `csr_node_group.cpp KU_UNREACHABLE`, which is the `default:` arm of
+    `CSRNodeGroup::scan()` — on a sibling connection, on the API's own
+    connection, after the lock was made fair, and again from a child process.
+    Four topologies, one statement.
+
+    The read this uses instead is the SAME table the effects endpoints and
+    /api/stats scan without trouble; only the scan nested inside a write
+    transaction fails. So: read the keys that exist, CREATE the ones that do
+    not, SET the ones that do. Two ordinary statements in place of one that
+    cannot run.
+    """
+    spec = ontology.edges().get(rel)
+    if spec is None:
+        raise ontology.OntologyError(f"{rel!r} is not an edge table.")
+    for row in rows:
+        ontology.validate_edge(rel, {k: v for k, v in row.items() if k not in ("src", "dst")})
+    if not rows:
+        return 0
+
+    written = 0
+    for batch in _batches(
+        rows, lambda r: tuple(sorted(k for k in r if k not in ("src", "dst")))
+    ):
+        props = [k for k in batch[0] if k not in ("src", "dst")]
+        keys = [k for k in spec.key_slots if k in props]
+        rest = [k for k in props if k not in keys]
+
+        # 1. WHICH ALREADY EXIST. Scoped to this batch's source nodes, so the
+        #    read walks the FORWARD adjacency (an Event has a handful of
+        #    AFFECTED edges) rather than the backward one that is the problem.
+        returned = ", ".join(
+            ["a.node_id AS src", "b.node_id AS dst"]
+            + [f"r.{k} AS {k}" for k in keys]
+        )
+        found = query(
+            conn,
+            f"MATCH (a:{spec.src})-[r:{rel}]->(b:{spec.dst}) "
+            f"WHERE a.node_id IN $srcs RETURN {returned}",
+            {"srcs": sorted({str(r["src"]) for r in batch})},
+        )
+        existing: set[tuple[Any, ...]] = {
+            (record["src"], record["dst"], *(record[k] for k in keys))
+            for record in found
+        }
+
+        def _identity(row: dict[str, Any], keys: list[str] = keys) -> tuple[Any, ...]:
+            return (row["src"], row["dst"], *(row[k] for k in keys))
+
+        fresh = [r for r in batch if _identity(r) not in existing]
+        stale = [r for r in batch if _identity(r) in existing]
+
+        if fresh:
+            sets = ", ".join(f"r.{k} = row.{k}" for k in props)
+            cypher = (
+                f"UNWIND $rows AS row "
+                f"MATCH (a:{spec.src} {{node_id: row.src}}), "
+                f"(b:{spec.dst} {{node_id: row.dst}}) "
+                f"CREATE (a)-[r:{rel}]->(b)"
+            )
+            if sets:
+                cypher += f" SET {sets}"
+            with ACCESS.write():
+                conn.execute(cypher, parameters={"rows": fresh})
+        if stale and rest:
+            # An update DOES match the pattern, but only for edges known to
+            # exist — no CREATE branch, so no decision that needs the scan.
+            key_pattern = " {" + ", ".join(f"{k}: row.{k}" for k in keys) + "}"
+            sets = ", ".join(f"r.{k} = row.{k}" for k in rest)
+            with ACCESS.write():
+                conn.execute(
+                    f"UNWIND $rows AS row "
+                    f"MATCH (a:{spec.src} {{node_id: row.src}})"
+                    f"-[r:{rel}{key_pattern}]->"
+                    f"(b:{spec.dst} {{node_id: row.dst}}) "
+                    f"SET {sets}",
+                    parameters={"rows": stale},
+                )
+        written += len(batch)
+    return written
+
+
 def check_provenance(conn: kuzu.Connection) -> list[str]:
     """THE BACKSTOP (build-spec section 17): every sourced edge's source_id
     resolves to a Source that exists. Returns violations; ingest fails on any.

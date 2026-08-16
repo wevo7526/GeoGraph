@@ -60,7 +60,24 @@ def write_effects(
         }
         for result in results
     ]
-    return kuzu_store.merge_edges(conn, "AFFECTED", rows)
+    # WRITE_EDGES, NOT MERGE_EDGES — the one table that needs the difference.
+    #
+    # `MERGE (a)-[r:AFFECTED {window}]->(b)` has to walk b's adjacency list to
+    # decide whether the edge exists, and AFFECTED points 756,025 edges at
+    # twenty Market nodes, so that list is enormous. Production died inside
+    # that scan on four separate write topologies — a sibling connection, the
+    # API's own connection, the API's connection behind a fair lock, and a
+    # child process — always `csr_node_group.cpp KU_UNREACHABLE`, which is the
+    # `default:` arm of `CSRNodeGroup::scan()`. No other writer here fails,
+    # because no other rel table is shaped like this: the wire's edges fan out
+    # over hundreds of thousands of distinct actors and dyads.
+    #
+    # `write_edges` reads which keys exist (scoped to this batch's EVENTS, so
+    # it walks the forward adjacency — a handful of edges each), CREATEs the
+    # rest and SETs the matches. Same validation, same key_slots identity,
+    # same provenance; measured 30% faster on inserts, which is what the
+    # watermarked study almost always does.
+    return kuzu_store.write_edges(conn, "AFFECTED", rows)
 
 
 # ── reading effects back ─────────────────────────────────────────────────────
