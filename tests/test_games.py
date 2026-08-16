@@ -1119,3 +1119,42 @@ def test_a_pact_between_rivals_does_not_outrank_the_rivalry(monkeypatch):
     said = scenarios.describe_standing({"standing": out})
     assert said.startswith("a declared rivalry since 1948")
     assert "allies" in said  # both are named; neither is hidden
+
+
+def test_measured_effects_shares_its_repeated_strings():
+    """The effects cache grows with the archive, so its per-row cost compounds.
+
+    AFFECTED passed 900,000 edges on 2026-08-16 and points at TWENTY markets
+    and four quad classes — so `market_id` alone was 900,000 separate string
+    objects holding one of twenty values, per region, for the life of the
+    process. Interning is the half of the fix that needs no consumer to
+    change: measured at 504 -> 295 bytes a row, 1.27 GB -> 0.74 GB across
+    three regions at today's size.
+
+    What must hold is that it is only IDENTITY that changes, never a value.
+    """
+    from core.games import pricing
+
+    rows = [
+        {"event_id": "event:a", "market_id": "market:brent",
+         "quad_class": "material_conflict", "event_time": "2020-01-01",
+         "dyad_id": None, "initiator_id": "actor:cow-2",
+         "target_id": "actor:cow-630", "market_name": "Brent",
+         "abnormal_return": 0.012, "magnitude": 2.5},
+        {"event_id": "event:a", "market_id": "".join(["market:", "brent"]),
+         "quad_class": "".join(["material_", "conflict"]),
+         "event_time": "2020-01-01", "dyad_id": None,
+         "initiator_id": "actor:cow-2", "target_id": "actor:cow-630",
+         "market_name": "Brent", "abnormal_return": -0.004, "magnitude": 2.5},
+    ]
+    # Built by different expressions, so they are equal but not identical.
+    assert rows[0]["market_id"] is not rows[1]["market_id"]
+
+    out = pricing._compact(rows)
+
+    assert out[0]["market_id"] is out[1]["market_id"], "not shared"
+    assert out[0]["quad_class"] is out[1]["quad_class"], "not shared"
+    assert out[0]["market_id"] == "market:brent", "the VALUE must not change"
+    assert out[0]["abnormal_return"] == 0.012 and out[1]["abnormal_return"] == -0.004
+    assert out[0]["dyad_id"] is None, "a null must stay null, not become ''"
+    assert out[0]["magnitude"] == 2.5, "non-strings are untouched"

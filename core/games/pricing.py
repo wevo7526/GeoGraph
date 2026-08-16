@@ -48,7 +48,7 @@ def measured_effects(conn: Any, *, region_pack: str | None = None) -> list[dict[
     # region_pack = ''): they are the only measured effects most historical
     # dyads have, and dropping them priced every game over the wire alone.
     where = "WHERE (e.region_pack = $pack OR e.region_pack = '') " if region_pack else ""
-    return kuzu_store.query(
+    rows = kuzu_store.query(
         conn,
         "MATCH (e:Event)-[a:AFFECTED]->(m:Market) "
         f"{where}"
@@ -66,10 +66,45 @@ def measured_effects(conn: Any, *, region_pack: str | None = None) -> list[dict[
         "e.escalation_magnitude AS magnitude, d.node_id AS dyad_id, "
         "ia.node_id AS initiator_id, ta.node_id AS target_id, "
         "m.node_id AS market_id, m.name AS market_name, "
-        "a.abnormal_return AS abnormal_return, a.window AS window, "
-        "a.resolution AS resolution",
+        "a.abnormal_return AS abnormal_return",
         {"pack": region_pack} if region_pack else {},
     )
+    return _compact(rows)
+
+
+#: Columns whose distinct values are few beside the number of rows. AFFECTED
+#: passed 900,000 edges on 2026-08-16 and points at TWENTY markets and four
+#: quad classes, so `market_id` alone is 900,000 separate string objects
+#: holding one of twenty values.
+_REPEATED = (
+    "market_id", "market_name", "quad_class", "event_time",
+    "dyad_id", "initiator_id", "target_id", "event_id",
+)
+
+
+def _compact(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Collapse the repeated strings to shared objects.
+
+    THIS CACHE GROWS WITH THE ARCHIVE, which is what makes it worth the pass.
+    A region's context holds every one of these rows for the life of the
+    process, and the loop's whole purpose is to make there be more of them —
+    so the games page getting faster and the container getting closer to the
+    kernel's kill line were the same event. Measured before this: the process
+    walked 5.17 GB to 6.93 GB in half an hour with reclaims recovering nothing.
+
+    Interning is the cheap half of the fix and needs no consumer to change:
+    the eight columns below hold a handful of distinct values each (twenty
+    markets, four quad classes, ~200k events across ~900k rows), so the strings
+    become pointers into one table instead of a million separate objects.
+    `event_id` is the least repetitive and still averages four rows per event.
+    """
+    seen: dict[str, str] = {}
+    for row in rows:
+        for column in _REPEATED:
+            value = row.get(column)
+            if isinstance(value, str):
+                row[column] = seen.setdefault(value, value)
+    return rows
 
 
 def dyad_of_event(effects: list[dict[str, Any]]) -> dict[str, str]:
