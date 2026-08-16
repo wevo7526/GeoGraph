@@ -261,3 +261,48 @@ def test_the_audit_line_names_only_the_features_the_model_reads():
     assert audit is not None
     assert "level" not in audit["features"], audit["features"]
     assert set(audit["features"]) == {*dynamics.FEATURES, *dynamics.INTERACTIONS}
+
+
+def test_the_region_explanation_warns_when_an_alliance_leads_the_ranking():
+    """The ranking counts events coded with one side as initiator and the
+    other as target, and GDELT's actor pairing does not separate "A coerced B"
+    from "A and B were both in a coercive event". Measured, china, year to
+    2026-08: US–Australia's material-conflict record is 25 events of CAMEO 190
+    ("use conventional military force: Australia → United States") and 13 of
+    193 ("fight with small arms"); North Korea–South Korea's is 42 of 194 and
+    14 of 150 ("exhibit military posture"). One of those is co-involvement in
+    third-party operations and the other is the real thing.
+
+    The count still ships — every fitted alternative scored worse out of
+    sample — so the caveat travels with it rather than being left as a
+    footnote nobody reads.
+    """
+    from core.games import scenarios
+
+    def _aggregate(relation_type: str):
+        return {
+            "ranking": [{
+                "dyad_id": "dyad:a--b", "dyad_name": "A–B",
+                "opening_band": 1, "opening_label": "a mild departure",
+                "sharp_departure_probability": 0.2,
+                "coercive_events": 72, "coercive_share": 0.08,
+                "standing": {"relations": [{"relation_type": relation_type}]},
+                "posture": {"label": "mostly talk", "share": 0.08,
+                            "events": 900, "quarters": 4, "tone": 1.0,
+                            "thin": False},
+                "top_scenario": None,
+            }],
+            "dyads_solved": 12, "dyads_cinc": 12, "dyads_tilted": 12,
+            "primary_solver": "lp", "horizon": 4,
+            "scenarios_escalatory": [], "scenarios_calming": [],
+            "nash_gap": {"mean": 0.0, "max": 0.0},
+            "kernel": {"share_measured": 0.8, "observations": 1000},
+        }
+
+    allied = " ".join(scenarios.explain_region(_aggregate("alliance")))
+    assert "coerced" in allied and "actor pairing" in allied, allied
+
+    rival = " ".join(scenarios.explain_region(_aggregate("rivalry")))
+    assert "actor pairing" not in rival, (
+        "the caveat belongs where it applies, not on every region"
+    )

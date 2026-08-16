@@ -53,7 +53,7 @@ REGION_DYADS = 12
 #: play named at 100%, because those rows also predate the belief ceiling that
 #: stopped a filtered belief reaching certainty. A persisted computation
 #: outlives the code that wrote it; the version is what makes that safe.
-PAYLOAD_VERSION = "2026-08-16.3"
+PAYLOAD_VERSION = "2026-08-16.4"
 
 #: A step's market row needs this many measurements before the scenario
 #: names it as an implication (the pricing module's own thinness bar).
@@ -932,6 +932,38 @@ def explain_region(aggregate: dict[str, Any]) -> list[str]:
         f"{aggregate['horizon']} quarters — a different question, and the reason "
         "a quiet ally can score high on it."
     )
+    # WHAT THE COUNT COUNTS, stated where it is used to order the region.
+    #
+    # A dyad's coercive events are those the archive coded with one side as
+    # initiator and the other as target. GDELT's actor pairing does not
+    # distinguish "A coerced B" from "A and B were both present in a coercive
+    # event", and the difference shows: US-Australia's material-conflict
+    # record for the year to 2026-08 is 25 events of CAMEO 190 ("use
+    # conventional military force: Australia -> United States") and 13 of 193
+    # ("fight with small arms"), which is co-involvement in third-party
+    # operations, not an Australian attack. North Korea-South Korea's is 42 of
+    # 194 and 14 of 150 ("exhibit military posture"), which is the real thing.
+    #
+    # The measure is still the best cross-pair ranker measured (it beat every
+    # fitted alternative out of sample), and the standing chip carries the
+    # correction — but a reader ranking allies against rivals deserves the
+    # caveat in the same breath as the number, not in a footnote.
+    if lead.get("standing", {}) and any(
+        r.get("relation_type") == "alliance"
+        for r in ((lead.get("standing") or {}).get("relations") or [])
+    ):
+        out.append(
+            f"{lead['dyad_name']} is a declared alliance, which is worth "
+            "reading against the measure rather than through it: a dyad's "
+            "coercive events are those coded with one side as initiator and "
+            "the other as target, and GDELT's actor pairing does not separate "
+            "\"A coerced B\" from \"A and B were both in a coercive event\". "
+            "Allies in the same operations accumulate the second kind. The "
+            "count is still the best cross-pair ordering measured here — every "
+            "fitted alternative scored worse out of sample — but the standing "
+            "beside it is the correction, not decoration."
+        )
+
     esc = aggregate["scenarios_escalatory"][:3]
     if esc:
         out.append(
