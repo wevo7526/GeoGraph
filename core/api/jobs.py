@@ -123,6 +123,11 @@ class Job:
     run: Callable[[Any, float], dict[str, Any]]
     enabled: bool = True
     slice_seconds: float = DEFAULT_SLICE_SECONDS
+    #: A CHILD job's `run` returns a PLAN — {"argv": [...]} — instead of doing
+    #: the work. The scheduler then closes the API's graph, runs that argv to
+    #: completion, and reopens. Reserved for the one writer that cannot live
+    #: in this process: see `work.study`.
+    child: bool = False
     state: JobState = field(init=False)
 
     def __post_init__(self) -> None:
@@ -219,12 +224,72 @@ class Scheduler:
                 if self._stop.is_set():
                     return
 
+    def _run_child(self, job: Job, plan: dict[str, Any]) -> dict[str, Any]:
+        """Hand the single-writer lock to a child, then take it back.
+
+        The API closes its connection first — Kuzu is one writer per PROCESS,
+        so the child cannot take the lock while this process holds it — and
+        graph endpoints answer 503 with a reason for the duration. The child
+        stops on its OWN budget rather than being killed, because a write
+        killed mid-commit is the one way this loop could damage the volume.
+        """
+        import subprocess
+
+        from core.graph import kuzu_store
+
+        argv = list(plan["argv"])
+        budget = float(plan.get("budget_seconds") or job.slice_seconds)
+        graph = getattr(self.app.state, "graph", None)
+        # ORDER MATTERS. Clearing the state first makes every new request 503
+        # WITHOUT touching the lock; taking the write lock second drains the
+        # statements already in flight (readers go first — the queue is FIFO)
+        # so nothing is mid-query when the handle closes. The lock is released
+        # before the child starts: holding it across 90s would turn a fast 503
+        # into a 90s hang for anyone who captured the handle a microsecond
+        # before it was cleared.
+        self.app.state.graph = None
+        self.conn = None
+        self.app.state.graph_error = (
+            f"measuring the archive ({job.name}) — the graph reopens in about "
+            f"{int(budget)}s; corpus-fed pages are unaffected"
+        )
+        with kuzu_store.ACCESS.write():
+            kuzu_store.close(graph)
+        started = time.monotonic()
+        try:
+            proc = subprocess.run(
+                argv, capture_output=True, text=True,
+                timeout=budget + 60.0, check=False,
+            )
+            tail = (proc.stdout or "").strip().splitlines()[-3:]
+            outcome = {
+                **{k: v for k, v in plan.items() if k != "argv"},
+                "seconds": round(time.monotonic() - started, 1),
+                "ok": proc.returncode == 0,
+                "tail": tail,
+            }
+            if proc.returncode != 0:
+                outcome["error"] = (proc.stderr or "").strip().splitlines()[-3:]
+            return outcome
+        except subprocess.TimeoutExpired:
+            return {"ok": False, "error": "child overran its budget and was killed",
+                    "seconds": round(time.monotonic() - started, 1)}
+        finally:
+            from core.api.app import _open_graph  # late: avoids an import cycle
+
+            _open_graph(self.app, self.settings)
+            # Re-point THIS scheduler at the new handle: the remaining jobs in
+            # this pass run against it, and they were handed the old one.
+            self._open()
+
     def _run(self, job: Job) -> None:
         state = job.state
         state.last_started = time.monotonic()
         self.current = job.name
         try:
             result = job.run(self.conn, state.last_started + job.slice_seconds)
+            if job.child and isinstance(result, dict) and result.get("argv"):
+                result = self._run_child(job, result)
             state.last_result = result
             state.last_error = None
             state.runs += 1

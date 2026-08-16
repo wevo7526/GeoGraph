@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import argparse
 import sys
+import time
 from typing import Any
 
 from core import packs
@@ -47,6 +48,14 @@ def main() -> None:
              "one selection the surface cannot serve without",
     )
     parser.add_argument("--dry-run", action="store_true", help="print, write nothing")
+    parser.add_argument(
+        "--budget-seconds", type=float, default=None,
+        help="stop cleanly at the next event boundary after this many seconds, "
+             "flushing what is measured. The scheduler runs this as a CHILD on a "
+             "budget (core/api/work.py) and a clean stop is the point: a killed "
+             "child can leave a write half-committed, which is the one way this "
+             "loop could damage the volume.",
+    )
     parser.add_argument(
         "--refresh", action="store_true",
         help="re-measure events that already have recorded runs. The default "
@@ -168,7 +177,13 @@ def main() -> None:
         outcome = runner.measure(
             graph, panel, pack, chosen,
             all_dates=all_dates, dry_run=args.dry_run, on_event=_print,
+            deadline=(
+                time.monotonic() + args.budget_seconds
+                if args.budget_seconds else None
+            ),
         )
+        if outcome["stopped_early"]:
+            print(f"budget spent — {outcome['remaining']} events left for the next run")
         if args.dry_run:
             print("\ndry run — nothing written")
             return

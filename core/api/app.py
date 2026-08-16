@@ -152,9 +152,15 @@ def _start_jobs(app: FastAPI, settings: Any) -> None:
             # Cadences are about the writer's share of the process, not about
             # urgency: a slice every few minutes converges a hundred-thousand
             # event archive in days while staying invisible to a reader.
+            # A CHILD, and the only one — writing AFFECTED from this process
+            # dies inside Kuzu's rel storage however it is arranged (three
+            # production failures). The API releases the graph for the slice
+            # and says so; 90s of every 600s, so the graph is up ~85% of the
+            # time and the archive still converges.
             jobs_module.Job(
-                name="study", every=120.0, run=work.study,
+                name="study", every=600.0, run=work.study,
                 enabled=jobs_module._enabled("study"),
+                slice_seconds=150.0, child=True,
             ),
             # The wire load is the heaviest writer (~145 events/sec into Kuzu)
             # and the one that was a downtime decision: mena's 450k artifact

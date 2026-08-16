@@ -277,3 +277,62 @@ def test_every_recurring_job_runs_inside_the_api_rather_than_a_boot():
         assert params[:2] == ["conn", "deadline"], (
             f"{name} must take the API's connection and a deadline: {params}"
         )
+
+
+def test_the_study_is_a_child_and_stops_on_its_own_budget(monkeypatch):
+    """THE ONE JOB THAT COULD NOT STAY IN-PROCESS.
+
+    Writing AFFECTED from the API process died inside Kuzu's rel storage
+    (`csr_node_group.cpp KU_UNREACHABLE`) on a sibling connection, then on the
+    API's own connection, then again after the lock was made fair — three
+    production failures, while every other writer in this loop ran for hours.
+    The difference is AFFECTED's SHAPE: ~756k edges onto ~20 Market nodes, so
+    a merge rewrites a very large CSR group.
+
+    So it runs where those 756k edges were actually written: a child process.
+    Two properties make that safe and both are pinned here — the scheduler
+    RELEASES the graph around it (Kuzu is one writer per PROCESS, so the child
+    cannot take the lock otherwise), and the child gets a BUDGET rather than a
+    kill, because a write killed mid-commit is the one way this loop could
+    damage the volume.
+    """
+    import sys
+    from pathlib import Path
+
+    from core.api import app as app_module
+    from core.api import work
+    from core.graph import kuzu_store
+
+    # The API registers it as a child.
+    source = Path(app_module.__file__).read_text(encoding="utf-8")
+    assert 'name="study"' in source and "child=True" in source
+
+    # The CLI it drives accepts a budget, and the job passes one.
+    cli = (Path(app_module.__file__).resolve().parents[2]
+           / "scripts" / "run_event_study.py").read_text(encoding="utf-8")
+    assert "--budget-seconds" in cli
+    assert "--budget-seconds" in Path(work.__file__).read_text(encoding="utf-8")
+
+    class _Graph:
+        closed = False
+
+    app = _App()
+    app.state.graph = _Graph()
+    reopened: list[str] = []
+    monkeypatch.setattr(kuzu_store, "close", lambda g: setattr(g, "closed", True))
+    def _reopen(a: Any, s: Any) -> None:
+        reopened.append("yes")
+        a.state.graph = _Graph()
+
+    monkeypatch.setattr(app_module, "_open_graph", _reopen)
+
+    scheduler = jobs_module.Scheduler(app, None, [])
+    plan = {"argv": [sys.executable, "-c", "print('measured 3 events')"],
+            "budget_seconds": 30.0, "pack": "mena"}
+    job = jobs_module.Job(name="study", every=1.0, run=lambda c, d: plan, child=True)
+    outcome = scheduler._run_child(job, plan)
+
+    assert outcome["ok"], outcome
+    assert "measured 3 events" in " ".join(outcome["tail"])
+    assert reopened == ["yes"], "the graph must reopen after the child"
+    assert app.state.graph is not None

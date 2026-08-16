@@ -149,10 +149,109 @@ class GraphUnavailable(RuntimeError):
     """The graph cannot be opened. The message names the likely fix."""
 
 
+#: Where a Linux container states the limit it is actually held to — v2 then
+#: v1. A module constant so a test can point it at a fixture.
+CGROUP_LIMIT_FILES = (
+    Path("/sys/fs/cgroup/memory.max"),
+    Path("/sys/fs/cgroup/memory/memory.limit_in_bytes"),
+)
+
+
+def container_memory_bytes() -> int | None:
+    """The CGROUP's memory limit, which is NOT what the kernel reports.
+
+    `sysconf(_SC_PHYS_PAGES)` — what Kuzu sizes its buffer pool from — returns
+    the HOST machine's RAM. Inside a container that number is meaningless and
+    dangerous: on a big host it is tens of gigabytes, and a pool sized at 80%
+    of it will keep filling long after the cgroup's own limit is reached, at
+    which point the kernel kills the process. Read the limit the process is
+    actually held to instead.
+    """
+    for candidate in CGROUP_LIMIT_FILES:
+        try:
+            raw = candidate.read_text(encoding="utf-8").strip()
+        except OSError:
+            continue
+        if raw == "max":
+            return None
+        try:
+            value = int(raw)
+        except ValueError:
+            continue
+        # v1 reports an absurd sentinel when unlimited.
+        if 0 < value < (1 << 62):
+            return value
+    return None
+
+
+#: Share of the container's memory the graph's page cache may hold.
+#:
+#: THE REST IS NOT SPARE. This process also carries the wire corpus (1.33M
+#: parsed events, cached for its lifetime by design), the jobs' working sets
+#: and CPython itself — measured together at 2-3 GB. Kuzu's own default is
+#: 80% of what it believes the machine has, which on Railway was the HOST's
+#: memory; the pool grew past the 8 GB cgroup limit and the kernel killed the
+#: process mid-write on 2026-08-16. That kill is what broke the database: the
+#: WAL replay on the next open hit a duplicated primary key and every graph
+#: endpoint served 503 until the recovery below ran.
+BUFFER_POOL_SHARE = float(os.getenv("GEOGRAPH_BUFFER_POOL_SHARE", "0.35"))
+
+
+def buffer_pool_bytes() -> int:
+    """How much page cache to allow — sized to the CONTAINER, never the host."""
+    override = os.getenv("GEOGRAPH_BUFFER_POOL_BYTES")
+    if override:
+        return int(override)
+    limit = container_memory_bytes()
+    if limit is None:
+        return 0  # not containerised: let Kuzu use its own default
+    return max(256 << 20, int(limit * BUFFER_POOL_SHARE))
+
+
+#: Open failures that mean "the WAL cannot be replayed", not "the data is
+#: gone". Every one of these has been produced by a process killed mid-commit.
+_WAL_REPLAY_MARKERS = (
+    "violates the uniqueness constraint",
+    "duplicated primary key",
+    "failed to replay",
+    "wal",
+)
+
+
+def _quarantine_wal(db_path: Path) -> Path | None:
+    """Move a WAL that cannot be replayed aside, so the database can open.
+
+    THE DATA IS NOT IN THE WAL, IT IS IN THE DATABASE. Kuzu checkpoints as it
+    goes; the WAL holds only the tail since the last checkpoint. When a process
+    is killed mid-commit that tail can describe a write the checkpoint already
+    contains, and the replay then fails on the primary key it is re-inserting —
+    which takes the whole database down for writes it had already durably made.
+
+    So the tail is renamed rather than deleted (it is evidence, and it is
+    small), the database opens at its last checkpoint, and the jobs re-measure
+    whatever the tail held: every writer here is watermarked and idempotent,
+    which is exactly what makes discarding a tail safe.
+    """
+    wal = Path(str(db_path) + ".wal")
+    if not wal.exists():
+        return None
+    stamp = f"{wal}.broken-{int(wal.stat().st_mtime)}"
+    try:
+        wal.rename(stamp)
+    except OSError:
+        return None
+    shadow = Path(str(db_path) + ".shadow")
+    if shadow.exists():
+        with contextlib.suppress(OSError):
+            shadow.unlink()
+    return Path(stamp)
+
+
 def connect(db_path: Path, *, read_only: bool = False) -> kuzu.Connection:
     """Open the embedded graph. Diagnoses the single-writer lock explicitly."""
     try:
-        db = kuzu.Database(str(db_path), read_only=read_only)
+        db = kuzu.Database(str(db_path), read_only=read_only,
+                           buffer_pool_size=buffer_pool_bytes())
         conn = kuzu.Connection(db)
     except RuntimeError as exc:  # kuzu raises RuntimeError for IO/lock errors
         message = str(exc)
@@ -170,6 +269,25 @@ def connect(db_path: Path, *, read_only: bool = False) -> kuzu.Connection:
                 "call kuzu_store.close() on graphs you are done with rather than "
                 "dropping the reference. Original: " + message
             ) from exc
+        lowered = message.lower()
+        if not read_only and any(m in lowered for m in _WAL_REPLAY_MARKERS):
+            # A write-ahead tail that cannot be replayed. Recoverable, and the
+            # alternative is a permanently unopenable database — which is what
+            # production had for 25 minutes on 2026-08-16 after an OOM kill.
+            moved = _quarantine_wal(db_path)
+            if moved is not None:
+                print(
+                    f"graph: the write-ahead log could not be replayed "
+                    f"({message.strip()}). Moved it to {moved.name} and opened "
+                    "at the last checkpoint; the watermarked jobs re-measure "
+                    "the tail.",
+                    flush=True,
+                )
+                db = kuzu.Database(str(db_path), read_only=read_only,
+                                   buffer_pool_size=buffer_pool_bytes())
+                conn = kuzu.Connection(db)
+                conn._geograph_db = db  # type: ignore[attr-defined]
+                return conn
         raise GraphUnavailable(f"Cannot open graph at {db_path}: {message}") from exc
     # Keep the Database reachable from the Connection so `close` can shut both.
     # Dropping the Python reference does NOT reliably release the write lock or

@@ -10,7 +10,8 @@ Order of value, which is also the order they were written:
   * `study` — the measurement backlog. The engine walks the archive with a
     per-event watermark; production had reached 2003 and ~10% of the wire
     because each pass got one 600s slice per DEPLOY. Here it gets a slice
-    every few minutes, forever, and the same watermark makes it converge.
+    every ten minutes, forever, and the same watermark makes it converge.
+    It is the ONE job that runs as a child process (see `study` below).
   * `games` — the region scenario maps. They read the graph and write only
     Postgres, so they were never a reason to hold anyone's lock; as a boot
     step they cost ~3.5 minutes of container downtime per re-solve, which is
@@ -20,7 +21,9 @@ Order of value, which is also the order they were written:
 from __future__ import annotations
 
 import os
+import sys
 import time
+from pathlib import Path
 from typing import Any
 
 from core import packs
@@ -82,14 +85,38 @@ def _archive(conn: Any) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     return _archive_cache["events"], _archive_cache["dates"]
 
 
-def study(conn: Any, deadline: float) -> dict[str, Any]:
-    """Measure the next unmeasured events, one pack at a time.
+#: How long the study child may run, and how much of the graph-dark window
+#: that costs. The API RELEASES its connection while the child holds the
+#: single-writer lock, so graph endpoints answer 503 for the slice.
+STUDY_CHILD_SECONDS = float(os.getenv("GEOGRAPH_STUDY_CHILD_SECONDS", "90"))
 
-    Round-robins across packs by taking whichever pack has the most left, so
-    no pack is starved by alphabet — the failure mode `_run_study`'s fair-share
-    comment already records from the boot era (mena, always last, inherited a
-    one-second slice and measured nothing for weeks).
+
+def study(conn: Any, deadline: float) -> dict[str, Any]:
+    """Measure the backlog IN A CHILD PROCESS, one pack per tick.
+
+    THIS IS THE ONE JOB THAT COULD NOT STAY IN-PROCESS, and it took three
+    production failures to accept it. Writing AFFECTED from the API killed the
+    tick with an internal Kuzu assertion every time
+    (`csr_node_group.cpp KU_UNREACHABLE`) — on a sibling connection, then on
+    the API's own connection, then again after the lock was made fair. Every
+    other writer here is fine: the wire job merges events and three rel tables,
+    the rescore merges Event and OF_DYAD, both clean for hours. What is
+    different about AFFECTED is its SHAPE — 756,000 edges pointing at about
+    twenty Market nodes, so one node's adjacency list holds tens of thousands
+    and a merge rewrites a very large CSR group.
+
+    A child process is the configuration that demonstrably wrote every one of
+    those 756,000 edges, so the study goes back to it — but scheduled by this
+    loop rather than by a deploy, which is what the loop was for. The API
+    closes its graph for the slice (graph endpoints answer 503 and say why),
+    the child takes the lock, stops on its own budget so no write is killed
+    mid-commit, and the graph reopens.
+
+    The cost is stated rather than hidden: ~90s of graph-dark per tick, at a
+    cadence that keeps availability high. The alternative — a study that
+    cannot run at all — leaves the archive at 10% measured forever.
     """
+    del conn  # this job runs a child; the caller's connection is released
     from core.panel import pg_store
 
     names = _pack_names()
@@ -99,43 +126,31 @@ def study(conn: Any, deadline: float) -> dict[str, Any]:
     if panel is None:
         return {"skipped": "no panel"}
     try:
-        events, all_dates = _archive(conn)
-        if not events:
-            return {"skipped": "empty graph"}
-
-        backlog: list[tuple[int, str, list[dict[str, Any]], Any]] = []
+        # Pick the pack with the most left, so no pack is starved by alphabet.
+        backlog: list[tuple[int, str]] = []
         for name in names:
             pack = packs.load(name)
-            curated = runner.curated_event_ids(pack)
-            candidates = runner.select_all(events, curated)
             measured = pg_store.measured_events(
                 panel, [m["ticker"] for m in pack.markets]
             )
-            left = [e for e in candidates if e["id"] not in measured]
-            backlog.append((len(left), name, left, pack))
-        backlog.sort(key=lambda item: -item[0])
-
-        remaining_total = sum(item[0] for item in backlog)
-        if not remaining_total:
-            return {"measured": 0, "remaining": 0, "note": "archive fully measured"}
-
-        count, name, left, pack = backlog[0]
-        if time.monotonic() >= deadline:
-            return {"skipped": "no time in this slice", "remaining": remaining_total}
-        outcome = runner.measure(
-            conn, panel, pack, left[:STUDY_EVENTS_PER_TICK],
-            all_dates=all_dates, deadline=deadline,
-        )
-        return {
-            "pack": name,
-            "measured": outcome["events"],
-            "edges": outcome["edges"],
-            "remaining_in_pack": count - outcome["events"],
-            "remaining_total": remaining_total - outcome["events"],
-            "backlog": {n: c for c, n, _, _ in backlog},
-        }
+            backlog.append((len(measured), name))
     finally:
         panel.close()
+    # `measured_events` counts what is DONE, so the pack with the fewest done
+    # is the one furthest behind on a shared archive.
+    backlog.sort()
+    target = backlog[0][1]
+    budget = min(STUDY_CHILD_SECONDS, max(0.0, deadline - time.monotonic()))
+    if budget < 20:
+        return {"skipped": "slice too short", "pack": target}
+    script = Path(__file__).resolve().parents[2] / "scripts" / "run_event_study.py"
+    return {
+        "pack": target,
+        "budget_seconds": budget,
+        "argv": [sys.executable, str(script), target, "--all",
+                 "--budget-seconds", str(int(budget))],
+        "measured_by_pack": {n: c for c, n in backlog},
+    }
 
 
 # ── the region scenario maps ───────────────────────────────────────────────
