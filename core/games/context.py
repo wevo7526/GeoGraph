@@ -175,10 +175,16 @@ def kernel_for(context: dict[str, Any], dyad_id: str) -> tuple[Any, dict[str, An
         if facts is not None:
             model = loaded["model"]
             kernel = model.kernel_for(context["kernel"], facts["features"])
+            # ONLY THE FEATURES THE MODEL ACTUALLY READS. `row_features`
+            # computes `level` too — it is kept because the ablation reads it
+            # — and listing it here put a number in the audit sentence that
+            # the model does not use, which is the one thing this line exists
+            # not to do.
+            used = {*dynamics_module.FEATURES, *dynamics_module.INTERACTIONS}
             return kernel, {
                 "model": loaded["identity"],
                 "features": {k: round(float(v), 4)
-                             for k, v in facts["features"].items()},
+                             for k, v in facts["features"].items() if k in used},
                 "max_tilt": dynamics_module.MAX_TILT,
                 "gate": loaded["summary"],
                 "ordering_horizon": dynamics_module.ORDERING_HORIZON_QUARTERS,

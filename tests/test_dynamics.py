@@ -229,3 +229,35 @@ def test_the_ordering_horizon_is_carried_into_every_solve():
     assert "ordering_horizon" in source, (
         "kernel_for must put the measured horizon in the audit block"
     )
+
+
+def test_the_audit_line_names_only_the_features_the_model_reads():
+    """`row_features` computes `level` as well — it is kept so the ablation
+    can read it — and the first version of the audit block listed it, putting
+    `level +1.02` in a sentence about what moved this pair's kernel when the
+    model never sees it. A number in the audit has to be a number in the model.
+    """
+    from core.games import context as context_module
+
+    row = {"events": 900, "conflict": 60, "intensity": 8.0, "tone": 1.0, "q": 1}
+    features = dynamics.row_features([row] * 4, band=2, scale=10.0)
+    assert "level" in features, "row_features still computes it for the ablation"
+
+    context = {
+        "kernel": _counted(),
+        "table": [{**row, "dyad_id": "dyad:a--b", "q": q} for q in range(8)],
+    }
+    names = dynamics.feature_names()
+    context["dynamics"] = {
+        "identity": "dynamics-test@abc",
+        "summary": "log-loss 1.2 vs counted 1.3",
+        "model": dynamics.Dynamics(
+            weights=np.zeros((len(names), BANDS)),
+            mean=np.zeros(len(names)), scale=np.ones(len(names)),
+            names=names, region="test",
+        ),
+    }
+    _kernel, audit = context_module.kernel_for(context, "dyad:a--b")
+    assert audit is not None
+    assert "level" not in audit["features"], audit["features"]
+    assert set(audit["features"]) == {*dynamics.FEATURES, *dynamics.INTERACTIONS}
