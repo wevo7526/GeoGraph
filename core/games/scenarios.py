@@ -54,7 +54,7 @@ REGION_DYADS = 12
 #: play named at 100%, because those rows also predate the belief ceiling that
 #: stopped a filtered belief reaching certainty. A persisted computation
 #: outlives the code that wrote it; the version is what makes that safe.
-PAYLOAD_VERSION = "2026-08-16.9"
+PAYLOAD_VERSION = "2026-08-16.10"
 
 #: A step's market row needs this many measurements before the scenario
 #: names it as an implication (the pricing module's own thinness bar).
@@ -921,9 +921,9 @@ def region_map(
                 c["marginal"][-1]["expected_band"] if c["marginal"] else None
             ),
             "top_scenario": (
-                {k: top[k] for k in (
-                    "scenario_name", "kind", "likelihood", "courses", "lead_likelihood",
-                    "course", "end_label", "presser",
+                {k: top.get(k) for k in (
+                    "scenario_name", "kind", "kind_label", "likelihood", "courses",
+                    "lead_likelihood", "course", "end_label", "presser",
                 )}
                 if top else None
             ),

@@ -56,6 +56,16 @@ ADVERSARY_SHARE = 0.25
 #: than confrontation. `POSTURE_EDGES`' "mostly talk" cut.
 RIVAL_CEILING = 0.10
 
+#: The ABSOLUTE count of coercive events over the posture window that makes a
+#: pair adversarial whatever its share. A share is coercion over everything
+#: coded, and around a real confrontation the wire codes far more statements
+#: than strikes: US–Iran carried 1,213 material-conflict events in the four
+#: quarters to 2026-08 and a share under a quarter, and read as "a declared
+#: rivalry conducted in argument". Three hundred coercive events in a year is
+#: not argument. Read against the ranking's own counts: Lebanon–Israel 777,
+#: US–UK (the co-participation-heavy alliance) 145, US–Russia 128.
+ADVERSARY_COUNT = 300
+
 
 #: What each family's game is entitled to ask, and the words its answer may
 #: use. The headline is the name the surface gives the solved probability —
@@ -129,6 +139,10 @@ def classify(
     share = (posture or {}).get("share")
     thin = bool((posture or {}).get("thin", share is None))
     coercive = float(share) if share is not None else None
+    count = int((posture or {}).get("coercive") or 0)
+    # Coercion above the count bar reads as the top share bar would.
+    if count >= ADVERSARY_COUNT and (coercive is None or coercive < ADVERSARY_SHARE):
+        coercive = max(coercive or 0.0, ADVERSARY_SHARE)
 
     # ANTAGONISM FIRST, matching `opening._STANDING_PRIORITY`: a pact between
     # rivals is evidence of the rivalry, not a replacement for it, so a pair
