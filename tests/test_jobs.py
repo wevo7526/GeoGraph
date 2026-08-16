@@ -503,3 +503,48 @@ def test_reclaiming_returns_freed_arenas_to_the_kernel():
     heaviest job that ever ran — and RSS is what the cgroup kills on. Best
     effort: absent on musl and on Windows, and never fatal."""
     jobs_module._return_free_arenas()  # must not raise on any platform
+
+
+def test_the_study_shrinks_its_own_tick_when_the_buffer_pool_runs_out(monkeypatch):
+    """TWO FAILURE MODES, AND THEY ARE NOT EQUALLY BAD — which is why the pool
+    size was walked to 0.24 of the cgroup rather than minimised.
+
+    Too LARGE and the kernel kills the container mid-write: uncatchable, and it
+    left the WAL unreplayable on 2026-08-16. Too SMALL and Kuzu raises "Buffer
+    manager exception: the buffer pool is full and no memory could be freed" —
+    caught, backed off, destructive of nothing, but the archive stops
+    converging.
+
+    So the second is handled rather than merely survived: the tick that could
+    not get a page halves itself for the life of the process, because the right
+    tick size depends on how large AFFECTED has grown and that only goes one
+    way. Distinguished from the storage assertion, which is a different problem
+    with a different answer (a child process).
+    """
+    from core.api import work
+
+    monkeypatch.setattr(work, "_PREFER_CHILD", False)
+    monkeypatch.setattr(work, "_events_per_tick", 2500)
+
+    def _full(conn: Any, deadline: float) -> dict[str, Any]:
+        raise RuntimeError(
+            "Buffer manager exception: Unable to allocate memory! The buffer "
+            "pool is full and no memory could be freed!"
+        )
+
+    monkeypatch.setattr(work, "_study_in_process", _full)
+    result = work.study(object(), time.monotonic() + 60)
+
+    assert result["pool_exhausted"]
+    assert result["was"] == 2500 and result["events_per_tick"] == 1250
+    assert work._events_per_tick == 1250
+    assert not work._PREFER_CHILD, (
+        "a resource limit is not the storage assertion — it must not move the "
+        "study into a child process, which costs the graph's availability"
+    )
+
+    # It keeps halving, and stops at a floor where a tick's preload would cost
+    # more than the measuring it enables.
+    for _ in range(10):
+        work.study(object(), time.monotonic() + 60)
+    assert work._events_per_tick == work.STUDY_EVENTS_FLOOR

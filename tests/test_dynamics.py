@@ -306,3 +306,47 @@ def test_the_region_explanation_warns_when_an_alliance_leads_the_ranking():
     assert "actor pairing" not in rival, (
         "the caveat belongs where it applies, not on every region"
     )
+
+
+def test_a_course_named_step_down_is_never_listed_as_escalatory():
+    """Production printed "Russia–Japan — step down at 92%" under the heading
+    "the escalatory scenarios with the most mass".
+
+    `kind` names the ACTIONS played; `delta_band` is where the pair ended up
+    against its own baseline. A pair can play de-escalate every period and
+    still drift up, so the two disagree — and the old filter let `delta_band`
+    override the name. The kind wins. Same self-contradiction the old
+    mean-Goldstein tone verdict produced, in a different place.
+    """
+    from core.games import scenarios
+
+    def _sc(kind: str, delta: int, likelihood: float = 0.5):
+        return {"kind": kind, "delta_band": delta, "likelihood": likelihood,
+                "dyad_name": "A–B"}
+
+    rows = [
+        _sc("step_down", +1, 0.92),          # the production case
+        _sc("drift_down", +1, 0.40),
+        _sc("mutual_escalation", -1, 0.80),  # and its mirror
+        _sc("one_sided_pressure", 0, 0.70),
+        _sc("drift_up", +1, 0.60),           # name is silent: delta decides
+        _sc("holding_pattern", -1, 0.30),
+        _sc("probe_and_retreat", 0, 0.10),   # silent AND flat: neither list
+    ]
+    escalatory, calming = scenarios.sort_scenarios(rows)
+
+    assert "step_down" not in [s["kind"] for s in escalatory]
+    assert "drift_down" not in [s["kind"] for s in escalatory]
+    assert "mutual_escalation" not in [s["kind"] for s in calming]
+    # `mutual_escalation` stays escalatory even though its band fell — the
+    # kind wins in BOTH directions, not only the flattering one.
+    assert [s["kind"] for s in escalatory] == [
+        "mutual_escalation", "one_sided_pressure", "drift_up"]
+    assert [s["kind"] for s in calming] == ["step_down", "drift_down",
+                                            "holding_pattern"]
+    # Most mass first, in both.
+    assert [s["likelihood"] for s in escalatory] == [0.80, 0.70, 0.60]
+    assert [s["likelihood"] for s in calming] == [0.92, 0.40, 0.30]
+    # A course whose name is silent and whose band did not move belongs to
+    # neither list rather than to both.
+    assert "probe_and_retreat" not in [s["kind"] for s in escalatory + calming]

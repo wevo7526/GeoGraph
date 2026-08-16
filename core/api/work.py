@@ -56,7 +56,21 @@ def _pack_names() -> list[str]:
 #: bound by accident. Measured 2026-08-16: a tick measured 400 events in 23.6s
 #: of a 45s slice, i.e. the cap was doing the stopping and half the slice went
 #: unused, against a backlog of 564,596 events.
-STUDY_EVENTS_PER_TICK = int(os.getenv("GEOGRAPH_STUDY_EVENTS_PER_TICK", "4000"))
+STUDY_EVENTS_PER_TICK = int(os.getenv("GEOGRAPH_STUDY_EVENTS_PER_TICK", "2500"))
+
+#: The floor the adaptive cap will not go below — under this a tick's preload
+#: costs more than the measuring it enables.
+STUDY_EVENTS_FLOOR = 250
+
+#: Kuzu's "I could not get a page" signature. Unlike the storage assertion this
+#: is a legitimate resource limit, not a bug: the answer is a smaller tick, not
+#: a different process.
+_POOL_EXHAUSTED = "Buffer manager exception"
+
+#: Halved for the process's life each time the pool is exhausted, because the
+#: right tick size depends on how large AFFECTED has grown and that only ever
+#: goes up.
+_events_per_tick = STUDY_EVENTS_PER_TICK
 
 #: The archive scan, memoised on the graph's own event count. Reading every
 #: event and parsing every date is ~4s at 456k events and grows with the wire
@@ -143,12 +157,30 @@ def study(conn: Any, deadline: float) -> dict[str, Any]:
     starved by alphabet (the failure the boot era's fair-share comment
     records: mena, always last, measured nothing for weeks).
     """
-    global _PREFER_CHILD
+    global _PREFER_CHILD, _events_per_tick
     if _PREFER_CHILD:
         return _study_child_plan(deadline)
     try:
         return _study_in_process(conn, deadline)
     except RuntimeError as exc:
+        if _POOL_EXHAUSTED in str(exc):
+            # A RESOURCE LIMIT, NOT A BUG. Kuzu could not get a page for the
+            # working set this tick asked for. The tick is what is wrong, so
+            # the tick shrinks — for the process's life, because the right
+            # size depends on how large AFFECTED has grown and that only goes
+            # one way.
+            was = _events_per_tick
+            _events_per_tick = max(STUDY_EVENTS_FLOOR, _events_per_tick // 2)
+            return {
+                "pool_exhausted": True,
+                "events_per_tick": _events_per_tick,
+                "was": was,
+                "reason": (
+                    "Kuzu's buffer pool could not free a page for this tick's "
+                    f"working set; the tick shrinks from {was} to "
+                    f"{_events_per_tick} events for the life of this process"
+                ),
+            }
         if _STORAGE_ASSERTION not in str(exc):
             raise
         _PREFER_CHILD = True
@@ -244,7 +276,7 @@ def _study_in_process(conn: Any, deadline: float) -> dict[str, Any]:
         if time.monotonic() >= deadline:
             return {"skipped": "no time in this slice", "remaining": remaining_total}
         outcome = runner.measure(
-            conn, panel, pack, left[:STUDY_EVENTS_PER_TICK],
+            conn, panel, pack, left[:_events_per_tick],
             all_dates=all_dates, deadline=deadline,
         )
         return {

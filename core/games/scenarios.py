@@ -53,7 +53,7 @@ REGION_DYADS = 12
 #: play named at 100%, because those rows also predate the belief ceiling that
 #: stopped a filtered belief reaching certainty. A persisted computation
 #: outlives the code that wrote it; the version is what makes that safe.
-PAYLOAD_VERSION = "2026-08-16.4"
+PAYLOAD_VERSION = "2026-08-16.5"
 
 #: A step's market row needs this many measurements before the scenario
 #: names it as an implication (the pricing module's own thinness bar).
@@ -129,6 +129,45 @@ def split_sides(dyad_name: str) -> tuple[str, str]:
 
 
 # ── naming a course of play ─────────────────────────────────────────────────
+
+
+#: Course kinds that MEAN pressure, and the ones that mean the opposite.
+#: Named here because the sorting rule below has to prefer them over the band
+#: delta, and the two genuinely disagree.
+PRESSING_KINDS = ("mutual_escalation", "one_sided_pressure", "brinkmanship")
+CALMING_KINDS = ("step_down", "drift_down")
+
+
+def sort_scenarios(
+    scenarios: list[dict[str, Any]],
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """(escalatory, calming), most mass first — THE KIND WINS OVER THE DELTA.
+
+    Getting that backwards printed "Russia-Japan - step down at 92%" under the
+    heading "the escalatory scenarios with the most mass". The two fields
+    measure different things: `kind` names the ACTIONS played, `delta_band` is
+    where the pair ended up against its own baseline, and a pair can play
+    de-escalate every period and still drift up. So a course whose name says
+    it steps down is never listed as escalatory, and the band delta only sorts
+    the courses whose name is silent about direction (`probe_and_retreat`,
+    `holding_pattern`, `drift_up`).
+
+    This is the same self-contradiction the old mean-Goldstein tone verdict
+    produced — two numbers about different things, presented as one claim.
+    """
+    escalatory = [
+        sc for sc in scenarios
+        if sc["kind"] in PRESSING_KINDS
+        or (sc["delta_band"] > 0 and sc["kind"] not in CALMING_KINDS)
+    ]
+    calming = [
+        sc for sc in scenarios
+        if sc["kind"] in CALMING_KINDS
+        or (sc["delta_band"] < 0 and sc["kind"] not in PRESSING_KINDS)
+    ]
+    escalatory.sort(key=lambda sc: -sc["likelihood"])
+    calming.sort(key=lambda sc: -sc["likelihood"])
+    return escalatory, calming
 
 
 def classify_course(steps: list[dict[str, Any]], opening_band: int) -> tuple[str, str]:
@@ -831,15 +870,7 @@ def region_map(
         -(r["sharp_departure_probability"] or 0),
         r["dyad_id"],
     ))
-    escalatory = sorted(
-        (sc for sc in all_scenarios if sc["delta_band"] > 0 or sc["kind"] in
-         ("mutual_escalation", "one_sided_pressure", "brinkmanship")),
-        key=lambda sc: -sc["likelihood"],
-    )
-    calming = sorted(
-        (sc for sc in all_scenarios if sc["delta_band"] < 0 or sc["kind"] in ("step_down",)),
-        key=lambda sc: -sc["likelihood"],
-    )
+    escalatory, calming = sort_scenarios(all_scenarios)
 
     # Region-level fan: dyad-average of the per-period marginals — a picture
     # of where the region's mass sits, period by period.

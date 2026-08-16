@@ -201,12 +201,20 @@ def container_memory_bytes() -> int | None:
 #: WAL replay on the next open hit a duplicated primary key and every graph
 #: endpoint served 503 until the recovery below ran.
 #:
-#: 0.16, cut from 0.35 then 0.20 — measured each time, never guessed. The wire corpus is
+#: 0.24 — and the path there is the point, because BOTH directions have a
+#: failure mode and they are not equally bad. 0.35 was Kuzu's own default
+#: against the host's RAM and the kernel killed the container mid-write, which
+#: corrupted the WAL. 0.20 held. 0.16 went too far the other way and the study
+#: died on "Buffer manager exception: the buffer pool is full and no memory
+#: could be freed" — a caught, backed-off, non-destructive failure, but a
+#: stalled archive. 0.24 sits between them, with the per-job memory guard and
+#: `malloc_trim` doing the work that a smaller pool was being asked to do.
+#: Sized, not guessed. The wire corpus is
 #: 1.3 GB resident in two representations, the jobs' working sets are another
 #: 1-2 GB while one runs, and 0.35 still touched the 8 GB ceiling. The pool is
 #: a CACHE: cutting it costs page faults against a memory-mapped file, and
 #: that is the cheapest thing in this budget to give up.
-BUFFER_POOL_SHARE = float(os.getenv("GEOGRAPH_BUFFER_POOL_SHARE", "0.16"))
+BUFFER_POOL_SHARE = float(os.getenv("GEOGRAPH_BUFFER_POOL_SHARE", "0.24"))
 
 
 def memory_in_use_bytes() -> int | None:
