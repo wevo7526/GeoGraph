@@ -665,3 +665,23 @@ def backtest(conn: Any, deadline: float) -> dict[str, Any]:
     if not done:
         return {"note": "every region's book is current", "archive": size}
     return {"walked": done, "archive": size}
+
+
+# ── the counts behind /api/stats ───────────────────────────────────────────
+
+
+def counts(conn: Any, deadline: float) -> dict[str, Any]:
+    """Refill the /api/stats cache so no reader pays for twenty table scans.
+
+    The front page and the explorer both open with those counts, and they cost
+    12.4s once the archive passed a million events — a number that only grows
+    as the wire lands. A job has the time; a page does not.
+    """
+    del deadline  # one pass, and it is short by construction
+    from core.api.routers import graph as graph_router
+
+    out = graph_router.count_tables(conn)
+    return {
+        "events": out["nodes"].get("Event"),
+        "affected": out["edges"].get("AFFECTED"),
+    }

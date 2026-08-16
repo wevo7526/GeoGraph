@@ -185,6 +185,13 @@ def _start_jobs(app: FastAPI, settings: Any) -> None:
                 enabled=jobs_module._enabled("backtest"),
                 slice_seconds=300.0,
             ),
+            # The counts behind /api/stats — twenty table scans nobody should
+            # wait for.
+            jobs_module.Job(
+                name="counts", every=240.0, run=work.counts,
+                enabled=jobs_module._enabled("counts"),
+                slice_seconds=120.0,
+            ),
             # The scoreboard: seconds per region, and it must not be the first
             # reader's problem — the archive read alone grows with the wire.
             jobs_module.Job(

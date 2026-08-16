@@ -9,6 +9,8 @@ money edge deterministic and reproducible.
 from __future__ import annotations
 
 import math
+import time
+from collections import OrderedDict
 from typing import Any
 
 import kuzu
@@ -78,6 +80,24 @@ def dyad_actors(dyad_id: str) -> tuple[str, str]:
     return f"actor:{first}", f"actor:{second or first}"
 
 
+#: One dyad's measured effects, briefly memoised. THE SAME QUERY WAS RUN NINE
+#: TIMES PER PAGE: `_expected_for_dyad` re-reads a dyad's whole effect set to
+#: compute the base rate for EACH event, so a dynamic case study with eight
+#: episodes paid for it eight times over, plus once for the timeline —
+#: measured at ~2.4s per episode and 20-36s for the page as the archive passed
+#: a million events. The rows are append-only measurements that the study job
+#: adds to continuously, so a few seconds of staleness costs a reader nothing
+#: and the request that would have scanned nine times now scans once.
+_EFFECTS_TTL_SECONDS = 30.0
+_EFFECTS_CACHE_SIZE = 8
+_effects_cache: OrderedDict[str, tuple[float, list[dict[str, Any]]]] = OrderedDict()
+
+
+def forget_dyad_effects() -> None:
+    """Drop the memo — for tests, and for a caller that has just written."""
+    _effects_cache.clear()
+
+
 def effects_for_dyad(conn: kuzu.Connection, dyad_id: str) -> list[dict[str, Any]]:
     """Measured market effects for this dyad's events. Empty is a real and
     common answer — the transmission engine records a SKIP where a market did
@@ -95,6 +115,12 @@ def effects_for_dyad(conn: kuzu.Connection, dyad_id: str) -> list[dict[str, Any]
     stance as games/pricing.py, where requiring the dyad edge is documented
     as quietly shrinking the sample.
     """
+    now = time.monotonic()
+    cached = _effects_cache.get(dyad_id)
+    if cached is not None and now - cached[0] < _EFFECTS_TTL_SECONDS:
+        _effects_cache.move_to_end(dyad_id)
+        return cached[1]
+
     actor_a, actor_b = dyad_actors(dyad_id)
     pattern = (
         "MATCH (x:Actor {node_id: $initiator})<-[:INITIATED_BY]-(e:Event)"
@@ -116,4 +142,8 @@ def effects_for_dyad(conn: kuzu.Connection, dyad_id: str) -> list[dict[str, Any]
         rows.extend(
             kuzu_store.query(conn, pattern, {"initiator": actor_b, "target": actor_a})
         )
+    _effects_cache[dyad_id] = (now, rows)
+    _effects_cache.move_to_end(dyad_id)
+    while len(_effects_cache) > _EFFECTS_CACHE_SIZE:
+        _effects_cache.popitem(last=False)
     return rows

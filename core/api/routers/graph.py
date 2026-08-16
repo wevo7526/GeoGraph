@@ -33,14 +33,32 @@ def ontology_summary() -> dict[str, Any]:
     return ontology.summary()
 
 
-#: How long a count may be reused. Every table is scanned to answer /stats —
-#: about twenty scans, measured at 9.8s once the archive passed a million
-#: events, on an endpoint the front page and the explorer both open with. The
-#: numbers move continuously now that the jobs write in the background, so a
-#: count is a snapshot whatever it costs; ten seconds of staleness buys a
-#: 20ms response. `fresh=true` forces the scan.
-_STATS_TTL_SECONDS = 10.0
+#: THE COUNTS ARE A JOB'S WORK, NOT A READER'S. Answering /stats scans every
+#: table — about twenty scans, measured at 12.4s once the archive passed a
+#: million events, on the endpoint the front page and the explorer both open
+#: with. A background pass (core/api/work.py::counts) refills this every few
+#: minutes so a reader gets a snapshot in milliseconds; the numbers move
+#: continuously now that jobs write, so a count is a snapshot whatever it
+#: costs. `fresh=true` forces the scan for a caller who wants it exact.
+_STATS_TTL_SECONDS = 600.0
 _stats_cache: dict[str, Any] = {"at": 0.0, "value": None}
+
+
+def count_tables(conn: Any) -> dict[str, Any]:
+    """The scan itself, shared by the endpoint and the job that warms it."""
+    import time
+
+    node_counts = {
+        table: kuzu_store.query(conn, f"MATCH (n:{table}) RETURN count(*) AS n")[0]["n"]
+        for table in ontology.nodes()
+    }
+    edge_counts = {
+        rel: kuzu_store.query(conn, f"MATCH ()-[r:{rel}]->() RETURN count(*) AS n")[0]["n"]
+        for rel in ontology.edges()
+    }
+    out = {"nodes": node_counts, "edges": edge_counts}
+    _stats_cache.update({"at": time.monotonic(), "value": out})
+    return dict(out)
 
 
 @router.get("/stats")
@@ -50,21 +68,14 @@ def stats(request: Request, fresh: bool = False) -> dict[str, Any]:
     import time
 
     conn = _conn(request)
-    now = time.monotonic()
     cached = _stats_cache["value"]
-    if not fresh and cached is not None and now - float(_stats_cache["at"]) < _STATS_TTL_SECONDS:
+    fresh_enough = (
+        cached is not None
+        and time.monotonic() - float(_stats_cache["at"]) < _STATS_TTL_SECONDS
+    )
+    if not fresh and fresh_enough:
         return dict(cached)
-    node_counts = {
-        table: kuzu_store.query(conn, f"MATCH (n:{table}) RETURN count(*) AS n")[0]["n"]
-        for table in ontology.nodes()
-    }
-    edge_counts = {
-        rel: kuzu_store.query(conn, f"MATCH ()-[r:{rel}]->() RETURN count(*) AS n")[0]["n"]
-        for rel in ontology.edges()
-    }
-    out = {"nodes": node_counts, "edges": edge_counts, "counted_at": _STATS_TTL_SECONDS}
-    _stats_cache.update({"at": now, "value": out})
-    return dict(out)
+    return count_tables(conn)
 
 
 #: RELATES_TO at deep-tier scale is tens of thousands of membership spells;

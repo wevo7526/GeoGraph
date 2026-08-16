@@ -31,6 +31,12 @@ def _isolated_corpus(tmp_path, monkeypatch):
     scheduler loose on a fixture.
     """
     monkeypatch.setenv("GEOGRAPH_JOBS", "0")
+    # A fixture that writes effects and reads them back must not see the
+    # previous test's memo (core/transmission/effects.py caches a dyad's
+    # measured effects for 30s, because the base rate re-read it per event).
+    from core.transmission import effects as _effects
+
+    _effects.forget_dyad_effects()
     monkeypatch.setenv("GEOGRAPH_DERIVED_DIR", str(tmp_path / "no-corpus"))
     serving.reset()
     yield
