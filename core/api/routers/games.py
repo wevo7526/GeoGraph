@@ -339,19 +339,41 @@ def explore(
     latest = max(own, key=lambda r: r["q"])
     band = state_module.intensity_band(float(latest["intensity"]), scale)
 
+    # WHICH GAME — the same read `scenarios.solve_dyad` makes: an ally pair's
+    # what-if is played in the burden-sharing game, in its own space, with the
+    # levers meaning what its payoff says they mean. The lever page used to run
+    # Fearon for every pair while the solved page beside it did not.
+    from core.games import family as family_module
+
+    classification = family_module.classify(
+        opening_module.standing(request.app.state.graph, dyad, as_of=context["as_of"]),
+        opening_module.posture(own),
+    )
+    space = family_module.space_for(classification["family"])
+    if space.family == "ally" and not changed:
+        # The ally game's own fitted payoffs are the baseline for an ally pair;
+        # a moved lever is applied to those, not to Fearon's.
+        payoffs = solve_module.Payoffs(**context_module.fitted_payoffs(region, "ally"))
+    elif space.family == "ally":
+        base_ally = context_module.fitted_payoffs(region, "ally")
+        payoffs = solve_module.Payoffs(**{
+            **base_ally, **{k: v for k, v in changed.items() if k in base_ally}
+        })
+
     # THIS PAIR's kernel — the dynamics model over the counted table, or the
     # frozen-trajectory bridge where no dynamics artifact ships.
-    kernel, tilt = context_module.kernel_for(context, dyad)
+    kernel, tilt = context_module.kernel_for(context, dyad, space)
 
-    equilibrium = solve_module.solve(kernel, payoffs, horizon=4)
+    equilibrium = solve_module.solve(kernel, payoffs, horizon=4, space=space)
     result = paths_module.enumerate_paths(
         equilibrium, kernel, intensity=band, capability=effective_capability,
         belief_a=effective_belief_a, belief_b=effective_belief_b, payoffs=payoffs,
+        space=space,
     )
     priced = pricing_module.price_paths(
         result, context["effects"], as_of=context["as_of"], scale=scale or 1.0
     )
-    escalate = state_module.ACTIONS.index("escalate")
+    escalate = 2  # the pressing action in every space
     payload: dict[str, Any] = {
         "region": region,
         "dyad_id": dyad,
@@ -375,9 +397,12 @@ def explore(
             "beliefs": data_beliefs,
             "tilt": tilt,
         },
+        "family": classification,
+        "space": {"family": space.family, "actions": list(space.actions),
+                  "types": list(space.types)},
         "marginal": paths_module.marginal_intensity(priced, 4),
         "escalation_propensity": {
-            state_module.TYPES[t]: [
+            space.types[t]: [
                 round(
                     float(
                         equilibrium["policy"][0, b, effective_capability, t][escalate]
@@ -386,7 +411,7 @@ def explore(
                 )
                 for b in range(len(state_module.INTENSITY_EDGES))
             ]
-            for t in range(len(state_module.TYPES))
+            for t in range(len(space.types))
         },
         **priced,
         "kernel": context["coverage"],
