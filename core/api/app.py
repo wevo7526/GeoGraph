@@ -133,17 +133,28 @@ def _start_jobs(app: FastAPI, settings: Any) -> None:
         kuzu_store.BATCH_ROWS = jobs_module.SERVING_BATCH_ROWS
 
         scheduler = jobs_module.Scheduler(app, settings, [
+            # FIRST, deliberately. The scheduler runs due jobs in list order,
+            # so anything behind a 45s write slice lands minutes after a
+            # restart — and /api/stats cold-scans twenty tables (19.7s at a
+            # million events), which is exactly what the front page opens
+            # with. The cheap warmers go before the writers so the first
+            # reader after a deploy is never the one who pays.
+            jobs_module.Job(
+                name="counts", every=240.0, run=work.counts,
+                enabled=jobs_module._enabled("counts"),
+                slice_seconds=120.0,
+            ),
+            jobs_module.Job(
+                name="games", every=60.0, run=work.games,
+                enabled=jobs_module._enabled("games"),
+                slice_seconds=240.0,  # one region's solve is ~70s and atomic
+            ),
             # Cadences are about the writer's share of the process, not about
             # urgency: a slice every few minutes converges a hundred-thousand
             # event archive in days while staying invisible to a reader.
             jobs_module.Job(
                 name="study", every=120.0, run=work.study,
                 enabled=jobs_module._enabled("study"),
-            ),
-            jobs_module.Job(
-                name="games", every=60.0, run=work.games,
-                enabled=jobs_module._enabled("games"),
-                slice_seconds=240.0,  # one region's solve is ~70s and atomic
             ),
             # The wire load is the heaviest writer (~145 events/sec into Kuzu)
             # and the one that was a downtime decision: mena's 450k artifact
@@ -184,13 +195,6 @@ def _start_jobs(app: FastAPI, settings: Any) -> None:
                 name="backtest", every=3600.0, run=work.backtest,
                 enabled=jobs_module._enabled("backtest"),
                 slice_seconds=300.0,
-            ),
-            # The counts behind /api/stats — twenty table scans nobody should
-            # wait for.
-            jobs_module.Job(
-                name="counts", every=240.0, run=work.counts,
-                enabled=jobs_module._enabled("counts"),
-                slice_seconds=120.0,
             ),
             # The scoreboard: seconds per region, and it must not be the first
             # reader's problem — the archive read alone grows with the wire.
