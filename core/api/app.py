@@ -144,6 +144,17 @@ def _start_jobs(app: FastAPI, settings: Any) -> None:
                 enabled=jobs_module._enabled("counts"),
                 slice_seconds=120.0,
             ),
+            # THE WIRE RIGHT AFTER THE COUNTS, because everything below it
+            # reads what it writes: after a reset the lean copy is what the
+            # study measures, the refill projects onto and the games price. Last
+            # in the list it got 60s per twelve-minute pass; here it gets its
+            # slice before the heavy solvers, and once the copy is complete it
+            # returns in milliseconds.
+            jobs_module.Job(
+                name="wire", every=60.0, run=work.wire,
+                enabled=jobs_module._enabled("wire"),
+                slice_seconds=120.0,
+            ),
             jobs_module.Job(
                 name="games", every=60.0, run=work.games,
                 enabled=jobs_module._enabled("games"),
@@ -227,11 +238,6 @@ def _start_jobs(app: FastAPI, settings: Any) -> None:
                 name="calibration", every=1800.0, run=work.calibration,
                 enabled=jobs_module._enabled("calibration"),
                 slice_seconds=180.0,
-            ),
-            jobs_module.Job(
-                name="wire", every=60.0, run=work.wire,
-                enabled=jobs_module._enabled("wire"),
-                slice_seconds=60.0,
             ),
         ])
         scheduler.start()
