@@ -204,12 +204,18 @@ relations:
   - a: actor:cow-2              # United States
     b: actor:cow-666            # Israel
     relation_type: alliance
-    valid_from: "1981-11-30"
+    valid_from: "1987-02-01"
     source: source:standing-record
     note: >-
-      Memorandum of Understanding on Strategic Cooperation, 1981-11-30; Major
-      Non-NATO Ally from 1987. Not a mutual-defence treaty, which is why COW
-      does not carry it and the pair read as unaligned.
+      Major Non-NATO Ally designation, 1987. DATED HERE AND NOT AT THE 1981
+      Memorandum of Understanding on Strategic Cooperation, deliberately: COW
+      carries that MoU as an alliance from 1981-11-30 and ENDS it 1991-12-26,
+      and the edge identity is (relation_type, valid_from) — so a curated row
+      on the same date is the same edge, and the deep-tier loader (which runs
+      after the pack seed) silently overwrote this one with COW's end date.
+      The pair then read "under no relation the archive has declared", which
+      is how the collision was found. The MNNA date is also the better claim:
+      it is the standing that is still in force.
   - a: actor:cow-2              # United States
     b: actor:cow-670            # Saudi Arabia
     relation_type: alliance

@@ -3,6 +3,8 @@ without knowing its name."""
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
 from core import packs
@@ -183,3 +185,87 @@ def test_the_declared_set_is_what_the_gdelt_filter_applies():
     )
     assert kept.written == 1
     assert events[0]["node_id"] == "event:gdelt-424242"
+
+
+def test_no_pack_relation_collides_with_a_cow_alliance():
+    """A curated declaration must not be silently overwritten by a loader.
+
+    The edge identity for RELATES_TO is (relation_type, valid_from), read off
+    the ontology. A pack row and a COW row on the same pair, same type, same
+    START DATE are therefore THE SAME EDGE — and the deep tier runs after the
+    pack seed, so COW wins and the curator's intent disappears without a word.
+
+    Found on 2026-08-16: packs/mena declared US-Israel an alliance from
+    1981-11-30, the date of the strategic-cooperation MoU. COW carries that
+    same MoU and ENDS it 1991-12-26, so the merged edge expired and the pair
+    read "under no relation the archive has declared" — the exact defect the
+    declaration had been added to fix. It is dated at the 1987 Major
+    Non-NATO Ally designation now, which is both non-colliding and the
+    standing actually still in force.
+
+    Skipped where the COW file is not present (it is a large raw download, not
+    committed); it runs in CI wherever the deep tier can run at all.
+    """
+    import csv
+
+    path = (Path(__file__).resolve().parent.parent
+            / "data" / "raw" / "alliance_v4.1_by_directed.csv")
+    if not path.exists():
+        pytest.skip("COW alliance file not present")
+
+    cow: dict[tuple[str, ...], str] = {}
+    with open(path, encoding="utf-8-sig") as fh:
+        for row in csv.DictReader(fh):
+            try:
+                a, b = int(row["ccode1"]), int(row["ccode2"])
+            except (KeyError, ValueError):
+                continue
+            if a >= b:
+                continue
+            year = row["dyad_st_year"].strip()
+            month = row["dyad_st_month"].strip()
+            day = row["dyad_st_day"].strip()
+            if not year or year == "-9":
+                continue
+            if not month or month == "-9":
+                iso = year
+            elif not day or day == "-9":
+                iso = f"{year}-{int(month):02d}"
+            else:
+                iso = f"{year}-{int(month):02d}-{int(day):02d}"
+            end = row["dyad_end_year"].strip()
+            censored = row.get("right_censor", "").strip() == "1"
+            ends = "" if (censored or not end or end == "-9") else end
+            key = (f"actor:cow-{a}", f"actor:cow-{b}", "alliance", iso)
+            # Keep the WIDEST window COW gives this identity: a spell it
+            # leaves open is the one that would survive the merge.
+            if key not in cow or not ends:
+                cow[key] = ends
+
+    collisions = []
+    for name in packs.available():
+        for rel in packs.load(name).relations:
+            key = (*sorted((rel["a"], rel["b"])), rel["relation_type"],
+                   str(rel.get("valid_from")))
+            if key not in cow:
+                continue
+            # A collision only MATTERS when the two disagree about the window.
+            # COW carries Russia-Kazakhstan from the same 1992 date and leaves
+            # it open, which is exactly what the pack declares — the merge is
+            # a no-op and forcing a different date would be busywork. What
+            # must never pass silently is COW closing a window the curator
+            # meant to leave open, which is what happened to US-Israel.
+            cow_end = cow[key]
+            pack_end = str(rel.get("valid_to") or "")
+            if cow_end != pack_end:
+                collisions.append(
+                    f"{name}: {key} — the pack says valid_to "
+                    f"{pack_end or '(open)'}, COW says {cow_end or '(open)'}"
+                )
+    assert not collisions, (
+        "these curated relations share an edge identity with a COW alliance "
+        "AND disagree with it about the window, so the deep-tier load (which "
+        "runs after the pack seed) will overwrite the curator silently — give "
+        "them a different, defensible valid_from, or drop them and let COW "
+        f"carry the pair: {collisions}"
+    )

@@ -297,9 +297,10 @@ def test_the_boot_fingerprint_covers_the_code_that_reads_the_inputs():
     Inputs alone are not the input. The code that turns a raw file into graph
     rows is too.
     """
-    import scripts.boot as boot
-
-    source = Path(boot.__file__).read_text(encoding="utf-8")
+    # Read, never import: `scripts/boot.py` is a script, and importing it as
+    # `scripts.boot` makes mypy see the same file under two module names.
+    source = (Path(__file__).resolve().parent.parent
+              / "scripts" / "boot.py").read_text(encoding="utf-8")
     fingerprint = source[source.index("def _image_fingerprint"):]
     fingerprint = fingerprint[:fingerprint.index("\n\n\n")]
     assert '"ingestion"' in fingerprint, (
