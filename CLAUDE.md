@@ -533,7 +533,22 @@ concurrent read/write). Three rules make it safe under live traffic:
 2. **Every job is resumable.** The study's per-event watermark, the wire's
    per-artifact markers (the boot's own `.gdelt-loaded` files, shared so a
    boot-loaded artifact is not re-read), idempotent solve replacement.
-3. **Shutdown drains.** `Scheduler.stop()` joins the thread before the database
+3. **Reads and writes are SERIALISED by a process-wide reader-writer lock**
+   (`kuzu_store.ACCESS`), and this is the part that was learned in production.
+   Kuzu CHECKPOINTS after a write and a checkpoint requires no transaction
+   active anywhere in the process — with request threads reading continuously
+   there always is one, so the first AFFECTED merge failed with an internal
+   assertion in the rel-table storage (`csr_node_group.cpp KU_UNREACHABLE`);
+   reproduced locally as "Timeout waiting for active transactions to leave the
+   system before checkpointing". Readers share, writers exclude, and **a
+   waiting writer excludes new readers** — without that second property three
+   looping readers hand the lock to each other, the reader count never reaches
+   zero and the writer hangs forever, which is exactly what API traffic looks
+   like. Verified: 32k edges written concurrently with three reader threads in
+   6.5s, the same as uncontended. It works only because every graph statement
+   in the repo goes through `query`/`merge_nodes`/`merge_edges` — a test
+   refuses a direct `conn.execute` anywhere else.
+4. **Shutdown drains.** `Scheduler.stop()` joins the thread before the database
    closes. This is the one risk the child-process boot did not take: a write
    killed mid-transaction can leave the database unable to take the next one
    (reproduced locally — a `timeout` kill during a 5,000-row merge left every

@@ -27,6 +27,8 @@ from __future__ import annotations
 import contextlib
 import decimal
 import math
+import threading
+from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 
@@ -44,6 +46,79 @@ __all__ = [
     "merge_nodes",
     "query",
 ]
+
+
+class _ReadWriteLock:
+    """Many readers, one writer, writer excludes readers — PROCESS-WIDE.
+
+    WHY THIS EXISTS (2026-08-15, and it cost a production job failure to
+    learn). Kuzu CHECKPOINTS after a write, and a checkpoint requires that no
+    transaction is active anywhere in the process. That is fine when writes
+    happen in a batch job with nothing else running — the design until the
+    convergence loop moved recurring work inside the API. It is not fine when
+    request threads are reading continuously: there is always an active
+    transaction, the checkpoint waits, and the write fails. Reproduced exactly:
+    a sibling connection writing 4,000-edge batches while three threads read
+    the same database fails with "Timeout waiting for active transactions to
+    leave the system before checkpointing"; in production the same contention
+    surfaced as an internal assertion in the rel-table storage
+    (csr_node_group.cpp KU_UNREACHABLE) on the study job's first AFFECTED
+    merge.
+
+    So reads share and writes exclude. Reads stay concurrent with each other,
+    which is what the API needs; a write batch (~1s for 4,000 edges) blocks
+    readers for its duration, which is the price of converging the archive
+    without a deploy. The lock is on the MODULE because the process is the
+    unit Kuzu checkpoints for — a per-connection lock would not help.
+    """
+
+    def __init__(self) -> None:
+        self._condition = threading.Condition()
+        self._readers = 0
+        self._writer = False
+        self._waiting_writers = 0
+
+    @contextlib.contextmanager
+    def read(self) -> Iterator[None]:
+        # WRITER PREFERENCE, and it is not a nicety. A reader that only waits
+        # on an ACTIVE writer starves a WAITING one whenever requests overlap:
+        # measured here as a hang, because three reader threads in a loop hand
+        # the lock to each other and the reader count never reaches zero. The
+        # API's request threads are exactly that kind of traffic, and a job
+        # that can never acquire is a job that never converges.
+        with self._condition:
+            while self._writer or self._waiting_writers:
+                self._condition.wait()
+            self._readers += 1
+        try:
+            yield
+        finally:
+            with self._condition:
+                self._readers -= 1
+                if self._readers == 0:
+                    self._condition.notify_all()
+
+    @contextlib.contextmanager
+    def write(self) -> Iterator[None]:
+        with self._condition:
+            self._waiting_writers += 1
+            try:
+                while self._writer or self._readers:
+                    self._condition.wait()
+            finally:
+                self._waiting_writers -= 1
+            self._writer = True
+        try:
+            yield
+        finally:
+            with self._condition:
+                self._writer = False
+                self._condition.notify_all()
+
+
+#: The one lock every graph access in this process passes through. Exported so
+#: a caller doing several statements as a unit (a job's batch) can hold it.
+ACCESS = _ReadWriteLock()
 
 
 class GraphUnavailable(RuntimeError):
@@ -137,15 +212,23 @@ def apply_schema(conn: kuzu.Connection) -> None:
     property still needs a rebuild, which for this graph is a delete-and-
     reseed — every fact reloads from the packs and crosswalks by design.
     """
-    for statement in ontology.ddl():
-        conn.execute(statement)
+    # DDL is a write, so it takes the exclusive side — but NOT around the
+    # `query` calls below, which take the shared side: this lock is not
+    # reentrant across modes and nesting them would deadlock. Schema work
+    # happens before the API publishes its connection, so nothing is reading.
+    with ACCESS.write():
+        for statement in ontology.ddl():
+            conn.execute(statement)
 
     tables = [(spec.table, spec.props) for spec in ontology.nodes().values()]
     tables += [(spec.rel, spec.props) for spec in ontology.edges().values()]
     for table, props in tables:
         live = {row["name"] for row in query(conn, f"CALL table_info('{table}') RETURN *")}
-        for prop in props:
-            if prop.name not in live:
+        missing = [p for p in props if p.name not in live]
+        if not missing:
+            continue
+        with ACCESS.write():
+            for prop in missing:
                 conn.execute(f"ALTER TABLE {table} ADD {prop.name} {prop.kuzu_type}")
 
 
@@ -176,17 +259,25 @@ def _plain(value: Any) -> Any:
 def query(
     conn: kuzu.Connection, cypher: str, params: dict[str, Any] | None = None
 ) -> list[dict[str, Any]]:
-    """Run one Cypher statement, returning plain dict rows."""
-    result = conn.execute(cypher, parameters=params or {})
-    if isinstance(result, list):  # kuzu returns a list only for `;`-chained statements
-        result = result[-1]
-    columns = result.get_column_names()
-    rows: list[dict[str, Any]] = []
-    while result.has_next():
-        rows.append(
-            {col: _plain(val) for col, val in zip(columns, result.get_next(), strict=True)}
-        )
-    return rows
+    """Run one Cypher statement, returning plain dict rows.
+
+    Holds the shared side of `ACCESS` for the WHOLE materialisation, not just
+    the execute: a Kuzu transaction lives until its result is consumed, and a
+    half-read result is exactly the "active transaction" that makes a
+    concurrent write's checkpoint time out.
+    """
+    with ACCESS.read():
+        result = conn.execute(cypher, parameters=params or {})
+        if isinstance(result, list):  # kuzu returns a list only for `;`-chains
+            result = result[-1]
+        columns = result.get_column_names()
+        rows: list[dict[str, Any]] = []
+        while result.has_next():
+            rows.append({
+                col: _plain(val)
+                for col, val in zip(columns, result.get_next(), strict=True)
+            })
+        return rows
 
 
 #: UNWIND batch size. One MERGE per row was the deep tier's 25-minute IGO
@@ -222,17 +313,23 @@ def merge_nodes(conn: kuzu.Connection, table: str, rows: list[dict[str, Any]]) -
     for row in rows:
         ontology.validate_node(table, row)
     written = 0
-    for batch in _batches(rows, lambda r: tuple(n for n in prop_names if n in r)):
-        present = [n for n in prop_names if n in batch[0]]
-        sets = ", ".join(f"n.{name} = row.{name}" for name in present)
-        cypher = f"UNWIND $rows AS row MERGE (n:{table} {{node_id: row.node_id}})"
-        if sets:
-            cypher += f" ON CREATE SET {sets} ON MATCH SET {sets}"
-        payload = [
-            {"node_id": row["node_id"], **{n: row[n] for n in present}} for row in batch
-        ]
-        conn.execute(cypher, parameters={"rows": payload})
-        written += len(batch)
+    # EXCLUSIVE FOR THE WHOLE MERGE, not per batch: Kuzu checkpoints after a
+    # write and a checkpoint needs the process quiet, so a reader admitted
+    # between two batches is a reader whose transaction the next checkpoint
+    # waits on. See `_ReadWriteLock`.
+    with ACCESS.write():
+        for batch in _batches(rows, lambda r: tuple(n for n in prop_names if n in r)):
+            present = [n for n in prop_names if n in batch[0]]
+            sets = ", ".join(f"n.{name} = row.{name}" for name in present)
+            cypher = f"UNWIND $rows AS row MERGE (n:{table} {{node_id: row.node_id}})"
+            if sets:
+                cypher += f" ON CREATE SET {sets} ON MATCH SET {sets}"
+            payload = [
+                {"node_id": row["node_id"], **{n: row[n] for n in present}}
+                for row in batch
+            ]
+            conn.execute(cypher, parameters={"rows": payload})
+            written += len(batch)
     return written
 
 
@@ -249,21 +346,30 @@ def merge_edges(conn: kuzu.Connection, rel: str, rows: list[dict[str, Any]]) -> 
     for row in rows:
         ontology.validate_edge(rel, {k: v for k, v in row.items() if k not in ("src", "dst")})
     written = 0
-    for batch in _batches(rows, lambda r: tuple(sorted(k for k in r if k not in ("src", "dst")))):
-        props = [k for k in batch[0] if k not in ("src", "dst")]
-        keys = [k for k in spec.key_slots if k in props]
-        rest = [k for k in props if k not in keys]
-        key_pattern = (" {" + ", ".join(f"{k}: row.{k}" for k in keys) + "}") if keys else ""
-        sets = ", ".join(f"r.{k} = row.{k}" for k in rest)
-        cypher = (
-            f"UNWIND $rows AS row "
-            f"MATCH (a:{spec.src} {{node_id: row.src}}), (b:{spec.dst} {{node_id: row.dst}}) "
-            f"MERGE (a)-[r:{rel}{key_pattern}]->(b)"
-        )
-        if sets:
-            cypher += f" ON CREATE SET {sets} ON MATCH SET {sets}"
-        conn.execute(cypher, parameters={"rows": batch})
-        written += len(batch)
+    # EXCLUSIVE — see `merge_nodes`. Rel writes are where this bit first: the
+    # CSR storage assertion that took the study job down was a checkpoint
+    # racing live readers.
+    with ACCESS.write():
+        for batch in _batches(
+            rows, lambda r: tuple(sorted(k for k in r if k not in ("src", "dst")))
+        ):
+            props = [k for k in batch[0] if k not in ("src", "dst")]
+            keys = [k for k in spec.key_slots if k in props]
+            rest = [k for k in props if k not in keys]
+            key_pattern = (
+                (" {" + ", ".join(f"{k}: row.{k}" for k in keys) + "}") if keys else ""
+            )
+            sets = ", ".join(f"r.{k} = row.{k}" for k in rest)
+            cypher = (
+                f"UNWIND $rows AS row "
+                f"MATCH (a:{spec.src} {{node_id: row.src}}), "
+                f"(b:{spec.dst} {{node_id: row.dst}}) "
+                f"MERGE (a)-[r:{rel}{key_pattern}]->(b)"
+            )
+            if sets:
+                cypher += f" ON CREATE SET {sets} ON MATCH SET {sets}"
+            conn.execute(cypher, parameters={"rows": batch})
+            written += len(batch)
     return written
 
 

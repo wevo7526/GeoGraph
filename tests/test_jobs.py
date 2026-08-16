@@ -118,3 +118,85 @@ def test_the_measure_loop_stops_at_its_deadline_and_says_what_is_left():
     assert outcome["events"] == 0
     assert outcome["stopped_early"] is True
     assert outcome["remaining"] == 5
+
+
+# ── the lock that makes writing-while-serving possible ──────────────────────
+
+
+def test_a_write_excludes_readers_and_is_never_starved_by_them():
+    """THE FAILURE THAT TOOK THE STUDY JOB DOWN IN PRODUCTION.
+
+    Kuzu checkpoints after a write, and a checkpoint needs no transaction
+    active anywhere in the process. Request threads read continuously, so the
+    checkpoint waited and the write failed — as "Timeout waiting for active
+    transactions to leave the system" in a local reproduction and as an
+    internal assertion in the rel-table storage (csr_node_group.cpp
+    KU_UNREACHABLE) in production, on the first AFFECTED merge.
+
+    Two properties fix it, and the second was learned the hard way: readers
+    must exclude writers, AND a waiting writer must exclude new readers.
+    Without the second, three reader threads in a loop hand the lock to each
+    other, the reader count never reaches zero, and the writer hangs forever —
+    which is exactly what the API's traffic looks like.
+    """
+    import threading
+
+    from core.graph import kuzu_store
+
+    lock = kuzu_store._ReadWriteLock()
+    observed: list[str] = []
+    stop = threading.Event()
+    started = threading.Event()
+
+    def reader() -> None:
+        while not stop.is_set():
+            with lock.read():
+                observed.append("r")
+                started.set()
+                time.sleep(0.001)
+
+    threads = [threading.Thread(target=reader, daemon=True) for _ in range(3)]
+    for thread in threads:
+        thread.start()
+    assert started.wait(timeout=5), "readers never started"
+
+    # The writer must get in despite continuous reader traffic.
+    acquired = threading.Event()
+
+    def writer() -> None:
+        with lock.write():
+            observed.append("W-start")
+            time.sleep(0.05)
+            observed.append("W-end")
+            acquired.set()
+
+    write_thread = threading.Thread(target=writer, daemon=True)
+    write_thread.start()
+    assert acquired.wait(timeout=5), "the writer was starved by continuous readers"
+    stop.set()
+    for thread in threads:
+        thread.join(timeout=2)
+    write_thread.join(timeout=2)
+
+    # And nothing read while it wrote: the whole point of the exclusion.
+    start = observed.index("W-start")
+    end = observed.index("W-end")
+    assert end == start + 1, f"a read landed inside the write: {observed[start:end + 1]}"
+
+
+def test_every_graph_write_in_the_codebase_takes_the_lock():
+    # The lock only works because EVERY access goes through kuzu_store's three
+    # functions — the repo's "one write path" discipline is what makes a
+    # process-wide lock enforceable at all. A direct conn.execute anywhere else
+    # would be a hole in it.
+    import pathlib
+
+    root = pathlib.Path(__file__).resolve().parent.parent
+    offenders = []
+    for path in list((root / "core").rglob("*.py")) + list((root / "scripts").rglob("*.py")):
+        if path.name == "kuzu_store.py":
+            continue
+        for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+            if ".execute(" in line and "cur.execute" not in line and "cursor" not in line:
+                offenders.append(f"{path.relative_to(root)}:{number}")
+    assert not offenders, f"graph statements outside kuzu_store: {offenders}"
