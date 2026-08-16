@@ -638,10 +638,20 @@ Two things it immediately taught us, both kept on the surface:
   counts every call twice, forces the sample's base rate to exactly 0.5, and
   credits the estimator for arithmetic (an apparent skill of 0.76 evaporated).
 - **The estimator has NEGATIVE skill in the recent era** — china −0.74, mena
-  −0.19 over the last 20 years, against +0.75/+0.73 across the whole walk. It
-  is systematically under-confident: it says 30% and the thing happens 87% of
-  the time, while the recent base rate is near-certain. The whole-walk number
-  is carried by a sparse deep past where near-zero calls were easy. `recent`
-  is reported beside the headline for exactly this reason, and recalibrating
-  the estimator against it is the next piece of work — not something to fit
-  in-sample on the same walk that measured it.
+  −0.19 over the last 20 years, against +0.75/+0.73 across the whole walk.
+- **And the reason is the QUESTION, not the estimator** (measured 2026-08-16,
+  `calibration.question_difficulty`, served in the walk). At the shipped
+  three-year horizon "does a focal dyad escalate again" has a base rate since
+  2005 of **0.92 (mena), 0.97 (china), 0.92 (eurasia)** — nearly vacuous, so
+  "yes, always" scores almost perfectly and nothing can beat it. Over the
+  whole walk the same question sits near 0.44, which is exactly why the
+  all-era skill looks strong: it is carried by a sparse past where the answer
+  varied. RECALIBRATION CANNOT FIX THIS: fitting a Platt map on pre-2010
+  cutoffs and testing after drives the fit to "predict 1" (a → 7.7e7) and the
+  Brier to 0.0, which is the base rate wearing a model's clothes. The lever is
+  a harder question — at ONE year the base rate falls to 0.84 / 0.87 / 0.71,
+  where there is variance to predict. Changing it changes what a frozen call
+  MEANS (`_DEFAULT_HORIZON_YEARS` is documented as the base-rate continuation
+  window), so it is measured and reported rather than switched silently. The
+  game layer already asks the harder version: `sharp_departure_probability` is
+  "above this pair's OWN usual band", not "any escalation at all".

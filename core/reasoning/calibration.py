@@ -437,6 +437,9 @@ def walk(
         "horizon_years": horizon_years,
         **overall,
         "recent": {"years": _RECENT_YEARS, **recent},
+        "question_difficulty": question_difficulty(
+            rows, region_pack=region_pack, since=recent_cut[:4],
+        ),
         "by_cutoff": [
             {k: v for k, v in row.items() if k != "pairs"} for row in scored
         ],
@@ -447,5 +450,85 @@ def walk(
             "scorer's own function; skill is against predicting the sample's "
             "base rate, so 0 is no better than the frequency and negative is "
             "worse"
+        ),
+    }
+
+
+# ── how hard the question actually is ───────────────────────────────────────
+
+
+def question_difficulty(
+    rows: list[dict[str, Any]],
+    *,
+    region_pack: str,
+    since: str,
+    horizons: tuple[int, ...] = (1, 2, 3),
+) -> dict[str, Any]:
+    """The base rate of the near-term question at each horizon, recent era.
+
+    THE FINDING THIS EXISTS TO KEEP VISIBLE (2026-08-16). The scoreboard said
+    the estimator has negative skill lately, which reads as "the model is bad".
+    The measurement underneath says something more useful: at the shipped
+    three-year horizon the question is nearly VACUOUS in the modern era — the
+    base rate of "does a focal dyad escalate again" is 0.92 (mena), 0.97
+    (china) and 0.92 (eurasia) since 2005, so predicting "yes, always" scores
+    almost perfectly and nothing can beat it by much. Over the whole walk the
+    same question sits near 0.44, which is why the all-era skill looks strong:
+    it is carried by a sparse past where the answer varied.
+
+    A question whose answer is always yes cannot be scored, and RECALIBRATION
+    CANNOT FIX IT — fitting a map on old cutoffs and testing on new ones drives
+    the fit to "predict 1" and the Brier to zero, which is the base rate
+    wearing a model's clothes. What fixes it is a harder question: at one year
+    the base rate falls to 0.84 / 0.87 / 0.71, where there is variance to
+    predict. That is a change to what the frozen call MEANS
+    (`_DEFAULT_HORIZON_YEARS` is documented as the base-rate continuation
+    window), so it is reported here rather than made silently.
+
+    The game layer already asks the harder version — `sharp_departure_
+    probability` is "above this pair's OWN usual band", not "any escalation at
+    all" — which is the shape the near-term mode would need.
+    """
+    from core.reasoning import forecasting
+
+    archive = forecasting.AsofArchive.build(rows)
+    episodes = episode_quarters(rows)
+    times = sorted({str(r["event_time"])[:10] for r in rows})
+    if not times:
+        return {}
+    out: list[dict[str, Any]] = []
+    for horizon in horizons:
+        outcomes: list[float] = []
+        last_year = int(times[-1][:4]) - horizon
+        for year in range(max(int(since), int(times[0][:4])), last_year + 1):
+            for month, day in ((3, 31), (6, 30), (9, 30), (12, 31)):
+                cutoff = f"{year}-{month:02d}-{day:02d}"
+                if cutoff > times[-1]:
+                    continue
+                try:
+                    payload = archive.forecast(
+                        "difficulty", region_pack=region_pack,
+                        horizon_years=horizon, cutoff=cutoff,
+                    )
+                except Exception:  # noqa: BLE001 - a thin cutoff is a skip
+                    continue
+                resolved = near_term_outcomes(
+                    payload.get("scenarios") or [], episodes,
+                    as_of=cutoff, horizon_quarters=horizon * 4,
+                )
+                outcomes.extend(1.0 if v else 0.0 for v in resolved.values())
+        if outcomes:
+            out.append({
+                "horizon_years": horizon,
+                "calls": len(outcomes),
+                "base_rate": round(sum(outcomes) / len(outcomes), 4),
+            })
+    return {
+        "since": since,
+        "by_horizon": out,
+        "note": (
+            "the base rate of the question itself: at a base rate near 1 the "
+            "question is nearly vacuous and no estimator can show skill "
+            "against it — a shorter horizon is the lever, not recalibration"
         ),
     }
