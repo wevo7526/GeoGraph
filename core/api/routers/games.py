@@ -38,6 +38,16 @@ router = APIRouter(tags=["games"])
 
 _CACHE = context_module.CACHE
 
+#: THE BASELINE EXPLORE IS A PAGE LOAD, not a slider move. The relationship
+#: page opens by calling /games/explore with NO overrides, and that call walks
+#: the path tree — 1,645 courses for a busy pair, measured at 4.6s. With no
+#: lever moved it is a deterministic function of the region context (itself
+#: process-cached), so the answer is kept: the page opens immediately and only
+#: an actual counterfactual pays the walk. Short-lived because the measured
+#: effects it prices against grow under the study job.
+_BASELINE_TTL_SECONDS = 300.0
+_BASELINE_CACHE: dict[tuple[str, str], tuple[float, dict[str, Any]]] = {}
+
 
 def _context(request: Request, region: str) -> dict[str, Any]:
     """The region context (kernel, joint actions, effects, model tilt), built
@@ -246,6 +256,20 @@ def explore(
     fit's own clips, so a caller cannot explore a region of the parameter
     space the estimator was never allowed to reach.
     """
+    import time
+
+    baseline_key = (region, dyad)
+    no_overrides = all(
+        value is None for value in (
+            discount, cost_resolute, cost_irresolute, stake, audience,
+            capability, belief_a, belief_b,
+        )
+    )
+    if no_overrides:
+        hit = _BASELINE_CACHE.get(baseline_key)
+        if hit is not None and time.monotonic() - hit[0] < _BASELINE_TTL_SECONDS:
+            return dict(hit[1])
+
     context = _context(request, region)
     if context["coverage"]["share_measured"] < 0.5:
         raise HTTPException(
@@ -332,7 +356,7 @@ def explore(
         result, context["effects"], as_of=context["as_of"], scale=scale or 1.0
     )
     escalate = state_module.ACTIONS.index("escalate")
-    return {
+    payload: dict[str, Any] = {
         "region": region,
         "dyad_id": dyad,
         "dyad_name": own[0]["dyad_name"],
@@ -391,3 +415,8 @@ def explore(
             )
         ),
     }
+    if baseline:
+        _BASELINE_CACHE[baseline_key] = (time.monotonic(), payload)
+        while len(_BASELINE_CACHE) > 32:
+            _BASELINE_CACHE.pop(next(iter(_BASELINE_CACHE)))
+    return dict(payload)
