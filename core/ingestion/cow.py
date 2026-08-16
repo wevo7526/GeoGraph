@@ -142,6 +142,16 @@ def load_state_system(conn: Any, csv_path: Path) -> LoadResult:
     PACK CURATION WINS ON NAMES: a pack that says "United States" is not
     overwritten with "United States of America" — this loader only teaches
     an existing actor its dates.
+
+    AND ONLY AN EXISTING ONE. It used to create an Actor for every state in
+    the COW system: 754 of them against a pack roster union of 75, so nine in
+    ten actors in the graph belonged to no region the platform models. That is
+    not free — they carried 21,614 RELATES_TO edges, 13,984 CINC estimates and
+    37,930 NetworkMetric rows between them, and they crowded the relations
+    endpoint and the explorer's cast with pairs nobody asked about
+    (Colombia-Venezuela was the first row of /api/relations). The packs define
+    the scope; this loader dates the actors that scope names, and drops the
+    rest with a count.
     """
     result = LoadResult()
     _merge_source(conn, "source:cow-states")
@@ -173,13 +183,16 @@ def load_state_system(conn: Any, csv_path: Path) -> LoadResult:
             continue
         node_id = f"actor:cow-{ccode}"
         prior = existing.get(node_id)
+        if prior is None:
+            result.drop("not named by any pack roster")
+            continue
         nodes.append({
             "node_id": node_id,
-            "name": prior["name"] if prior else rows[0]["statenme"],
-            "actor_type": prior["actor_type"] if prior else "state",
+            "name": prior["name"],
+            "actor_type": prior["actor_type"],
             "cow_ccode": ccode,
-            "iso3": (prior or {}).get("iso3") or "",
-            "region_pack": (prior or {}).get("region_pack") or "",
+            "iso3": prior.get("iso3") or "",
+            "region_pack": prior.get("region_pack") or "",
             "state_from": state_from,
             "state_to": state_to,
         })

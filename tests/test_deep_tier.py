@@ -28,10 +28,42 @@ seed_pack = _load("seed_pack")
 load_deep_tier = _load("load_deep_tier")
 
 
+#: The roster a pack would have seeded before the deep tier runs. THE DEEP
+#: TIER NO LONGER CREATES ACTORS — it dates and enriches the ones a pack
+#: names — so an empty graph is not the state these loaders meet in
+#: production, and testing against one measured the wrong contract. COW's
+#: state system carries 754 states against a pack roster union of 75, and
+#: every one it invented arrived with alliances, CINC estimates and network
+#: metrics attached.
+_ROSTER = [
+    {"node_id": "actor:cow-2", "name": "United States", "actor_type": "state",
+     "cow_ccode": 2, "iso3": "USA"},
+    {"node_id": "actor:cow-300", "name": "Austria-Hungary",
+     "actor_type": "state", "cow_ccode": 300, "iso3": "AUH"},
+    {"node_id": "actor:cow-366", "name": "Estonia", "actor_type": "state",
+     "cow_ccode": 366, "iso3": "EST"},
+    {"node_id": "actor:cow-220", "name": "France", "actor_type": "state",
+     "cow_ccode": 220, "iso3": "FRA"},
+    {"node_id": "actor:cow-255", "name": "Germany", "actor_type": "state",
+     "cow_ccode": 255, "iso3": "DEU"},
+    {"node_id": "actor:cow-365", "name": "Russia", "actor_type": "state",
+     "cow_ccode": 365, "iso3": "RUS"},
+    {"node_id": "actor:cow-40", "name": "Cuba", "actor_type": "state",
+     "cow_ccode": 40, "iso3": "CUB"},
+    {"node_id": "actor:cow-200", "name": "United Kingdom",
+     "actor_type": "state", "cow_ccode": 200, "iso3": "GBR"},
+    {"node_id": "actor:cow-710", "name": "China", "actor_type": "state",
+     "cow_ccode": 710, "iso3": "CHN"},
+    {"node_id": "actor:cow-630", "name": "Iran", "actor_type": "state",
+     "cow_ccode": 630, "iso3": "IRN"},
+]
+
+
 @pytest.fixture()
 def conn(tmp_path):
     connection = kuzu_store.connect(tmp_path / "deep.kuzu")
     kuzu_store.apply_schema(connection)
+    kuzu_store.merge_nodes(connection, "Actor", _ROSTER)
     yield connection
     kuzu_store.close(connection)
 
@@ -485,3 +517,48 @@ def test_gdelt_events_land_sourced_and_rescorable(conn):
     assert row["d"] in {"escalating", "stable", "deescalating"}
     assert row["b"] is not None
     assert kuzu_store.check_provenance(conn) == []
+
+
+def test_the_deep_tier_dates_pack_actors_and_invents_none(conn, tmp_path):
+    """THE SCOPE IS THE PACKS', and the deep tier used to ignore that.
+
+    `load_state_system` wrote an Actor for every state in the COW system —
+    754 of them against a pack roster union of 75 — so nine in ten actors in
+    the graph belonged to no region the platform models. They were not inert:
+    they arrived with alliances, CINC estimates and NetworkMetric rows, and
+    Colombia-Venezuela was the first row /api/relations served.
+
+    The loader's own docstring already said it "only teaches an existing actor
+    its dates". Now it does.
+    """
+    # An off-roster state appended to the fixture: Colombia is exactly the
+    # kind of actor that used to arrive unasked and bring alliances with it.
+    states = _write(
+        tmp_path, "states.csv",
+        _STATES + chr(10) + "COL,100,Colombia,1831,11,21,2016,12,31,2016",
+    )
+    before = {
+        str(r["node_id"])
+        for r in kuzu_store.query(conn, "MATCH (a:Actor) RETURN a.node_id AS node_id")
+    }
+    result = cow.load_state_system(conn, states)
+    after = {
+        str(r["node_id"])
+        for r in kuzu_store.query(conn, "MATCH (a:Actor) RETURN a.node_id AS node_id")
+    }
+
+    assert after == before, f"the deep tier invented actors: {after - before}"
+    assert result.written > 0, "it must still date the actors the packs named"
+    assert "actor:cow-100" not in after, "Colombia arrived unasked"
+    assert result.reasons.get("not named by any pack roster"), result.reasons
+
+    # And the dating actually happened — the point of the loader.
+    rows = kuzu_store.query(
+        conn,
+        "MATCH (a:Actor) WHERE a.node_id = 'actor:cow-2' "
+        "RETURN a.state_from AS f, a.name AS name",
+    )
+    assert rows[0]["f"], "the US should have learned its membership window"
+    assert rows[0]["name"] == "United States", (
+        "pack curation still wins on names — not 'United States of America'"
+    )

@@ -34,3 +34,6 @@ web/.vite/
 .DS_Store
 .idea/
 .vscode/
+
+# Claude Code project instructions stay local (2026-08-16)
+CLAUDE.md
