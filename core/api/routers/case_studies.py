@@ -56,7 +56,10 @@ def list_case_studies() -> dict[str, Any]:
     }
 
 
-def _episode(conn: Any, event_id: str, note: str = "") -> dict[str, Any]:
+def _episode(
+    conn: Any, event_id: str, note: str = "",
+    effects_by_event: dict[str, list[dict[str, Any]]] | None = None,
+) -> dict[str, Any]:
     """One episode in the case-study shape: the coded event, its dyad, every
     measured effect and (for the dynamic study) the impact read — measured
     beside expected, with the surprise."""
@@ -73,18 +76,27 @@ def _episode(conn: Any, event_id: str, note: str = "") -> dict[str, Any]:
     )
     if not event:
         return {"node_id": event_id, "missing": "not in the graph — has the pack been seeded?"}
-    effects = kuzu_store.query(
-        conn,
-        "MATCH (e:Event {node_id: $id})-[a:AFFECTED]->(m:Market) "
-        "RETURN m.ticker AS ticker, m.name AS market, "
-        "m.market_type AS market_type, a.window AS window, "
-        "a.resolution AS resolution, a.raw_return AS raw_return, "
-        "a.abnormal_return AS abnormal_return, a.t_stat AS t_stat, "
-        "a.p_value AS p_value, a.first_mover AS first_mover, "
-        "a.overlapping AS overlapping, a.method AS method "
-        "ORDER BY ticker, window",
-        {"id": event_id},
-    )
+    # ONE READ FOR THE WHOLE STUDY, not one per episode. A dyad study asks for
+    # eight episodes and every one of them used to run its own AFFECTED query
+    # (plus the base-rate read behind `event_impact`) — sixteen round trips
+    # against a graph a background job is writing to, measured at 20-36s for
+    # the page. The dyad's whole effect set already contains every episode's
+    # rows, so the caller reads it once and each episode filters.
+    if effects_by_event is not None:
+        effects = effects_by_event.get(event_id, [])
+    else:
+        effects = kuzu_store.query(
+            conn,
+            "MATCH (e:Event {node_id: $id})-[a:AFFECTED]->(m:Market) "
+            "RETURN m.ticker AS ticker, m.name AS market, "
+            "m.market_type AS market_type, a.window AS window, "
+            "a.resolution AS resolution, a.raw_return AS raw_return, "
+            "a.abnormal_return AS abnormal_return, a.t_stat AS t_stat, "
+            "a.p_value AS p_value, a.first_mover AS first_mover, "
+            "a.overlapping AS overlapping, a.method AS method "
+            "ORDER BY ticker, window",
+            {"id": event_id},
+        )
     from core.reasoning import impact as impact_module
 
     read = impact_module.event_impact(conn, event_id)
@@ -200,7 +212,30 @@ def dynamic_case_study(
                 -max((abs(float(m["car"])) for m in e["markets"]), default=0.0),
             ),
         )[:limit]
-        episodes = [_episode(conn, e["event_id"]) for e in ranked]
+        # The dyad's measured effects, once, keyed by event — see `_episode`.
+        from core.transmission import effects as effects_module
+
+        by_event: dict[str, list[dict[str, Any]]] = {}
+        for row in effects_module.effects_for_dyad(conn, dyad):
+            by_event.setdefault(str(row["event_id"]), []).append({
+                "ticker": row.get("ticker") or row.get("market_id"),
+                "market": row.get("market_name"),
+                "market_type": row.get("market_type"),
+                "window": row.get("window"),
+                "resolution": row.get("resolution"),
+                "raw_return": row.get("raw_return"),
+                "abnormal_return": row.get("abnormal_return"),
+                "t_stat": row.get("t_stat"),
+                "p_value": row.get("p_value"),
+                "first_mover": row.get("first_mover"),
+                "overlapping": row.get("overlapping"),
+                "method": row.get("method"),
+            })
+        for rows in by_event.values():
+            rows.sort(key=lambda r: (str(r["ticker"]), str(r["window"])))
+        episodes = [
+            _episode(conn, e["event_id"], effects_by_event=by_event) for e in ranked
+        ]
         episodes.sort(key=lambda e: str(e.get("event_time", "")))
         dyad_name = dyad
         for e in episodes:

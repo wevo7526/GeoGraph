@@ -133,10 +133,17 @@ def effects_for_dyad(conn: kuzu.Connection, dyad_id: str) -> list[dict[str, Any]
         "e.fidelity_tier AS fidelity_tier, e.region_pack AS region_pack, "
         "x.node_id AS initiator_id, y.node_id AS target_id, "
         "m.node_id AS market_id, m.name AS market_name, "
-        "a.abnormal_return AS abnormal_return, a.window AS window, "
-        "a.first_mover AS first_mover, a.p_value AS p_value, "
+        "m.ticker AS ticker, m.market_type AS market_type, "
+        "a.abnormal_return AS abnormal_return, a.raw_return AS raw_return, "
+        "a.window AS window, a.first_mover AS first_mover, "
+        "a.overlapping AS overlapping, a.method AS method, "
+        "a.p_value AS p_value, "
         "a.t_stat AS t_stat, a.resolution AS resolution"
     )
+    # The ticker, the raw return, the overlap flag and the method line ride
+    # along so ONE read serves every consumer of a dyad's effects — the
+    # timeline, the base rate, and the case study's per-episode table, which
+    # used to run its own query per episode.
     rows = kuzu_store.query(conn, pattern, {"initiator": actor_a, "target": actor_b})
     if actor_a != actor_b:
         rows.extend(
