@@ -14,8 +14,10 @@ from typing import Any
 
 from core.games import pricing as pricing_module
 from core.games import solve as solve_module
+from core.games import state as state_module
 from core.games import transition as transition_module
 from core.graph import kuzu_store
+from core.models import dynamics as dynamics_module
 from core.models import panel as panel_module
 from core.wire import serving
 
@@ -79,6 +81,7 @@ def build(conn: Any, region: str) -> dict[str, Any]:
         "region": region,
         "table": table,
         "kernel": kernel,
+        "dynamics": load_dynamics(region),
         "joint": joint,
         "coverage": transition_module.coverage(observed),
         # Measured market effects live in the graph alone. An open graph adds
@@ -95,6 +98,104 @@ def build(conn: Any, region: str) -> dict[str, Any]:
     }
     CACHE[region] = context
     return context
+
+
+def load_dynamics(region: str) -> dict[str, Any] | None:
+    """The region's transition model, or None if it does not ship or failed.
+
+    A model whose gate did not pass is NOT loaded — the artifact records the
+    failure so the run is auditable, and the game falls back to the counted
+    kernel it has always had. That is the same rule the intensity model
+    follows, for the same reason: an unchecked model and a checked-and-failed
+    one must not be indistinguishable at inference.
+    """
+    from core.models import registry
+
+    target = registry.MODELS_DIR / f"dynamics-{region}.json"
+    if not target.exists():
+        return None
+    with open(target, encoding="utf-8") as fh:
+        artifact = json.load(fh)
+    registry.verify_hash(artifact, what=target.name)
+    if not artifact.get("gate_passed"):
+        return None
+    identity = f"{artifact['name']}@{artifact['hash']}"
+    return {
+        "model": dynamics_module.Dynamics.from_payload(
+            artifact["model"], artifact=identity
+        ),
+        "identity": identity,
+        "summary": artifact.get("gate_summary", ""),
+    }
+
+
+def dyad_features(context: dict[str, Any], dyad_id: str) -> dict[str, Any] | None:
+    """This pair's own measured record, as of the table's last quarter.
+
+    The same four facts `scripts/train_dynamics.py` fitted on, computed the
+    same way — through `dynamics.row_features`, so the training window and the
+    inference window cannot drift apart.
+    """
+    own = sorted(
+        (r for r in context["table"] if r["dyad_id"] == dyad_id),
+        key=lambda r: r["q"],
+    )
+    if not own:
+        return None
+    scale = state_module.dyad_scale([float(r["intensity"]) for r in own])
+    band = state_module.intensity_band(float(own[-1]["intensity"]), scale)
+    window = own[-dynamics_module.WINDOW_QUARTERS:]
+    return {
+        "band": band,
+        "scale": scale,
+        "features": dynamics_module.row_features(window, band, scale),
+    }
+
+
+def kernel_for(context: dict[str, Any], dyad_id: str) -> tuple[Any, dict[str, Any] | None]:
+    """(kernel, audit) — THIS PAIR's transition kernel.
+
+    The counted kernel is one table for a whole region: US-Japan and North
+    Korea-South Korea were solved over the same transitions, and at band 2 it
+    returned an expected next band of 0.60 for every pair on the board. The
+    dynamics model conditions that table on the pair's own record, so the
+    solver receives a kernel that knows which pair it is for.
+
+    Falls back to the ML->game BRIDGE (one bounded scalar per dyad, from the
+    frozen intensity model's trajectory) where no dynamics artifact ships. The
+    two never compound: the bridge's tilt was measured saturating at its bound
+    for 5 of 12 china dyads, so where the dynamics model is available it is
+    the instrument, and the audit line says which one ran.
+    """
+    from core.games import bridge as bridge_module
+
+    loaded = context.get("dynamics")
+    if loaded is not None:
+        facts = dyad_features(context, dyad_id)
+        if facts is not None:
+            model = loaded["model"]
+            kernel = model.kernel_for(context["kernel"], facts["features"])
+            return kernel, {
+                "model": loaded["identity"],
+                "features": {k: round(float(v), 4)
+                             for k, v in facts["features"].items()},
+                "max_tilt": dynamics_module.MAX_TILT,
+                "gate": loaded["summary"],
+                "method": (
+                    "P(next) = softmax(log P_counted(next | band, a, b) + x.W): "
+                    "the counted kernel enters as an OFFSET, so W = 0 is the "
+                    "counted kernel exactly and the residual can only add what "
+                    "counting does not know. x is this pair's own measured "
+                    "record over four quarters; declared standing, capability "
+                    "ratio and network centrality were measured and excluded "
+                    "(they move within-dyad ordering by nothing or down)."
+                ),
+            }
+    eta = bridge_module.eta_from_trajectory(
+        context.get("model_trajectories", {}).get(dyad_id, [])
+    )
+    return (bridge_module.tilted_kernel(context["kernel"], eta),
+            bridge_module.audit(eta, context.get("model_identity")))
 
 
 def fitted_payoffs(region: str) -> dict[str, float]:

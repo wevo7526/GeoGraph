@@ -1,0 +1,179 @@
+"""The transition model: what it claims, and the two ways it must not lie.
+
+The complaint that produced this model was concrete — the solved games "among
+allies don't make sense at all, like the US with AUS, JPN" — and it was
+correct for a measurable reason: `transition.kernel` counts one table for a
+whole region, so every pair sitting in the same band got the same dynamics.
+At band 2 the counted kernel returned an expected next band of 0.60 for every
+pair on the board.
+
+So the tests here are about the two properties that make the fix trustworthy
+rather than merely different: the model cannot throw away the counted
+evidence, and it must actually distinguish pairs.
+"""
+
+from __future__ import annotations
+
+import json
+
+import numpy as np
+import pytest
+
+from core.games import state as state_module
+from core.games import transition
+from core.models import dynamics, registry
+
+BANDS = len(state_module.INTENSITY_EDGES)
+ACTIONS = len(state_module.ACTIONS)
+
+
+def _counted() -> np.ndarray:
+    """A kernel with structure, so a tilt has something to move."""
+    rng = np.random.default_rng(11)
+    counts = {}
+    for band in range(BANDS):
+        for a in range(ACTIONS):
+            for b in range(ACTIONS):
+                row = rng.integers(1, 40, size=BANDS).astype(float)
+                row[min(BANDS - 1, band + (1 if a == 0 else 0))] += 60
+                counts[(band, a, b)] = row
+    kernel, _observed = transition.kernel(counts)
+    return kernel
+
+
+def _features(volume: float, coercive: float, volatility: float, band: int):
+    return {
+        "volume": volume, "coercive": coercive, "volatility": volatility,
+        "coercive_x_band": coercive * band,
+        "volume_x_coercive": volume * coercive,
+    }
+
+
+def test_zero_weights_reproduce_the_counted_kernel_exactly():
+    """THE OFFSET IS THE POINT. The counted kernel enters as log-probabilities
+    the residual adds to, not as a baseline to beat, so W = 0 must return the
+    counts unchanged — that is what makes "the model cannot be worse than
+    counting" a structural fact rather than a hope.
+
+    An additive residual WITHOUT the offset was tried first and lost to the
+    plain counts, because the counted table encodes a band x action x action
+    interaction a linear model in those variables cannot represent.
+    """
+    counted = _counted()
+    names = dynamics.feature_names()
+    model = dynamics.Dynamics(
+        weights=np.zeros((len(names), BANDS)),
+        mean=np.zeros(len(names)), scale=np.ones(len(names)),
+        names=names, region="test",
+    )
+    tilted = model.kernel_for(counted, _features(5.0, 0.3, 0.2, 1))
+    assert np.allclose(tilted, counted, atol=1e-9)
+
+
+def test_the_kernel_now_depends_on_which_pair_it_is_for():
+    """The whole complaint. Two pairs in the same band, with different records,
+    must not be handed the same dynamics."""
+    counted = _counted()
+    names = dynamics.feature_names()
+    weights = np.zeros((len(names), BANDS))
+    weights[names.index("coercive"), -1] = 1.5   # coercion pushes mass up
+    weights[names.index("coercive"), 0] = -1.5
+    model = dynamics.Dynamics(
+        weights=weights, mean=np.zeros(len(names)), scale=np.ones(len(names)),
+        names=names, region="test",
+    )
+    quiet = model.kernel_for(counted, _features(5.0, 0.05, 0.2, 1))
+    coercive = model.kernel_for(counted, _features(5.0, 0.60, 0.2, 1))
+
+    expected = np.arange(BANDS)
+    assert not np.allclose(quiet, coercive), "the pairs got the same kernel"
+    assert float(coercive[1, 0, 0] @ expected) > float(quiet[1, 0, 0] @ expected)
+    for kernel in (quiet, coercive):
+        assert np.allclose(kernel.sum(axis=-1), 1.0), "rows must stay distributions"
+
+
+def test_the_tilt_is_bounded_so_a_residual_cannot_erase_the_counts():
+    """The cells the counted kernel is least sure of are exactly the ones an
+    unclipped softmax will send to a corner."""
+    counted = _counted()
+    names = dynamics.feature_names()
+    weights = np.zeros((len(names), BANDS))
+    weights[names.index("volume"), -1] = 500.0
+    model = dynamics.Dynamics(
+        weights=weights, mean=np.zeros(len(names)), scale=np.ones(len(names)),
+        names=names, region="test",
+    )
+    tilt = model.tilt(_features(9.0, 0.3, 0.2, 1), band=1)
+    assert tilt.max() <= dynamics.MAX_TILT + 1e-9
+    assert tilt.min() >= -dynamics.MAX_TILT - 1e-9
+    kernel = model.kernel_for(counted, _features(9.0, 0.3, 0.2, 1))
+    assert np.isfinite(kernel).all()
+    assert np.allclose(kernel.sum(axis=-1), 1.0)
+
+
+def test_the_gate_demands_within_dyad_ordering_not_just_pooled_loss():
+    """docs/ml-spec.md's lesson, applied to this model.
+
+    Pooled log-loss is the easy half — the graph features improved it too,
+    while making within-dyad ordering WORSE (china +0.1740 -> +0.1591). A
+    model whose purpose is to give each pair its own dynamics has to order
+    that pair's own quarters better, so the gate asks for both.
+    """
+    better = [{"log_loss": 1.25, "log_loss_counted": 1.38,
+               "rho": 0.12, "rho_counted": 0.09}]
+    passed, summary = dynamics.passes_gate(better)
+    assert passed, summary
+
+    pooled_only = [{"log_loss": 1.25, "log_loss_counted": 1.38,
+                    "rho": 0.07, "rho_counted": 0.09}]
+    passed, summary = dynamics.passes_gate(pooled_only)
+    assert not passed and "ordering" in summary
+
+    no_loss_gain = [{"log_loss": 1.40, "log_loss_counted": 1.38,
+                     "rho": 0.12, "rho_counted": 0.09}]
+    passed, summary = dynamics.passes_gate(no_loss_gain)
+    assert not passed and "log-loss" in summary
+
+
+@pytest.mark.parametrize("region", ["mena", "china", "eurasia"])
+def test_every_shipped_artifact_passed_its_gate_and_matches_its_hash(region):
+    """A committed artifact is a claim; this is the claim being checked.
+
+    An artifact whose gate FAILED is still written (the failure is the record)
+    but must never be loaded — `context.load_dynamics` refuses it, and the
+    game falls back to the counted kernel it has always had.
+    """
+    path = registry.MODELS_DIR / f"dynamics-{region}.json"
+    if not path.exists():
+        pytest.skip(f"{path.name} does not ship")
+    artifact = json.loads(path.read_text(encoding="utf-8"))
+    registry.verify_hash(artifact, what=path.name)
+    assert artifact["gate_passed"], artifact["gate_summary"]
+    assert artifact["model"]["names"] == list(dynamics.feature_names()), (
+        "the artifact was fitted with a different feature order than the code "
+        "would use at inference — retrain rather than reinterpreting weights"
+    )
+    for fold in artifact["folds"]:
+        assert fold["log_loss"] < fold["log_loss_counted"]
+
+
+def test_the_excluded_graph_features_are_recorded_with_the_reason():
+    """A negative result is worth as much as the model, and only if it is
+    written down: the next reader will otherwise re-add centrality."""
+    path = registry.MODELS_DIR / "dynamics-mena.json"
+    if not path.exists():
+        pytest.skip("no artifact")
+    artifact = json.loads(path.read_text(encoding="utf-8"))
+    excluded = artifact["excluded"]
+    assert "ally" in excluded["declared"] and "rival" in excluded["declared"]
+    assert "betweenness" in excluded["structural"]
+    assert "within-dyad" in excluded["why"]
+
+
+def test_a_pack_with_no_artifact_still_solves():
+    """The model is an improvement, not a dependency. A region without one
+    gets the counted kernel — the same rule that keeps the two counted
+    forecast modes independent of the learned one."""
+    from core.games import context as context_module
+
+    assert context_module.load_dynamics("no-such-region") is None

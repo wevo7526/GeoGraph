@@ -87,6 +87,9 @@ function RegionGames({ region, onPick }: { region: string; onPick: (dyad: string
   const bands = map.band_labels
   const ranking = map.ranking
   const lead = ranking[0]
+  // The bar's scale: the region's own leader, so the lengths are comparable
+  // within a region and never pretend to be comparable across them.
+  const topCoercive = Math.max(1, ...ranking.map((r) => r.coercive_events ?? 0))
 
   return (
     <div className="reading-column py-8">
@@ -111,13 +114,15 @@ function RegionGames({ region, onPick }: { region: string; onPick: (dyad: string
         ]} />
       </div>
 
-      <Beat n={1} title="Where sharper-than-usual friction is likeliest" major aside={`P(departure above the pair's own usual band after 4 quarters), ${map.primary_solver.toUpperCase()}`}>
+      <Beat n={1} title="Where coercion is being measured" major aside="coercive events in the last four quarters, and the game's own departure odds beside them">
         {lead && (
           <p className="text-sm mb-4" style={{ maxWidth: '64ch' }}>
-            <b>{lead.dyad_name}</b>{standingLabel(lead.standing) ? ` — ${standingLabel(lead.standing)}` : ''} — carries the most: {pct(lead.sharp_departure_probability, 0)}
-            {lead.sharp_departure_probability_lp != null ? ` (LP benchmark ${pct(lead.sharp_departure_probability_lp, 0)})` : ''}, opening at a {lead.opening_label}
+            <b>{lead.dyad_name}</b>{standingLabel(lead.standing) ? ` — ${standingLabel(lead.standing)}` : ''} — carries the most: {(lead.coercive_events ?? 0).toLocaleString('en-US')} coercive events
+            {lead.coercive_share != null ? `, ${pct(lead.coercive_share, 0)} of its record` : ''}, opening at a {lead.opening_label}
             {lead.top_scenario ? `; the likeliest kind of course is ${kind(lead.top_scenario.kind)} at ${pct(lead.top_scenario.likelihood, 0)} of its walk` : ''}.
-            Bands are departures from each pair's own baseline, not absolute hostility — the tone chip is the absolute read. Click a pair to open its solved game.
+            {' '}The <b>bar</b> is that measured count. The <b>percentage</b> beside it is a different
+            question — the odds this pair departs from its <em>own</em> usual band — which is why a quiet
+            ally can score high on it and a settled rivalry low. Click a pair to open its solved game.
           </p>
         )}
         <div className="space-y-1">
@@ -131,10 +136,15 @@ function RegionGames({ region, onPick }: { region: string; onPick: (dyad: string
                 <Chip label={standingChip(r.standing) ?? r.posture?.label ?? 'unaligned'}
                       tone={r.standing?.relations?.length ? 'ink' : 'muted'} />
               </span>
+              {/* THE BAR IS THE MEASURED COUNT, scaled against the region's
+                  own leader — the ordering and the length now agree. It used
+                  to draw the departure probability, which is relative to each
+                  pair's baseline and so put three alliances above US-China. */}
               <span className="relative flex-1 h-3 min-w-[3rem]" style={{ background: 'var(--panel)' }}>
-                <span className="absolute top-0 bottom-0 left-0" style={{ width: `${Math.max(0, Math.min(1, r.sharp_departure_probability)) * 100}%`, background: r.sharp_departure_probability >= 0.5 ? 'var(--alert)' : 'var(--accent)' }} />
+                <span className="absolute top-0 bottom-0 left-0" style={{ width: `${Math.max(0, Math.min(1, (r.coercive_events ?? 0) / Math.max(1, topCoercive))) * 100}%`, background: (r.coercive_events ?? 0) >= topCoercive / 2 ? 'var(--alert)' : 'var(--accent)' }} />
               </span>
-              <span className="mono w-12 text-right shrink-0">{pct(r.sharp_departure_probability, 0)}</span>
+              <span className="mono w-14 text-right shrink-0" title="coercive events measured in the last four quarters">{(r.coercive_events ?? 0).toLocaleString('en-US')}</span>
+              <span className="mono w-12 text-right shrink-0" title="P(this pair departs from its OWN usual band after 4 quarters)" style={{ color: 'var(--muted)' }}>{pct(r.sharp_departure_probability, 0)}</span>
               <span className="mono w-36 shrink-0 text-right truncate"
                     title={`${r.opening_label}${r.tilted ? ' · tilted by the model' : ''}`}
                     style={{ color: 'var(--muted)' }}>{r.opening_label}{r.tilted ? ' ·⌁' : ''}</span>

@@ -24,7 +24,6 @@ from typing import Any
 
 from fastapi import APIRouter, HTTPException, Query, Request
 
-from core.games import bridge as bridge_module
 from core.games import context as context_module
 from core.games import duration as duration_module
 from core.games import opening as opening_module
@@ -340,12 +339,9 @@ def explore(
     latest = max(own, key=lambda r: r["q"])
     band = state_module.intensity_band(float(latest["intensity"]), scale)
 
-    # The ML→game bridge: a gated frozen trajectory tilts this dyad's kernel.
-    eta = bridge_module.eta_from_trajectory(
-        context["model_trajectories"].get(dyad, [])
-    )
-    kernel = bridge_module.tilted_kernel(context["kernel"], eta)
-    tilt = bridge_module.audit(eta, context["model_identity"])
+    # THIS PAIR's kernel — the dynamics model over the counted table, or the
+    # frozen-trajectory bridge where no dynamics artifact ships.
+    kernel, tilt = context_module.kernel_for(context, dyad)
 
     equilibrium = solve_module.solve(kernel, payoffs, horizon=4)
     result = paths_module.enumerate_paths(

@@ -27,7 +27,7 @@ from typing import Any
 
 import numpy as np
 
-from core.games import bridge as bridge_module
+from core.games import context as context_module
 from core.games import opening as opening_module
 from core.games import paths as paths_module
 from core.games import pricing as pricing_module
@@ -53,7 +53,7 @@ REGION_DYADS = 12
 #: play named at 100%, because those rows also predate the belief ceiling that
 #: stopped a filtered belief reaching certainty. A persisted computation
 #: outlives the code that wrote it; the version is what makes that safe.
-PAYLOAD_VERSION = "2026-08-15.6"
+PAYLOAD_VERSION = "2026-08-16.1"
 
 #: A step's market row needs this many measurements before the scenario
 #: names it as an implication (the pricing module's own thinness bar).
@@ -394,9 +394,7 @@ def solve_dyad(
     beliefs = opening_module.filtered_beliefs(context["joint"], dyad_id, payoffs)
     cap = int(capability["band"])
 
-    eta = bridge_module.eta_from_trajectory(context["model_trajectories"].get(dyad_id, []))
-    kernel = bridge_module.tilted_kernel(context["kernel"], eta)
-    tilt = bridge_module.audit(eta, context["model_identity"])
+    kernel, tilt = context_module.kernel_for(context, dyad_id)
 
     concepts: dict[str, Any] = {}
     for solver in solvers:
@@ -757,6 +755,11 @@ def region_map(
                 if top else None
             ),
             "nash_gap_mean": (c.get("nash_gap") or {}).get("mean"),
+            # The absolute measure the ranking is sorted by, hoisted so the
+            # surface can name the number it ordered on rather than implying
+            # the departure probability did the ordering.
+            "coercive_events": (s["opening"].get("posture") or {}).get("coercive"),
+            "coercive_share": (s["opening"].get("posture") or {}).get("share"),
             "tilted": s["opening"]["tilt"] is not None,
             "capability_source": s["opening"]["capability"].get("source"),
             "beliefs_source": s["opening"]["beliefs"].get("source"),
@@ -773,7 +776,32 @@ def region_map(
                 "posture": s["opening"].get("posture"),
                 "standing": s["opening"].get("standing"),
             })
-    ranking.sort(key=lambda r: (-(r["sharp_departure_probability"] or 0), r["dyad_id"]))
+    # RANKED BY AN ABSOLUTE MEASURE, not by the game's own departure
+    # probability — the fix for the finding that opened this audit.
+    #
+    # `sharp_departure_probability` is P(this pair leaves the band it opened
+    # in), and the band is a departure from the PAIR'S OWN baseline. So a
+    # quiet ally at the top of its own range outranks a war, which is exactly
+    # what the surface showed: Russia–China, US–South Korea and US–Philippines
+    # (all alliances) above US–China, which came last of twelve. Over 36
+    # solved dyads the metric separated allies from rivalries by 0.0006.
+    #
+    # The ordering question is absolute — "which pairs carry coercion right
+    # now" — so it is answered by a measured count, not by a relative
+    # probability and not by a fitted model. Both were tried against it:
+    # ranking these pairs by P(next quarter carries material coercion) fitted
+    # on volume, coercive share, level and volatility scored AUC 0.8617 in
+    # mena and 0.7587 in china against the plain count's 0.8722 and 0.7730.
+    # The count won, so the count ships: nothing to train, nothing to drift,
+    # and a number a reader can check against the events themselves.
+    #
+    # The departure probability stays in the payload beside it. The two answer
+    # different questions and the surface says which is which.
+    ranking.sort(key=lambda r: (
+        -((r.get("posture") or {}).get("coercive") or 0),
+        -(r["sharp_departure_probability"] or 0),
+        r["dyad_id"],
+    ))
     escalatory = sorted(
         (sc for sc in all_scenarios if sc["delta_band"] > 0 or sc["kind"] in
          ("mutual_escalation", "one_sided_pressure", "brinkmanship")),
@@ -858,16 +886,22 @@ def explain_region(aggregate: dict[str, Any]) -> list[str]:
         f"{aggregate['dyads_solved']} pairs solved under the {aggregate['primary_solver'].upper()} "
         f"and the fitted QRE at their own opening states ({aggregate['dyads_cinc']} with "
         "CINC-measured "
-        f"capability, {aggregate['dyads_tilted']} tilted by the frozen model). "
-        f"{len(hot)} of them carry at least even odds of a sharper-than-usual departure "
-        f"from their own baseline after {aggregate['horizon']} quarters — friction relative "
-        f"to each pair's own history, read beside its tone; the pair carrying the most is "
-        f"{lead['dyad_name']} ({_pct(lead['sharp_departure_probability'] or 0)}, "
+        f"capability, {aggregate['dyads_tilted']} on a model-conditioned kernel). "
+        # THE ORDERING IS ABSOLUTE and the sentence says so, because the
+        # departure probability beside it is not: it is relative to each
+        # pair's own baseline, which is why it once put three alliances above
+        # a declared rivalry.
+        f"Ranked by coercive events measured in the last four quarters, the pair carrying "
+        f"the most is {lead['dyad_name']} "
+        f"({lead.get('coercive_events') or 0} coercive events, "
         f"{describe_standing(lead)}, {describe_posture(lead)}, opening at a "
         f"{lead['opening_label']}"
         + (f", most likely course {lead['top_scenario']['kind'].replace('_', ' ')} at "
            f"{_pct(lead['top_scenario']['likelihood'])}" if lead.get("top_scenario") else "")
-        + ")."
+        + f"). Separately, {len(hot)} pairs carry at least even odds of a "
+        f"sharper-than-usual departure from their OWN baseline after "
+        f"{aggregate['horizon']} quarters — a different question, and the reason "
+        "a quiet ally can score high on it."
     )
     esc = aggregate["scenarios_escalatory"][:3]
     if esc:

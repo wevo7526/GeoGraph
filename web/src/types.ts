@@ -947,9 +947,13 @@ export interface RegionRanking {
   standing?: Standing | null
   posture?: Posture | null
   escalation_probability: number
+  /** P(this pair leaves its OWN usual band) — relative, not absolute. */
   sharp_departure_probability: number
   sharp_departure_probability_lp?: number | null
   escalation_probability_qre: number | null
+  /** The measured, cross-pair comparable quantity the ranking sorts by. */
+  coercive_events?: number | null
+  coercive_share?: number | null
   expected_end_band: number | null
   top_scenario: {
     scenario_name: string

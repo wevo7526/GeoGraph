@@ -355,8 +355,9 @@ def test_the_loop_pauses_rather_than_letting_the_container_be_killed(monkeypatch
 
     monkeypatch.setattr(kuzu_store, "container_memory_bytes", lambda: 8 << 30)
     monkeypatch.setattr(kuzu_store, "memory_in_use_bytes", lambda: 4 << 30)
-    assert scheduler._headroom() == 0.5
-    assert scheduler._headroom() > jobs_module.MEMORY_RECLAIM_BELOW
+    relaxed = scheduler._headroom()
+    assert relaxed == 0.5
+    assert relaxed > jobs_module.MEMORY_RECLAIM_BELOW
 
     monkeypatch.setattr(kuzu_store, "memory_in_use_bytes", lambda: int(7.5 * 2**30))
     headroom = scheduler._headroom()
