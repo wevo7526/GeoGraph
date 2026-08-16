@@ -26,11 +26,13 @@ reason to escalate. The model earns its keep on exactly that circularity.
 from __future__ import annotations
 
 import functools
+import math
 from dataclasses import dataclass
 from typing import Any
 
 import numpy as np
 
+from core.games import family as family_module
 from core.games import state as state_module
 
 #: Quantal-response precision. Higher is closer to exact best response; at 0
@@ -75,7 +77,33 @@ class Payoffs:
         return self.cost_resolute if type_index == 1 else self.cost_irresolute
 
 
-def stage_payoff(
+#: The ally game's starting parameters — used where no fitted ally artifact
+#: ships, and as the fit's starting point. Read against `ally_stage_payoff`:
+#: the shared good's marginal value to one partner is stake/2 (times the
+#: capability scale), so a committed partner CARRIES only if its private cost
+#: sits under that, and a reluctant one rides unless the abandonment cost of
+#: withholding under strain outweighs the saving. Under Fearon's defaults
+#: (cost_resolute 0.4 against a marginal value of ~0.33) even the committed
+#: type would ride, and the default alliance would be a rift — which is a
+#: statement about a default, not about alliances.
+ALLY_DEFAULTS = Payoffs(
+    discount=0.9, cost_resolute=0.15, cost_irresolute=0.9, stake=1.0, audience=0.5,
+)
+
+
+def defaults_for(space: family_module.ActionSpace) -> Payoffs:
+    """The payoffs a family's game starts from when nothing is fitted."""
+    return ALLY_DEFAULTS if space.family == "ally" else Payoffs()
+
+
+#: An ally's CONTRIBUTION to the shared good, by action index — commit
+#: carries it, affirm keeps it going, withhold does not carry it. The
+#: contribution scale is what `Payoffs.stake` (the value of the shared good)
+#: and the type costs (the private cost of carrying it) are measured against.
+_CONTRIBUTION: tuple[float, float, float] = (1.0, 0.5, 0.0)
+
+
+def ally_stage_payoff(
     action: int,
     other: int,
     intensity: int,
@@ -83,7 +111,88 @@ def stage_payoff(
     type_index: int,
     payoffs: Payoffs,
 ) -> float:
-    """One period's payoff to a side, given both actions and the state.
+    """One period's payoff to an ALLY, given both partners' actions and the
+    state — Olson & Zeckhauser (1966), alliance burden-sharing.
+
+    THE SAME FIVE PARAMETERS, RE-READ. A family earns a payoff here only if
+    `scripts/fit_game.py` can fit it by the same indirect inference, so the
+    ally game is written over the same `Payoffs` the adversary game uses, each
+    field with an ally meaning:
+
+      - `stake`            the value of the shared good (the alliance's
+                           security), enjoyed by BOTH partners whoever carries
+                           it — that is what makes it a public good;
+      - `cost_resolute`    the private cost of carrying it for a COMMITTED
+                           partner (the type that will bear it), and
+      - `cost_irresolute`  for a RELUCTANT one — the ordering constraint the
+                           fit already enforces;
+      - `audience`         the cost of WITHHOLDING when the alliance is already
+                           strained (intensity in its upper half): a partner
+                           seen to abandon at the moment of strain pays a
+                           reputational cost, the alliance-management analogue
+                           of Fearon's audience cost;
+      - `discount`         patience.
+
+    Three terms:
+      - the shared good, `stake × sqrt((own + other contribution) / 2)`,
+        scaled by the pair's capability band exactly as Fearon's share is (the
+        larger the pair's stake in the system, the more the good is worth) —
+        public, so a partner enjoys the other's contribution at no cost, which
+        is the free-riding incentive the model exists to state. CONCAVE, as in
+        Olson-Zeckhauser: the first unit of the shared good is worth the most,
+        so contributing SOMETHING is optimal for both types and the question is
+        how much — which is what makes "affirm" (the routine assurance an
+        alliance runs on) the resting action rather than a point the corners
+        skip. A linear good made every partner a corner solution and the fit
+        (2026-08-16) put 44% of baseline quarters on withhold against 4%
+        observed;
+      - the private cost, `cost_of(type) × own contribution` — a committed
+        partner's is low, so it carries; a reluctant one's is high, so it
+        stops at assurance or rides;
+      - the abandonment cost for withholding under strain.
+
+    So the game's own logic reproduces Olson-Zeckhauser: the committed partner
+    over-provides, the reluctant one free-rides, and the bad end — a RIFT — is
+    both withholding when friction is already high, not war between them.
+
+    WHAT THE FIT SAYS ABOUT IT (2026-08-16, pooled over 31,770 in-window ally
+    dyad-quarters, `models/game-ally-*.json`): converged, stake interior
+    (0.49), costs 0.30 / 0.62, abandonment 0.61, discount at its ceiling. It
+    reproduces the commit share and the high-friction mix and OVERSTATES
+    withholding at baseline (0.42 simulated against 0.04 observed at band 0),
+    because nothing in this payoff rewards routine assurance when the alliance
+    is calm — the assurance good, the value of simply keeping the alliance
+    warm, is the term the model lacks. It is written down here rather than
+    invented as a sixth parameter the fit could not identify; the artifact
+    carries the observed and simulated mixes so the gap is a number, not a
+    remark.
+    """
+    bands = len(state_module.INTENSITY_EDGES)
+    strength = (capability + 1) / len(state_module.CAPABILITY_EDGES)
+    own = _CONTRIBUTION[action]
+    theirs = _CONTRIBUTION[other]
+    good = payoffs.stake * math.sqrt((own + theirs) / 2.0) * strength
+    borne = payoffs.cost_of(type_index) * own
+    # THE FRICTION LEVEL BITES ON WITHHOLDING, not on carrying: at high
+    # friction the reluctant partner's temptation to withhold is exactly what
+    # the abandonment cost has to answer, and carrying at high friction is the
+    # repair the alliance runs on.
+    abandonment = payoffs.audience if (action == 2 and intensity >= bands // 2) else 0.0
+    return float(good - borne - abandonment)
+
+
+def stage_payoff(
+    action: int,
+    other: int,
+    intensity: int,
+    capability: int,
+    type_index: int,
+    payoffs: Payoffs,
+    space: family_module.ActionSpace = family_module.ADVERSARY,
+) -> float:
+    """One period's payoff to a side, given both actions and the state — in
+    the FAMILY'S game. The adversary and rival spaces play Fearon's crisis
+    bargaining below; the ally space plays `ally_stage_payoff`.
 
     Three terms, each tied to something the archive holds:
       - the share of the stake won, rising with capability and with pressing
@@ -94,6 +203,8 @@ def stage_payoff(
       - an audience cost for de-escalating from an escalated position, which
         is why rivalries get stuck (alliance structure via RELATES_TO).
     """
+    if space.family == "ally":
+        return ally_stage_payoff(action, other, intensity, capability, type_index, payoffs)
     bands = len(state_module.INTENSITY_EDGES)
     strength = (capability + 1) / len(state_module.CAPABILITY_EDGES)
     # Pressing harder is measured on the GOLDSTEIN scale, not by ordinal
@@ -144,18 +255,29 @@ def solve_stage(
     return mix_a, mix_b
 
 
-def posterior(prior: float, action: int, payoffs: Payoffs) -> float:
-    """P(resolute | action), by Bayes.
+def posterior(
+    prior: float, action: int, payoffs: Payoffs,
+    space: family_module.ActionSpace = family_module.ADVERSARY,
+) -> float:
+    """P(type 1 | action), by Bayes — resolute for an adversary, committed for
+    an ally.
 
     The likelihoods are ordered rather than free: a resolute type escalates
     more readily because escalation costs it less, so escalation is evidence
     of resolve and backing down is evidence against. Fixing the ORDER while
     leaving the strength to the payoffs is what keeps this from being a second
     set of parameters quietly doing the work.
+
+    THE SIGNAL IS THE FAMILY'S. For an ally the type-1 partner is the
+    COMMITTED one and its cheap action is COMMIT (index 0), so the order
+    mirrors: `space.signal` names the index that is evidence of type 1, and
+    the action is reflected onto the adversary's ordering before the
+    likelihoods are read.
     """
+    signal = action if space.signal == 2 else 2 - action
     ratio = payoffs.cost_irresolute / max(payoffs.cost_resolute, 1e-6)
-    likelihood_resolute = (1.0, 1.0, min(ratio, 4.0))[action]
-    likelihood_irresolute = (min(ratio, 4.0), 1.0, 1.0)[action]
+    likelihood_resolute = (1.0, 1.0, min(ratio, 4.0))[signal]
+    likelihood_irresolute = (min(ratio, 4.0), 1.0, 1.0)[signal]
     numerator = prior * likelihood_resolute
     denominator = numerator + (1.0 - prior) * likelihood_irresolute
     updated = float(numerator / denominator) if denominator > 0 else prior
@@ -178,6 +300,7 @@ def solve(
     horizon: int = 4,
     precision: float = PRECISION,
     solver: str = "qre",
+    space: family_module.ActionSpace = family_module.ADVERSARY,
 ) -> dict[str, Any]:
     """The equilibrium policy over (period, intensity, capability, type).
 
@@ -192,8 +315,9 @@ def solve(
     distance from a Nash point reported as `nash_gap`). The recursion, the
     policy table and everything downstream are shared.
 
-    Returns policy[period][intensity][capability][type] → mixture over
-    ACTIONS, plus the value function it came from.
+    Returns policy[period][intensity][capability][type] → mixture over the
+    space's actions, plus the value function it came from. `space` picks the
+    family's game (`stage_payoff`); the recursion is the same for all.
     """
     if solver not in SOLVERS:
         raise ValueError(f"solver must be one of {SOLVERS}, got {solver!r}")
@@ -201,8 +325,8 @@ def solve(
 
     bands = len(state_module.INTENSITY_EDGES)
     caps = len(state_module.CAPABILITY_EDGES)
-    actions = len(state_module.ACTIONS)
-    types = len(state_module.TYPES)
+    actions = len(space.actions)
+    types = len(space.types)
 
     value = np.zeros((bands, caps, types))
     policy = np.zeros((horizon, bands, caps, types, actions))
@@ -230,11 +354,11 @@ def solve(
                         for b in range(actions):
                             future = float(kernel[x, a, b] @ next_value[:, k, own])
                             matrix_a[a, b] = (
-                                stage_payoff(a, b, x, k, own, payoffs)
+                                stage_payoff(a, b, x, k, own, payoffs, space)
                                 + payoffs.discount * future
                             )
                             matrix_b[a, b] = (
-                                stage_payoff(b, a, x, k, own, payoffs)
+                                stage_payoff(b, a, x, k, own, payoffs, space)
                                 + payoffs.discount * future
                             )
                     if period == 0:
@@ -277,6 +401,9 @@ def solve(
         "horizon": horizon,
         "precision": precision,
         "solver": solver,
+        "family": space.family,
+        "actions": list(space.actions),
+        "types": list(space.types),
         "concept": (
             equilibrium_module.concept_line(horizon, 1.0 / precision)
             if solver == "lp"

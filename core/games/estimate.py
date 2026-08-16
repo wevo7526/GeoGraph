@@ -39,6 +39,7 @@ from typing import Any
 
 import numpy as np
 
+from core.games import family as family_module
 from core.games import solve as solve_module
 from core.games import state as state_module
 from core.models import features as feature_module
@@ -104,8 +105,10 @@ def action_frequencies(
 def observed_frequencies(
     panel_rows: list[dict[str, Any]],
     joint: dict[tuple[str, int], tuple[str, str]],
+    space: family_module.ActionSpace = family_module.ADVERSARY,
 ) -> np.ndarray:
-    """The archive's action frequencies by band, through the same counter."""
+    """The archive's action frequencies by band, through the same counter —
+    in the family's space (its own reading of the record, its own indices)."""
     bands: list[int] = []
     actions: list[tuple[int, int]] = []
     by_dyad: dict[str, list[dict[str, Any]]] = {}
@@ -119,10 +122,7 @@ def observed_frequencies(
             if pair is None:
                 continue
             bands.append(level)
-            actions.append((
-                state_module.ACTIONS.index(pair[0]),
-                state_module.ACTIONS.index(pair[1]),
-            ))
+            actions.append((space.index(pair[0]), space.index(pair[1])))
     return action_frequencies(bands, actions)
 
 
@@ -290,7 +290,7 @@ def distance(simulated: np.ndarray, observed: np.ndarray) -> float:
     return float(np.sum((simulated - observed) ** 2))
 
 
-def _theta_to_payoffs(theta: np.ndarray, base: solve_module.Payoffs) -> solve_module.Payoffs:
+def _theta_to_payoffs(theta: np.ndarray, base: solve_module.Payoffs) -> solve_module.Payoffs:  # noqa: E501
     """Vector → Payoffs, with the ordering constraint enforced by
     construction: the resolute type's cost of fighting is always the LOWER of
     the two. Without that the optimiser can relabel the types and report a
@@ -323,6 +323,7 @@ def objective(
     seed: int,
     horizon: int = 4,
     base: solve_module.Payoffs | None = None,
+    space: family_module.ActionSpace = family_module.ADVERSARY,
 ) -> float:
     """One evaluation: solve → simulate → re-fit → distance.
 
@@ -331,8 +332,8 @@ def objective(
     cannot tell that noise from a gradient — it would wander in proportion to
     the sampling error rather than to the fit.
     """
-    payoffs = _theta_to_payoffs(theta, base or solve_module.Payoffs())
-    equilibrium = solve_module.solve(kernel, payoffs, horizon=horizon)
+    payoffs = _theta_to_payoffs(theta, base or solve_module.defaults_for(space))
+    equilibrium = solve_module.solve(kernel, payoffs, horizon=horizon, space=space)
     rows = simulate(equilibrium, kernel, payoffs, seed=seed)
     return distance(simulated_frequencies(rows), observed)
 
@@ -345,6 +346,7 @@ def fit(
     horizon: int = 4,
     max_evaluations: int = 200,
     era: tuple[int, int] | None = None,
+    space: family_module.ActionSpace = family_module.ADVERSARY,
 ) -> dict[str, Any]:
     """Fit θ by Nelder–Mead over the five structural parameters.
 
@@ -356,11 +358,19 @@ def fit(
     """
     from scipy.optimize import minimize
 
-    start = np.array([0.90, 0.40, 1.40, 1.00, 0.30])
+    # The start is the family's own default: for the ally game Fearon's start
+    # would begin from a rift and the optimiser would spend its evaluations
+    # climbing out.
+    base = solve_module.defaults_for(space)
+    start = np.array([
+        base.discount, base.cost_resolute,
+        base.cost_irresolute - base.cost_resolute, base.stake, base.audience,
+    ])
 
     def evaluate(theta: np.ndarray) -> float:
         return objective(
-            theta, kernel=kernel, observed=observed, seed=seed, horizon=horizon
+            theta, kernel=kernel, observed=observed, seed=seed, horizon=horizon,
+            base=base, space=space,
         )
 
     result = minimize(
@@ -369,12 +379,14 @@ def fit(
         method="Nelder-Mead",
         options={"maxfev": max_evaluations, "xatol": 1e-3, "fatol": 1e-4},
     )
-    payoffs = _theta_to_payoffs(result.x, solve_module.Payoffs())
-    equilibrium = solve_module.solve(kernel, payoffs, horizon=horizon)
+    payoffs = _theta_to_payoffs(result.x, base)
+    equilibrium = solve_module.solve(kernel, payoffs, horizon=horizon, space=space)
     simulated = simulated_frequencies(
         simulate(equilibrium, kernel, payoffs, seed=seed)
     )
     return {
+        "family": space.family,
+        "actions": list(space.actions),
         "payoffs": {
             "discount": round(payoffs.discount, 4),
             "cost_resolute": round(payoffs.cost_resolute, 4),

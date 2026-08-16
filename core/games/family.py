@@ -39,6 +39,7 @@ the reader can discount it, rather than being quietly presented as a war game.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Any
 
 #: The three families, in the order the classification tries them.
@@ -97,10 +98,11 @@ SEMANTICS: dict[str, dict[str, str]] = {
         "concede": "commit",
         "bad_end": "a rift",
         "note": (
-            "an alliance-management problem, NOT a crisis. The solver still "
-            "runs the bargaining game, so this pair's numbers describe "
-            "departures from its own usual level of friction and must not be "
-            "read as odds of conflict"
+            "an alliance-management problem, NOT a crisis: a burden-sharing "
+            "game (Olson-Zeckhauser) in which each partner chooses to commit, "
+            "affirm or withhold, the bad end is a rift, and the numbers "
+            "describe departures from this pair's own usual level of friction "
+            "- never odds of conflict between the partners"
         ),
     },
 }
@@ -168,11 +170,13 @@ def classify(
     return {
         "family": family,
         "why": why,
-        # THE SOLVER'S GAME IS THE ADVERSARIAL ONE. Saying so is the honest
-        # half of this change until each family has its own actions and
-        # fitted payoffs: a reader can then discount an ally's numbers
-        # instead of being handed brinkmanship language for a treaty partner.
-        "native": family == "adversary",
+        # NATIVE means the solver plays THIS family's own game. The adversary
+        # game has always existed; the ally game (Olson-Zeckhauser burden
+        # sharing — `ALLY` below and `solve.stage_payoff`) landed 2026-08-16.
+        # A rival is still solved with the adversary's payoff and says so, so
+        # a reader can discount it instead of being handed brinkmanship
+        # language for a competition conducted in argument.
+        "native": family in ("adversary", "ally"),
         "question": semantics["question"],
         "headline": semantics["headline"],
         "bad_end": semantics["bad_end"],
@@ -189,11 +193,226 @@ def describe(classification: dict[str, Any]) -> str:
         f"pair ({classification['why']}), so the question worth asking of it "
         f"is {classification['question']}."
     )
-    if not classification.get("native"):
+    if family == "ally":
         line += (
-            " The solver runs the adversarial crisis-bargaining game for every "
+            " It is solved as a burden-sharing game — commit, affirm or "
+            "withhold — whose bad end is a rift, and the numbers below "
+            "describe departures from this pair's OWN usual level of friction, "
+            "never odds of conflict between the partners."
+        )
+    elif not classification.get("native"):
+        line += (
+            " The solver runs the adversarial crisis-bargaining game for this "
             "pair, so the numbers below describe departures from this pair's "
             f"OWN usual level of {classification['headline']} and are not odds "
             f"of {classification['bad_end']}."
         )
     return line
+
+
+# ── the action spaces: what each family's game is played IN ─────────────────
+#
+# THE SECOND HALF, landed 2026-08-16 evening. A family is not only a name and a
+# vocabulary: it is an action set with its own reading of the coded record, its
+# own quad classes for pricing, its own type labels, and its own payoff — and
+# `state.ACTIONS` being a module constant was the one thing that prevented a
+# second one. Every space keeps the SAME SHAPE — three ordinal actions, index 0
+# the most conciliatory ("concede"), 1 the middle ("hold"), 2 the one that
+# strains the pair ("press") — so the counted kernel, the path walk, the fan,
+# the pricing and the persisted payloads keep their arrays; what a family
+# changes is what the indices MEAN, how they are read off events, which quad
+# class a step is priced against, and (in `solve.stage_payoff`) what the sides
+# are trading off.
+
+
+@dataclass(frozen=True)
+class ActionSpace:
+    """One family's game, as the solver sees it.
+
+    `actions` are ordered concede / hold / press. `quads` gives the quad class
+    a step of each action is PRICED against (`paths.py` → `pricing.py`).
+    `types` names the private types (index 1 is the type whose cost of playing
+    its family's costly action is LOW — resolute / committed). `signal` is the
+    action index that is EVIDENCE OF TYPE 1 for Bayes: an adversary's
+    escalation says resolute; an ally's COMMITMENT says committed, so the
+    likelihood order mirrors (see `solve.posterior`).
+    """
+
+    family: str
+    actions: tuple[str, str, str]
+    quads: dict[str, str]
+    types: tuple[str, str]
+    signal: int
+    #: How a side's quad-class counts for a quarter read as an action.
+    reader: str  # "coercion" | "contribution"
+
+    def index(self, action: str) -> int:
+        return self.actions.index(action)
+
+    @property
+    def press(self) -> int:
+        return 2
+
+    @property
+    def concede(self) -> int:
+        return 0
+
+
+#: The adversary space — the game that has existed all along. Its actions ARE
+#: the quad-class partition collapsed to escalation direction, its types are
+#: Fearon's, and escalation is the signal of resolve.
+ADVERSARY = ActionSpace(
+    family="adversary",
+    actions=("de-escalate", "hold", "escalate"),
+    quads={
+        "escalate": "material_conflict",
+        "hold": "verbal_conflict",
+        "de-escalate": "verbal_cooperation",
+    },
+    types=("irresolute", "resolute"),
+    signal=2,
+    reader="coercion",
+)
+
+#: A rival plays the SAME game read for a different threshold — family 2's own
+#: repeated-competition payoff is not built (docs/game-families.md), so the
+#: space is the adversary's with rival words on the surface. `native` stays
+#: false for it.
+RIVAL = ActionSpace(
+    family="rival",
+    actions=ADVERSARY.actions,
+    quads=ADVERSARY.quads,
+    types=ADVERSARY.types,
+    signal=ADVERSARY.signal,
+    reader="coercion",
+)
+
+#: The ally space — Olson & Zeckhauser (1966), alliance burden-sharing. The
+#: sides choose how much of the shared good to carry: COMMIT (material
+#: cooperation — aid, deployments, joint operations), AFFIRM (verbal
+#: cooperation — the routine assurance an alliance runs on), WITHHOLD (verbal
+#: conflict — public friction, refusal, criticism). The bad end is a rift,
+#: never war between the partners. The committed type's private cost of
+#: contributing is LOW; commitment is the evidence of it.
+ALLY = ActionSpace(
+    family="ally",
+    actions=("commit", "affirm", "withhold"),
+    quads={
+        "withhold": "verbal_conflict",
+        "affirm": "verbal_cooperation",
+        "commit": "material_cooperation",
+    },
+    types=("reluctant", "committed"),
+    signal=0,
+    reader="contribution",
+)
+
+SPACES: dict[str, ActionSpace] = {
+    "adversary": ADVERSARY,
+    "rival": RIVAL,
+    "ally": ALLY,
+}
+
+
+def space_for(family: str) -> ActionSpace:
+    """The action space a family's game is played in. Unknown → adversary,
+    which is the game that always existed and the strongest claim, so it is
+    only ever reached by a caller that has not classified at all."""
+    return SPACES.get(family, ADVERSARY)
+
+
+#: The share of a side's initiated events that must be MATERIAL COOPERATION
+#: for an ally's quarter to read as "commit", and the share of friction (verbal
+#: conflict, or any material conflict by the adversary rule's own bar) that
+#: reads as "withhold". MEASURED, not guessed (2026-08-16, 1,695 side-quarters
+#: of six current US alliances — Japan, Korea, Australia, the UK, Israel,
+#: Saudi Arabia — on the wire): the material-cooperation share of a partner's
+#: quarter has median 0.067, upper quartile 0.112, top decile 0.182; the
+#: friction share median 0.185, upper quartile 0.263, top decile 0.364. The
+#: cuts sit at the upper quartiles, so "commit" and "withhold" are each the
+#: top quarter of what an alliance does, and "affirm" is its middle half — a
+#: first pass at 0.20 made commit a top-decile event and the fit pushed the
+#: shared good's value to its floor to reproduce a contribution that almost
+#: never happened.
+CONTRIBUTION_SHARE = 0.11
+CONTRIBUTION_COUNT = 5
+FRICTION_SHARE = 0.25
+
+
+def contribution_action(quad_counts: dict[str, int]) -> str:
+    """The ally reading of a side's quarter — commit / affirm / withhold.
+
+    Friction outranks contribution, mirroring the adversary rule where
+    material conflict outranks talk: a partner that publicly refuses AND ships
+    aid in the same quarter is read as withholding, because the refusal is the
+    departure from an alliance's usual level and the aid is what it always
+    does. Material conflict between allies (co-participation artefacts aside)
+    is friction too. Silence — a side that initiated nothing — is "affirm":
+    the alliance's resting state, and inventing withholding from silence would
+    put a rift in the record nobody observed.
+    """
+    total = sum(int(v) for v in quad_counts.values())
+    if total <= 0:
+        return "affirm"
+    verbal_conflict = int(quad_counts.get("verbal_conflict", 0))
+    material_conflict = int(quad_counts.get("material_conflict", 0))
+    friction = verbal_conflict + material_conflict
+    if friction and (
+        friction / total >= FRICTION_SHARE or material_conflict >= CONTRIBUTION_COUNT
+    ):
+        return "withhold"
+    material_coop = int(quad_counts.get("material_cooperation", 0))
+    if material_coop and (
+        material_coop / total >= CONTRIBUTION_SHARE or material_coop >= CONTRIBUTION_COUNT
+    ):
+        return "commit"
+    return "affirm"
+
+
+#: How each family names the SHAPE of a course. The kind KEYS are shared across
+#: families (they describe who pressed and who conceded, which is family-blind
+#: by construction), so the persisted payloads and the sorting rule keep
+#: working; the label and the sentence are the family's own words. An
+#: adversary's "brinkmanship" is an ally's "withhold, then recommit".
+KIND_WORDS: dict[str, dict[str, tuple[str, str]]] = {
+    "adversary": {
+        "mutual_escalation": ("mutual escalation", "both sides escalate"),
+        "brinkmanship": ("brinkmanship", "both sides escalate, then at least one steps back"),
+        "one_sided_pressure": ("one-sided pressure", "one side presses while the other holds"),
+        "probe_and_retreat": ("probe and retreat", "one side presses, then steps back"),
+        "step_down": ("step-down", "at least one side de-escalates and neither presses"),
+        "drift_up": ("drift up", "both hold, yet the counted kernel drifts intensity up"),
+        "drift_down": ("drift down", "both hold and intensity subsides"),
+        "holding_pattern": ("holding pattern", "both sides hold; intensity stays where it is"),
+    },
+    "rival": {
+        "mutual_escalation": ("mutual hardening", "both sides press"),
+        "brinkmanship": ("press and ease", "both sides press, then at least one eases"),
+        "one_sided_pressure": ("one-sided pressure", "one side presses while the other holds"),
+        "probe_and_retreat": ("probe and ease", "one side presses, then eases"),
+        "step_down": ("easing", "at least one side eases and neither presses"),
+        "drift_up": ("drift up", "both hold, yet the counted kernel drifts intensity up"),
+        "drift_down": ("drift down", "both hold and intensity subsides"),
+        "holding_pattern": ("holding pattern", "both sides hold; intensity stays where it is"),
+    },
+    "ally": {
+        "mutual_escalation": ("mutual withholding", "both partners withhold — the rift course"),
+        "brinkmanship": (
+            "withhold, then recommit", "both partners withhold, then at least one recommits"
+        ),
+        "one_sided_pressure": (
+            "free-riding", "one partner withholds while the other carries the alliance"
+        ),
+        "probe_and_retreat": ("friction, then repair", "one partner withholds, then recommits"),
+        "step_down": ("burden shared", "at least one partner commits and neither withholds"),
+        "drift_up": ("drift up", "both affirm, yet the counted kernel drifts friction up"),
+        "drift_down": ("drift down", "both affirm and friction subsides"),
+        "holding_pattern": ("steady state", "both partners affirm; friction stays where it is"),
+    },
+}
+
+
+def kind_words(family: str, kind: str) -> tuple[str, str]:
+    """(label, sentence) for a course kind in a family's own words."""
+    table = KIND_WORDS.get(family) or KIND_WORDS["adversary"]
+    return table.get(kind, (kind.replace("_", " "), kind.replace("_", " ")))

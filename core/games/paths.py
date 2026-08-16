@@ -26,6 +26,7 @@ from typing import Any
 
 import numpy as np
 
+from core.games import family as family_module
 from core.games import solve as solve_module
 from core.games import state as state_module
 
@@ -96,6 +97,7 @@ def enumerate_paths(
     payoffs: solve_module.Payoffs,
     top: int = TOP_PATHS,
     classify: Any = None,
+    space: family_module.ActionSpace = family_module.ADVERSARY,
 ) -> dict[str, Any]:
     """Every path through the horizon, ranked by probability.
 
@@ -115,7 +117,7 @@ def enumerate_paths(
     """
     policy = equilibrium["policy"]
     horizon = equilibrium["horizon"]
-    actions = state_module.ACTIONS
+    actions = space.actions
     bands = kernel.shape[-1]
 
     marginal_mass = np.zeros((horizon, bands))
@@ -142,8 +144,8 @@ def enumerate_paths(
                     if joint <= 0.0:
                         continue
                     row = kernel[x, a, b]
-                    posterior_a = posterior_of(ba, b, payoffs)
-                    posterior_b = posterior_of(bb, a, payoffs)
+                    posterior_a = posterior_of(ba, b, payoffs, space)
+                    posterior_b = posterior_of(bb, a, payoffs, space)
                     spread = [
                         int(np.argmax(row > BAND_BRANCH_FLOOR)),
                         int(len(row) - 1 - np.argmax(row[::-1] > BAND_BRANCH_FLOOR)),
@@ -171,7 +173,9 @@ def enumerate_paths(
                                 "period": period + 1,
                                 "action_a": actions[a],
                                 "action_b": actions[b],
-                                "quad": state_module.ACTION_QUAD[actions[max(a, b)]],
+                                # Priced against the quad class of the more
+                                # straining action, in THIS family's space.
+                                "quad": space.quads[actions[max(a, b)]],
                                 "intensity_band": x_next,
                                 "band_probability": round(share, 4),
                                 "band_spread": spread,
@@ -288,9 +292,12 @@ def enumerate_paths(
     }
 
 
-def posterior_of(prior: float, action: int, payoffs: solve_module.Payoffs) -> float:
+def posterior_of(
+    prior: float, action: int, payoffs: solve_module.Payoffs,
+    space: family_module.ActionSpace = family_module.ADVERSARY,
+) -> float:
     """Belief update along a path — the same Bayes rule the solver uses."""
-    return solve_module.posterior(prior, action, payoffs)
+    return solve_module.posterior(prior, action, payoffs, space)
 
 
 def marginal_intensity(paths: dict[str, Any], horizon: int) -> list[dict[str, Any]]:

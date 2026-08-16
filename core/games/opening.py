@@ -26,6 +26,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from core.games import family as family_module
 from core.games import solve as solve_module
 from core.games import state as state_module
 from core.graph import kuzu_store
@@ -237,6 +238,7 @@ def filtered_beliefs(
     payoffs: solve_module.Payoffs,
     *,
     quarters: int = BELIEF_QUARTERS,
+    space: family_module.ActionSpace = family_module.ADVERSARY,
 ) -> dict[str, Any]:
     """P(resolute) per side, filtered from the dyad's observed recent actions.
 
@@ -254,10 +256,10 @@ def filtered_beliefs(
     belief_b = 0.5  # B's belief about A
     for _, (action_a, action_b) in observed:
         belief_a = solve_module.posterior(
-            belief_a, state_module.ACTIONS.index(action_b), payoffs
+            belief_a, space.index(action_b), payoffs, space
         )
         belief_b = solve_module.posterior(
-            belief_b, state_module.ACTIONS.index(action_a), payoffs
+            belief_b, space.index(action_a), payoffs, space
         )
     return {
         "a": round(belief_a, 4),

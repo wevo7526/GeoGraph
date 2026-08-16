@@ -27,6 +27,7 @@ from typing import Any
 
 import numpy as np
 
+from core.games import family as family_module
 from core.games import state as state_module
 from core.graph import kuzu_store
 
@@ -52,8 +53,14 @@ MATERIAL_COUNT = 5
 COOPERATION_SHARE = 0.6
 
 
-def action_from_quads(quad_counts: dict[str, int]) -> str:
-    """The action a side's coded events imply for a quarter.
+def action_from_quads(
+    quad_counts: dict[str, int],
+    space: family_module.ActionSpace = family_module.ADVERSARY,
+) -> str:
+    """The action a side's coded events imply for a quarter, IN A FAMILY'S
+    SPACE. The adversary reading is below; the ally reading (commit / affirm /
+    withhold — contribution rather than coercion) lives in
+    `family.contribution_action`, and the space says which applies.
 
     Material conflict outranks talk — but by SHARE, not by presence. The old
     rule called a quarter "escalate" on a single material-conflict event,
@@ -69,6 +76,8 @@ def action_from_quads(quad_counts: dict[str, int]) -> str:
     cooperative quarter holds. De-escalation needs cooperation to be the
     clear majority; anything else is a hold.
     """
+    if space.reader == "contribution":
+        return family_module.contribution_action(quad_counts)
     total = sum(int(v) for v in quad_counts.values())
     if total <= 0:
         return "hold"
@@ -103,8 +112,44 @@ def event_rows(conn: Any) -> list[dict[str, Any]]:
     )
 
 
-def joint_actions(
+def quad_counts(
     rows: list[dict[str, Any]], *, quarter_of: Any
+) -> dict[tuple[str, int], dict[str, dict[str, int]]]:
+    """(dyad, quarter) → per-side quad-class counts — the RAW material every
+    family's reading is applied to.
+
+    Kept separate from `joint_actions` so the corpus can hold these counts
+    (a few integers per dyad-quarter) and derive any family's joint actions
+    on demand, instead of holding the raw event rows or re-parsing them: the
+    ally reading arrived after the wire had been warmed once per process.
+    """
+    per_side: dict[tuple[str, int], dict[str, dict[str, int]]] = defaultdict(
+        lambda: {"a": defaultdict(int), "b": defaultdict(int)}
+    )
+    for row in rows:
+        quad = row.get("quad_class")
+        if not quad:
+            continue
+        key = (str(row["dyad_id"]), quarter_of(str(row["event_time"])))
+        side = "a" if row["initiator"] == row["actor_a"] else "b"
+        per_side[key][side][str(quad)] += 1
+    return {k: {"a": dict(v["a"]), "b": dict(v["b"])} for k, v in per_side.items()}
+
+
+def joint_from_counts(
+    counts: dict[tuple[str, int], dict[str, dict[str, int]]],
+    space: family_module.ActionSpace = family_module.ADVERSARY,
+) -> dict[tuple[str, int], tuple[str, str]]:
+    """Per-side quad counts → the joint action, in a family's space."""
+    return {
+        key: (action_from_quads(sides["a"], space), action_from_quads(sides["b"], space))
+        for key, sides in counts.items()
+    }
+
+
+def joint_actions(
+    rows: list[dict[str, Any]], *, quarter_of: Any,
+    space: family_module.ActionSpace = family_module.ADVERSARY,
 ) -> dict[tuple[str, int], tuple[str, str]]:
     """(dyad, quarter) → the joint action each side's coded events imply.
 
@@ -120,26 +165,13 @@ def joint_actions(
     record supports, and inventing a de-escalation from silence would put a
     decision in the archive that nobody observed.
     """
-    per_side: dict[tuple[str, int], dict[str, dict[str, int]]] = defaultdict(
-        lambda: {"a": defaultdict(int), "b": defaultdict(int)}
-    )
-    for row in rows:
-        quad = row.get("quad_class")
-        if not quad:
-            continue
-        key = (str(row["dyad_id"]), quarter_of(str(row["event_time"])))
-        side = "a" if row["initiator"] == row["actor_a"] else "b"
-        per_side[key][side][str(quad)] += 1
-
-    return {
-        key: (action_from_quads(sides["a"]), action_from_quads(sides["b"]))
-        for key, sides in per_side.items()
-    }
+    return joint_from_counts(quad_counts(rows, quarter_of=quarter_of), space)
 
 
 def count(
     panel_rows: list[dict[str, Any]],
     actions_by_cell: dict[tuple[str, int], tuple[str, str]],
+    space: family_module.ActionSpace = family_module.ADVERSARY,
 ) -> dict[tuple[int, int, int], np.ndarray]:
     """Raw transition counts, keyed (intensity band, action A, action B).
 
@@ -161,8 +193,8 @@ def count(
             joint = actions_by_cell.get((dyad, rows[i]["q"]))
             if joint is None:
                 continue
-            a1 = state_module.ACTIONS.index(joint[0])
-            a2 = state_module.ACTIONS.index(joint[1])
+            a1 = space.index(joint[0])
+            a2 = space.index(joint[1])
             key = (levels[i], a1, a2)
             if key not in counts:
                 counts[key] = np.zeros(bands)

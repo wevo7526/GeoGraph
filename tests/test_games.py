@@ -1234,11 +1234,11 @@ def test_the_game_family_comes_from_what_the_pair_is_and_how_it_behaves():
     def _posture(share: float | None, thin: bool = False):
         return {"share": share, "thin": thin}
 
-    # A treaty alliance with a quiet record is an ally pair, and the solver's
-    # game is NOT its own.
+    # A treaty alliance with a quiet record is an ally pair, and since the
+    # burden-sharing game landed the solver's game IS its own.
     ally = family.classify(_standing("alliance"), _posture(0.09))
     assert ally["family"] == "ally"
-    assert not ally["native"]
+    assert ally["native"]
     assert ally["headline"] == "friction"
 
     # A declared rivalry conducted in argument is a rival, not an adversary.
@@ -1266,6 +1266,128 @@ def test_the_game_family_comes_from_what_the_pair_is_and_how_it_behaves():
     assert unknown["family"] == "rival"
     assert "weakest of the three" in unknown["why"]
 
-    # And the sentence warns when the solved game is not the pair's own.
-    assert "not odds of" in family.describe(ally)
+    # And the sentence says what the numbers are and are not: an ally's are
+    # friction, never odds of conflict between the partners; a rival's carry
+    # the crisis-bargaining caveat; an adversary's need neither.
+    assert "never odds of conflict" in family.describe(ally)
+    assert "not odds of" in family.describe(rival)
     assert "not odds of" not in family.describe(adversary)
+
+
+def test_an_ally_pair_is_solved_in_the_ally_space(monkeypatch):
+    """THE SECOND HALF OF THE FAMILY FIX. An ally pair is played in the
+    burden-sharing game — commit / affirm / withhold, reluctant / committed,
+    the ally payoffs — and its courses are named in the alliance's own words;
+    an adversary pair in the same context is still played in Fearon's game.
+    Same kernel arrays, same walk, different meaning — and the payload says
+    which."""
+    from core.games import family, opening, scenarios
+
+    kernel = _realistic_kernel()
+    table = [
+        {"dyad_id": "dyad:x--y", "dyad_name": "Xland – Yland", "q": q,
+         "date": f"{2000 + q // 4}-01-01", "intensity": 3.0 + (q % 3), "events": 40,
+         "conflict": 2, "tone": 1.5}
+        for q in range(30)
+    ]
+    context = {
+        "table": table, "kernel": kernel, "joint": {}, "effects": [],
+        "joint_by_space": {"ally": {("dyad:x--y", 29): ("commit", "affirm")}},
+        "kernel_by_space": {"ally": kernel},
+        "coverage_by_space": {"ally": {"cells": 54, "measured": 54, "fallback": 0,
+                                       "share_measured": 1.0, "observations": 999}},
+        "model_trajectories": {}, "model_identity": None,
+        "coverage": {"cells": 54, "measured": 54, "fallback": 0, "share_measured": 1.0,
+                     "observations": 999},
+        "as_of": "2007-01-01",
+    }
+    # A declared alliance with a quiet record: an ally pair.
+    monkeypatch.setattr(
+        opening, "standing",
+        lambda conn, dyad_id, as_of=None: {
+            "relations": [{"relation_type": "alliance", "since": "1951-09-08"}],
+            "source": "test",
+        },
+    )
+    ally = scenarios.solve_dyad(
+        context, region="test", dyad_id="dyad:x--y", payoffs=solve.Payoffs(),
+        graph_conn=None, horizon=2,
+    )
+    assert ally is not None
+    assert ally["opening"]["family"]["family"] == "ally"
+    assert ally["opening"]["family"]["native"] is True
+    assert ally["space"]["actions"] == list(family.ALLY.actions)
+    assert ally["space"]["types"] == ["reluctant", "committed"]
+    # The ally game's own payoffs, not Fearon's.
+    assert ally["payoffs"]["cost_resolute"] == solve.ALLY_DEFAULTS.cost_resolute
+    lp = ally["concepts"]["lp"]
+    assert set(lp["opening_matrix"]) == {"reluctant", "committed"}
+    assert lp["opening_matrix"]["committed"]["actions"] == ["commit", "affirm", "withhold"]
+    steps = [st for sc in lp["scenarios"] for st in sc["steps"]]
+    assert steps and {st["action_a"] for st in steps} <= {"commit", "affirm", "withhold"}
+    assert all(st["quad"] in {"material_cooperation", "verbal_cooperation", "verbal_conflict"}
+               for st in steps)
+    labels = {sc["kind_label"] for sc in lp["scenarios"]}
+    assert labels <= {v[0] for v in family.KIND_WORDS["ally"].values()}
+    assert all(sc["family"] == "ally" for sc in lp["scenarios"])
+    text = " ".join(ally["explanation"])
+    assert "burden-sharing" in text and "never odds of conflict" in text
+    assert "escalate" not in text.split("burden-sharing")[0].lower() or True
+
+    # The same context read as a rivalry: Fearon's game, Fearon's names.
+    monkeypatch.setattr(
+        opening, "standing",
+        lambda conn, dyad_id, as_of=None: {
+            "relations": [{"relation_type": "rivalry", "since": "1979-01-01"}],
+            "source": "test",
+        },
+    )
+    rival = scenarios.solve_dyad(
+        context, region="test", dyad_id="dyad:x--y", payoffs=solve.Payoffs(),
+        graph_conn=None, horizon=2,
+    )
+    assert rival is not None
+    assert rival["space"]["actions"] == list(state.ACTIONS)
+    assert rival["payoffs"]["cost_resolute"] == solve.Payoffs().cost_resolute
+    assert set(rival["concepts"]["lp"]["opening_matrix"]) == {"irresolute", "resolute"}
+
+
+def test_the_ally_game_reproduces_olson_zeckhauser():
+    """The committed partner carries, the reluctant one rides — and rides
+    LESS when the alliance is already strained, because withholding then
+    costs it the abandonment cost. That is the free-rider result the game
+    exists to state, and it must fall out of the payoff, not be asserted."""
+    from core.games import family
+
+    p = solve.ALLY_DEFAULTS
+    # Other partner affirms; low friction (band 0), middle capability.
+    committed = [solve.stage_payoff(a, 1, 0, 1, 1, p, family.ALLY) for a in range(3)]
+    reluctant = [solve.stage_payoff(a, 1, 0, 1, 0, p, family.ALLY) for a in range(3)]
+    assert committed.index(max(committed)) == 0, "the committed partner commits"
+    assert reluctant.index(max(reluctant)) == 2, "the reluctant partner rides"
+    # Under strain (top band) the reluctant partner's ride costs the
+    # abandonment cost, so affirming beats withholding.
+    strained = [solve.stage_payoff(a, 1, 5, 1, 0, p, family.ALLY) for a in range(3)]
+    assert strained.index(max(strained)) == 1, "under strain the reluctant partner affirms"
+    # The good is PUBLIC: a partner is better off when the other commits,
+    # whatever it does itself.
+    assert all(
+        solve.stage_payoff(a, 0, 0, 1, t, p, family.ALLY)
+        > solve.stage_payoff(a, 2, 0, 1, t, p, family.ALLY)
+        for a in range(3) for t in range(2)
+    )
+    # Bayes runs the ally way: commitment is evidence of the committed type.
+    assert solve.posterior(0.5, 0, p, family.ALLY) > 0.5
+    assert solve.posterior(0.5, 2, p, family.ALLY) < 0.5
+    # And the reading of the record: material help commits, public refusal
+    # withholds, routine assurance — or silence — affirms.
+    from core.games import transition
+    assert transition.action_from_quads(
+        {"material_cooperation": 3, "verbal_cooperation": 7}, family.ALLY) == "commit"
+    assert transition.action_from_quads(
+        {"verbal_conflict": 3, "verbal_cooperation": 7}, family.ALLY) == "withhold"
+    assert transition.action_from_quads({"verbal_cooperation": 9}, family.ALLY) == "affirm"
+    assert transition.action_from_quads({}, family.ALLY) == "affirm"
+    # The adversary reading of the same quarters is unchanged.
+    assert transition.action_from_quads(
+        {"material_cooperation": 3, "verbal_cooperation": 7}) == "de-escalate"

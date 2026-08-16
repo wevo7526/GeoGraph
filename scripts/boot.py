@@ -1598,16 +1598,42 @@ def _rebuild_affected_if_asked() -> dict[str, Any] | None:
 
     path = settings_module.load().kuzu_db_path
     ledger = path.with_name(_REBUILD_AFFECTED_LEDGER)
+    # The refill's own resume marker (scripts/rebuild_affected.py MARKER_NAME).
+    # While it exists a refill was started and not finished — a container
+    # killed mid-refill (the healthcheck window, an OOM) leaves a half-filled
+    # table on which the PROBE would pass, so the marker outranks the probe
+    # and the ledger: resume first, ask questions after.
+    marker = path.with_name(".affected-refill.json")
     try:
         honoured = ledger.read_text(encoding="utf-8").strip()
     except OSError:
         honoured = ""
-    if honoured == requested:
-        _log(f"GEOGRAPH_REBUILD_AFFECTED={requested} already honoured — skipped")
-        return {"ok": True, "skipped": "already honoured", "token": requested}
     if not path.exists():
         _log("GEOGRAPH_REBUILD_AFFECTED set but there is no graph yet — nothing to repair")
         return {"ok": True, "skipped": "no graph", "token": requested}
+    if marker.exists():
+        _log("=" * 68)
+        _log("an AFFECTED refill was left unfinished — resuming it from its marker")
+        _log("=" * 68)
+        started = time.monotonic()
+        resumed = _run_step(
+            "affected refill (resume)",
+            [sys.executable, str(_REBUILD_AFFECTED_SCRIPT), "--refill",
+             "--budget-seconds", str(_REBUILD_AFFECTED_TIMEOUT_SECONDS - 120)],
+            timeout=_REBUILD_AFFECTED_TIMEOUT_SECONDS,
+        )
+        resumed_outcome: dict[str, Any] = {
+            "token": requested, "resumed": resumed,
+            "ok": bool(resumed["ok"]) and not marker.exists(),
+            "seconds": round(time.monotonic() - started, 1),
+        }
+        if resumed_outcome["ok"]:
+            with contextlib.suppress(OSError):
+                ledger.write_text(requested, encoding="utf-8")
+        return resumed_outcome
+    if honoured == requested:
+        _log(f"GEOGRAPH_REBUILD_AFFECTED={requested} already honoured — skipped")
+        return {"ok": True, "skipped": "already honoured", "token": requested}
 
     _log("=" * 68)
     _log("GEOGRAPH_REBUILD_AFFECTED is set — probing the AFFECTED table, "
@@ -1647,14 +1673,17 @@ def _rebuild_affected_if_asked() -> dict[str, Any] | None:
         outcome["ok"] = bool(rebuilt["ok"] and again["ok"])
     outcome["seconds"] = round(time.monotonic() - started, 1)
 
-    # Recorded whether or not the rebuild was clean: a repair that failed for
-    # an ordinary reason should be re-run deliberately with a new value, not
-    # silently on every restart against a table it may have half-filled.
-    try:
-        ledger.write_text(requested, encoding="utf-8")
-    except OSError as exc:
-        _log(f"WARNING: could not record the rebuild ledger ({exc}) — "
-             f"unset GEOGRAPH_REBUILD_AFFECTED by hand so this does not repeat")
+    # Recorded once the refill is COMPLETE (its marker is gone). An unfinished
+    # refill leaves the marker, and the branch above resumes it on the next
+    # boot whatever the ledger says; a probe that passed records straight away.
+    if not marker.exists():
+        try:
+            ledger.write_text(requested, encoding="utf-8")
+        except OSError as exc:
+            _log(f"WARNING: could not record the rebuild ledger ({exc}) — "
+                 f"unset GEOGRAPH_REBUILD_AFFECTED by hand so this does not repeat")
+    else:
+        _log("affected refill did not finish inside its budget — the next boot resumes it")
     return outcome
 
 

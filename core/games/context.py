@@ -13,6 +13,7 @@ import json
 import os
 from typing import Any
 
+from core.games import family as family_module
 from core.games import pricing as pricing_module
 from core.games import solve as solve_module
 from core.games import state as state_module
@@ -62,16 +63,26 @@ def build(conn: Any, region: str) -> dict[str, Any]:
     # AFFECTED effects, which the transmission engine writes there alone.
     table = serving.table(region)
     joint = serving.joint_actions()
+    # THE ALLY READING OF THE SAME RECORD, and its own counted kernel. Every
+    # family's game is played over the same intensity bands, but what each
+    # side DID in a quarter is read differently (contribution rather than
+    # coercion), so the transition counts differ too. Both derive from the
+    # retained quad counts, no second parse.
+    joint_ally = serving.joint_actions(family_module.ALLY)
     if table is None or joint is None:
         if conn is None:
             raise GraphNeeded(f"no corpus artifact for {region} and the graph is closed")
         table = panel_module.build(panel_module.dyad_event_rows(conn), region_pack=region)
-        joint = transition_module.joint_actions(
-            transition_module.event_rows(conn), quarter_of=panel_module.quarter_index
-        )
+        rows = transition_module.event_rows(conn)
+        counts = transition_module.quad_counts(rows, quarter_of=panel_module.quarter_index)
+        joint = transition_module.joint_from_counts(counts)
+        joint_ally = transition_module.joint_from_counts(counts, family_module.ALLY)
     if not table:
         raise NothingToSolve(f"no modelable dyad in {region} — nothing to solve over")
     kernel, observed = transition_module.kernel(transition_module.count(table, joint))
+    kernel_ally, observed_ally = transition_module.kernel(
+        transition_module.count(table, joint_ally or {}, family_module.ALLY)
+    )
 
     model_trajectories: dict[str, list[dict[str, Any]]] = {}
     model_identity: dict[str, Any] | None = None
@@ -97,6 +108,10 @@ def build(conn: Any, region: str) -> dict[str, Any]:
         "dynamics": load_dynamics(region),
         "joint": joint,
         "coverage": transition_module.coverage(observed),
+        # The ally space's own reading and kernel, beside the adversary's.
+        "joint_by_space": {"ally": joint_ally or {}},
+        "kernel_by_space": {"ally": kernel_ally},
+        "coverage_by_space": {"ally": transition_module.coverage(observed_ally)},
         # Measured market effects live in the graph alone. An open graph adds
         # them; without one the game still solves, priced over no effects
         # rather than refusing — and it is a LIST, as every consumer iterates
@@ -169,8 +184,26 @@ def dyad_features(context: dict[str, Any], dyad_id: str) -> dict[str, Any] | Non
     }
 
 
-def kernel_for(context: dict[str, Any], dyad_id: str) -> tuple[Any, dict[str, Any] | None]:
-    """(kernel, audit) — THIS PAIR's transition kernel.
+def joint_for(context: dict[str, Any], space: family_module.ActionSpace) -> dict[Any, Any]:
+    """The joint-action map in a family's space — the adversary's for the
+    adversary and rival games, the ally reading for the ally game."""
+    if space.family == "ally":
+        return dict(context.get("joint_by_space", {}).get("ally") or {})
+    return dict(context["joint"])
+
+
+def kernel_for(
+    context: dict[str, Any], dyad_id: str,
+    space: family_module.ActionSpace = family_module.ADVERSARY,
+) -> tuple[Any, dict[str, Any] | None]:
+    """(kernel, audit) — THIS PAIR's transition kernel, in the family's space.
+
+    THE ALLY KERNEL IS COUNTED, NOT TILTED. The per-pair dynamics model was
+    fitted over the adversary reading's action indices — its residual is a
+    function of (band, escalate/hold/de-escalate) — and applying it to a
+    kernel whose indices mean commit/affirm/withhold would be a shape match
+    and a semantic lie. The bridge's scalar tilt (from the frozen intensity
+    model, action-blind) still applies; the audit says which ran.
 
     The counted kernel is one table for a whole region: US-Japan and North
     Korea-South Korea were solved over the same transitions, and at band 2 it
@@ -185,6 +218,21 @@ def kernel_for(context: dict[str, Any], dyad_id: str) -> tuple[Any, dict[str, An
     the instrument, and the audit line says which one ran.
     """
     from core.games import bridge as bridge_module
+
+    if space.family == "ally":
+        base = context.get("kernel_by_space", {}).get("ally")
+        if base is None:
+            base = context["kernel"]
+        eta = bridge_module.eta_from_trajectory(
+            context.get("model_trajectories", {}).get(dyad_id, [])
+        )
+        audit = bridge_module.audit(eta, context.get("model_identity"))
+        if audit is not None:
+            audit = {**audit, "space": "ally",
+                     "note": ("counted over the ally reading (commit / affirm / "
+                              "withhold); the per-pair dynamics model is fitted on "
+                              "the adversary reading and is not applied")}
+        return bridge_module.tilted_kernel(base, eta), audit
 
     loaded = context.get("dynamics")
     if loaded is not None:
@@ -222,14 +270,21 @@ def kernel_for(context: dict[str, Any], dyad_id: str) -> tuple[Any, dict[str, An
             bridge_module.audit(eta, context.get("model_identity")))
 
 
-def fitted_payoffs(region: str) -> dict[str, float]:
+def fitted_payoffs(region: str, family: str = "adversary") -> dict[str, float]:
     """The fitted payoffs a solve starts from, so "no change" means the frozen
-    forecast rather than an arbitrary guess. Verifies the artifact's hash."""
+    forecast rather than an arbitrary guess. Verifies the artifact's hash.
+
+    Per FAMILY: `models/game-<region>.json` is the adversary game's fit (the
+    rival game plays it too, and says so); `models/game-ally-<region>.json`
+    is the ally game's, falling back to the ally defaults where no fit ships.
+    """
     from core.models import registry
 
-    target = registry.MODELS_DIR / f"game-{region}.json"
+    space = family_module.space_for(family)
+    stem = f"game-{region}.json" if space.family != "ally" else f"game-ally-{region}.json"
+    target = registry.MODELS_DIR / stem
     if not target.exists():
-        base = solve_module.Payoffs()
+        base = solve_module.defaults_for(space)
         return {
             "discount": base.discount,
             "cost_resolute": base.cost_resolute,

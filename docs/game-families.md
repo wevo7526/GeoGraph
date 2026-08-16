@@ -79,7 +79,7 @@ a crisis. The distinction matters for the output: the interesting quantity is
 US–China is handed a crisis game and reports the odds of winning a stake
 neither is contesting by force.
 
-### 3. Alliance burden-sharing — ALLY  *(not implemented — the US–Japan gap)*
+### 3. Alliance burden-sharing — ALLY  *(implemented 2026-08-16 evening)*
 
 | | |
 |---|---|
@@ -94,9 +94,25 @@ The canonical model is **Olson & Zeckhauser (1966)**: allies choose
 contributions to a shared defence good, and the large ally over-provides while
 the small one free-rides. Its central parameter — exposure asymmetry — is
 already in the graph as the CINC ratio `opening.capability_state` reads. Its
-actions are already coded. **It is identifiable, and it is the single highest-
-value family to build**, because most of the pairs the platform ranks are
-alliances and every one of them is currently being scored as a potential war.
+actions are already coded.
+
+**Built.** `family.ALLY` is the action space (commit / affirm / withhold, read
+off a quarter's quad classes by `family.contribution_action`: material
+cooperation commits, friction withholds, routine assurance or silence affirms);
+`solve.ally_stage_payoff` is the payoff, written over the SAME five `Payoffs`
+fields the adversary game fits — `stake` the value of the shared good (public:
+both partners enjoy it whoever carries it), `cost_resolute` / `cost_irresolute`
+the private cost of carrying it for a committed / reluctant partner, `audience`
+the cost of withholding when the alliance is already strained (the abandonment
+cost), `discount` patience — so `scripts/fit_game.py --family ally` fits it by
+the same indirect inference over the region's DECLARED ally pairs (pack
+relations + COW alliances on the roster) whose record is under the adversary
+cut, writing `models/game-ally-<region>.json`. The kernel is counted over the
+ally reading (`context.kernel_by_space`), untilted by the per-pair dynamics
+model (fitted on the adversary reading; a shape match, not a semantic one).
+`test_the_ally_game_reproduces_olson_zeckhauser` pins the result the model
+exists to state: the committed partner carries, the reluctant one rides, and
+rides less under strain.
 
 ### 4. Patron–client delegation — PROXY  *(not implemented)*
 
@@ -177,30 +193,36 @@ Two properties worth stating:
 
 ## What is true today, and the order of work
 
-Only family 1 exists. Every pair is still solved with it. What changed on
-2026-08-16 is that the platform now **says so**: each solved dyad carries its
-family, the question that family's game is entitled to ask, and — when the
-solved game is not that family's own — a sentence saying the numbers describe
-departures from the pair's own usual friction and are **not** odds of conflict.
-That is honesty, not a fix.
+Families 1 and 3 exist and are each pair's own game (`native: true`). A rival
+pair is solved with the adversary game and **says so**: each solved dyad
+carries its family, the question that family's game is entitled to ask, and —
+when the solved game is not that family's own — a sentence saying the numbers
+describe departures from the pair's own usual friction and are **not** odds of
+conflict.
 
-The fix, in order of value:
+How a second family became possible: `family.ActionSpace`. Every space keeps
+the SAME SHAPE — three ordinal actions, index 0 conceding, 2 pressing — so the
+counted kernel, the path walk, the fan, the pricing and the persisted payloads
+keep their arrays; a family changes what the indices MEAN (`actions`), how they
+are read off the record (`reader`), which quad class a step is priced against
+(`quads`), which type the pressing action is evidence of (`signal`), and the
+payoff (`solve.stage_payoff` dispatches). Course KINDS are family-blind keys
+(who pressed, who conceded); `family.kind_words` gives each family its own
+label and sentence — an adversary's *brinkmanship* is an ally's *withhold, then
+recommit*, its *one-sided pressure* is *free-riding*.
 
-1. **Family 3, alliance burden-sharing.** Most of the ranked pairs are
-   alliances; all of them are currently scored as potential wars. Identifiable
-   on existing data, and its key parameter is already in the graph.
-2. **Family 2, repeated competition.** Turns US–China from "who wins the
+Remaining, in order of value:
+
+1. **Family 2, repeated competition.** Turns US–China from "who wins the
    crisis" into "does this cross into coercion", which is the question a reader
-   of that pair actually has.
-3. **Family 4, patron–client.** Small number of pairs, high interpretive value
+   of that pair actually has. The space exists (`RIVAL`, the adversary's
+   actions with rival words); its own payoff and noisy-monitoring parameter do
+   not.
+2. **Family 4, patron–client.** Small number of pairs, high interpretive value
    in mena, identification needs checking first.
-4. Families 5 and 6 need data or a state space the platform does not have.
+3. Families 5 and 6 need data or a state space the platform does not have.
    They are written down so nobody builds them on the current archive and
    presents the result as measured.
-
-Each family needs: an action set mapped to quad classes, a counted transition
-kernel **over its own action space**, payoffs fitted offline by indirect
-inference against that family's pairs only, and surface language that does not
-borrow from war. The kernel and the fitting machinery are already generic over
-the action set; `state.ACTIONS` being a module constant is the thing that
-currently prevents more than one.
+4. **The ally kernel's own dynamics model.** The per-pair residual is fitted
+   on the adversary reading; an ally-space fit would let an alliance's kernel
+   know which pair it is for, as the adversary's does.

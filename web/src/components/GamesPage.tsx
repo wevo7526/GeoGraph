@@ -22,7 +22,15 @@ const KIND_LABEL: Record<string, string> = {
   drift_down: 'drift down',
   holding_pattern: 'holding pattern',
 }
-const kind = (k: string) => KIND_LABEL[k] ?? k.replace(/_/g, ' ')
+const kind = (k: string, label?: string | null) => label ?? KIND_LABEL[k] ?? k.replace(/_/g, ' ')
+/** The colour of an action is its PLACE in the family's action space — the
+ *  pressing action (escalate, or withhold) reads alert, the conceding one
+ *  (de-escalate, or commit) reads accent — never a hardcoded word. */
+const actionTone = (action: string, actions?: string[]) => {
+  const order = actions ?? ['de-escalate', 'hold', 'escalate']
+  const i = order.indexOf(action)
+  return i === 2 ? 'var(--alert)' : i === 0 ? 'var(--accent)' : 'var(--text)'
+}
 
 function dyadFromRoute(): string | null {
   const q = window.location.hash.split('?')[1]
@@ -119,7 +127,7 @@ function RegionGames({ region, onPick }: { region: string; onPick: (dyad: string
           <p className="text-sm mb-4" style={{ maxWidth: '64ch' }}>
             <b>{lead.dyad_name}</b>{standingLabel(lead.standing) ? ` — ${standingLabel(lead.standing)}` : ''}{familyRead(lead.family) ? `, read as ${familyRead(lead.family)!.label}` : ''} — carries the most: {(lead.coercive_events ?? 0).toLocaleString('en-US')} coercive events
             {lead.coercive_share != null ? `, ${pct(lead.coercive_share, 0)} of its record` : ''}, opening at a {lead.opening_label}
-            {lead.top_scenario ? `; the likeliest kind of course is ${kind(lead.top_scenario.kind)} at ${pct(lead.top_scenario.likelihood, 0)} of its walk` : ''}.
+            {lead.top_scenario ? `; the likeliest kind of course is ${kind(lead.top_scenario.kind, lead.top_scenario.kind_label)} at ${pct(lead.top_scenario.likelihood, 0)} of its walk` : ''}.
             {' '}The <b>bar</b> is that measured count. The <b>percentage</b> beside it is a different
             question — the odds this pair departs from its <em>own</em> usual band — which is why a quiet
             ally can score high on it and a settled rivalry low. Click a pair to open its solved game.
@@ -259,7 +267,7 @@ function ScenarioList({ rows, onPick }: { rows: Scenario[]; onPick?: (dyad: stri
             <span className="figure w-12 shrink-0" style={{ color: sc.delta_band > 0 ? 'var(--alert)' : sc.delta_band < 0 ? 'var(--accent)' : 'var(--text)' }}>
               {pct(sc.likelihood, 0)}
             </span>
-            <span className="truncate"><b>{sc.dyad_name}</b> — {kind(sc.kind)}</span>
+            <span className="truncate"><b>{sc.dyad_name}</b> — {kind(sc.kind, sc.kind_label)}</span>
             {standingLabel(sc.standing) && <Chip label={standingLabel(sc.standing) as string} tone="ink" />}
           </div>
           <div className="relative h-1 mt-1 ml-14" style={{ background: 'var(--panel)' }}>
@@ -295,7 +303,7 @@ function DyadGame({
   const [sol, setSol] = useState<DyadSolution | null | undefined>(undefined)
   const [map, setMap] = useState<RegionMap | null>(null)
   const [solver, setSolver] = useState<'lp' | 'qre'>('lp')
-  const [type, setType] = useState<'resolute' | 'irresolute'>('resolute')
+  const [typeIndex, setTypeIndex] = useState<1 | 0>(1)
   useEffect(() => {
     let live = true
     setSol(undefined)
@@ -325,6 +333,12 @@ function DyadGame({
   const qre = sol.concepts.qre
   const top = concept.scenarios[0]
   const fam = familyRead(sol.opening.family)
+  // THE GAME'S OWN NAMES: types and actions come from the payload's space, so
+  // an ally pair reads reluctant/committed and commit/affirm/withhold where
+  // an adversary pair reads irresolute/resolute and de-escalate/hold/escalate.
+  const types = sol.space?.types ?? ['irresolute', 'resolute']
+  const typeName = types[typeIndex] ?? 'resolute'
+  const pressWord = (sol.space?.actions ?? ['de-escalate', 'hold', 'escalate'])[2]
   const beliefSteps = top?.steps ?? []
   const propensity = concept.escalation_propensity
 
@@ -395,7 +409,7 @@ function DyadGame({
         </p>
         {top && (
           <p className="text-sm mt-2" style={{ maxWidth: '62ch' }}>
-            Most likely kind of course: <b>{kind(top.kind)}</b> at {pct(top.likelihood, 0)} of the walk's mass{top.courses && top.courses > 1 ? ` (${top.courses} courses, modal ${top.course})` : ` (${top.course})`}, ending {top.end_label}
+            Most likely kind of course: <b>{kind(top.kind, top.kind_label)}</b> at {pct(top.likelihood, 0)} of the walk's mass{top.courses && top.courses > 1 ? ` (${top.courses} courses, modal ${top.course})` : ` (${top.course})`}, ending {top.end_label}
             {top.presser ? `, ${top.presser} pressing` : ''}.
             {top.market_implications.length
               ? ` Historically such courses moved ${top.market_implications.slice(0, 3).map((m) => `${m.market_name} ${(m.median * 100).toFixed(2)}% (n=${m.n})`).join(', ')}.`
@@ -406,7 +420,7 @@ function DyadGame({
           <Tiles items={[
             { label: 'opening departure', value: sol.opening.intensity_label, sub: `latest ${sol.opening.latest_intensity.toFixed(2)} vs the pair's scale ${sol.opening.scale.toFixed(2)}` },
             { label: 'capability', value: `band ${sol.opening.capability.band}`, sub: sol.opening.capability.source === 'cinc' ? `CINC ratio ${(sol.opening.capability.ratio ?? 0.5).toFixed(2)}` : 'default (no CINC)' },
-            { label: 'beliefs (resolute)', value: `${pct(sol.opening.beliefs.a, 0)} / ${pct(sol.opening.beliefs.b, 0)}`, sub: sol.opening.beliefs.source === 'bayes_filter' ? `filtered from ${sol.opening.beliefs.quarters_observed} quarters` : 'flat prior' },
+            { label: `beliefs (${types[1]})`, value: `${pct(sol.opening.beliefs.a, 0)} / ${pct(sol.opening.beliefs.b, 0)}`, sub: sol.opening.beliefs.source === 'bayes_filter' ? `filtered from ${sol.opening.beliefs.quarters_observed} quarters` : 'flat prior' },
             { label: 'kernel', value: sol.opening.tilt ? (sol.opening.tilt.features ? 'this pair’s own' : `η ${(sol.opening.tilt.eta ?? 0) >= 0 ? '+' : ''}${(sol.opening.tilt.eta ?? 0).toFixed(3)}`) : 'region counted', tone: 'plain', sub: sol.opening.tilt ? sol.opening.tilt.model : 'no model ships for this region' },
           ]} />
         </div>
@@ -426,7 +440,7 @@ function DyadGame({
             <li key={sc.course + i} className="text-sm">
               <div className="flex items-baseline gap-3">
                 <span className="figure w-12 shrink-0" style={{ color: sc.delta_band > 0 ? 'var(--alert)' : sc.delta_band < 0 ? 'var(--accent)' : 'var(--text)' }}>{pct(sc.likelihood, 0)}</span>
-                <span><b>{kind(sc.kind)}</b> — {sc.rationale}</span>
+                <span><b>{kind(sc.kind, sc.kind_label)}</b> — {sc.rationale}</span>
               </div>
               <div className="ml-15 mt-2 scroll-x" style={{ marginLeft: '3.75rem' }}>
                 <table className="mono text-[11px]" style={{ borderCollapse: 'separate', borderSpacing: '8px 2px' }}>
@@ -441,8 +455,8 @@ function DyadGame({
                     {(sc.steps ?? []).map((st) => (
                       <tr key={st.period}>
                         <td>+{st.period}</td>
-                        <td style={{ color: st.action_a === 'escalate' ? 'var(--alert)' : st.action_a === 'de-escalate' ? 'var(--accent)' : 'var(--text)' }}>{st.action_a}</td>
-                        <td style={{ color: st.action_b === 'escalate' ? 'var(--alert)' : st.action_b === 'de-escalate' ? 'var(--accent)' : 'var(--text)' }}>{st.action_b}</td>
+                        <td style={{ color: actionTone(st.action_a, sol.space?.actions) }}>{st.action_a}</td>
+                        <td style={{ color: actionTone(st.action_b, sol.space?.actions) }}>{st.action_b}</td>
                         <td>{bands[st.intensity_band]}</td>
                         <td>{pct(st.band_probability ?? 0, 0)}</td>
                         <td>{st.belief_a !== undefined ? `${pct(st.belief_a, 0)} / ${pct(st.belief_b ?? 0, 0)}` : '—'}</td>
@@ -465,30 +479,30 @@ function DyadGame({
       <Beat n={3} title="The stage game at the opening" aside={lp?.nash_gap ? `nash gap: mean ${lp.nash_gap.mean.toFixed(3)}, ${pct(lp.nash_gap.share_product_form, 0)} of stage games at a Nash point` : undefined}>
         <div className="toolbar mb-3" style={{ borderTop: 'none' }}>
           <span className="kicker">own type</span>
-          {(['resolute', 'irresolute'] as const).map((t) => (
-            <button key={t} className="btn btn--quiet" aria-pressed={t === type} onClick={() => setType(t)}>{t}</button>
+          {([1, 0] as const).map((t) => (
+            <button key={t} className="btn btn--quiet" aria-pressed={t === typeIndex} onClick={() => setTypeIndex(t)}>{types[t]}</button>
           ))}
         </div>
-        <PayoffMatrix matrix={concept.opening_matrix[type]} sides={sol.sides} />
+        {concept.opening_matrix[typeName] && <PayoffMatrix matrix={concept.opening_matrix[typeName]} sides={sol.sides} />}
       </Beat>
 
-      <Beat n={4} title="Propensity to escalate, by departure band and type" aside={`${solver.toUpperCase()}, period 1, at the opening capability`}>
+      <Beat n={4} title={`Propensity to ${pressWord}, by departure band and type`} aside={`${solver.toUpperCase()}, period 1, at the opening capability`}>
         <MultiLine
           xLabels={bands}
           series={[
-            { name: 'resolute', values: propensity.resolute ?? [], color: 'var(--alert)' },
-            { name: 'irresolute', values: propensity.irresolute ?? [], color: 'var(--accent)', dash: '4 3' },
+            { name: types[1], values: propensity[types[1]] ?? [], color: 'var(--alert)' },
+            { name: types[0], values: propensity[types[0]] ?? [], color: 'var(--accent)', dash: '4 3' },
           ]}
         />
       </Beat>
 
       {beliefSteps.length > 0 && (
-        <Beat n={5} title="Beliefs along the most likely course" aside="P(resolute) after each step, by the game's own Bayes rule">
+        <Beat n={5} title="Beliefs along the most likely course" aside={`P(${types[1]}) after each step, by the game's own Bayes rule`}>
           <MultiLine
             xLabels={['open', ...beliefSteps.map((s) => `+${s.period}q`)]}
             series={[
-              { name: `${sol.sides[0]} resolute`, values: [sol.opening.beliefs.a, ...beliefSteps.map((s) => s.belief_a ?? 0)], color: 'var(--alert)' },
-              { name: `${sol.sides[1]} resolute`, values: [sol.opening.beliefs.b, ...beliefSteps.map((s) => s.belief_b ?? 0)], color: 'var(--accent)', dash: '4 3' },
+              { name: `${sol.sides[0]} ${types[1]}`, values: [sol.opening.beliefs.a, ...beliefSteps.map((s) => s.belief_a ?? 0)], color: 'var(--alert)' },
+              { name: `${sol.sides[1]} ${types[1]}`, values: [sol.opening.beliefs.b, ...beliefSteps.map((s) => s.belief_b ?? 0)], color: 'var(--accent)', dash: '4 3' },
             ]}
           />
         </Beat>

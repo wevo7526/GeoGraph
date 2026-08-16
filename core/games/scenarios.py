@@ -54,7 +54,7 @@ REGION_DYADS = 12
 #: play named at 100%, because those rows also predate the belief ceiling that
 #: stopped a filtered belief reaching certainty. A persisted computation
 #: outlives the code that wrote it; the version is what makes that safe.
-PAYLOAD_VERSION = "2026-08-16.8"
+PAYLOAD_VERSION = "2026-08-16.9"
 
 #: A step's market row needs this many measurements before the scenario
 #: names it as an implication (the pricing module's own thinness bar).
@@ -171,42 +171,61 @@ def sort_scenarios(
     return escalatory, calming
 
 
-def classify_course(steps: list[dict[str, Any]], opening_band: int) -> tuple[str, str]:
-    """(kind, sentence) for an action course. Deterministic, from the steps."""
-    esc_a = sum(1 for s in steps if s["action_a"] == "escalate")
-    esc_b = sum(1 for s in steps if s["action_b"] == "escalate")
-    de_a = sum(1 for s in steps if s["action_a"] == "de-escalate")
-    de_b = sum(1 for s in steps if s["action_b"] == "de-escalate")
+def classify_course(
+    steps: list[dict[str, Any]], opening_band: int,
+    space: family_module.ActionSpace = family_module.ADVERSARY,
+) -> tuple[str, str]:
+    """(kind, sentence) for an action course. Deterministic, from the steps.
+
+    THE SHAPE IS FAMILY-BLIND, THE WORDS ARE NOT. Who pressed and who conceded
+    is read by INDEX in the space (index 2 presses — escalate, or withhold;
+    index 0 concedes — de-escalate, or commit), so the kind KEYS are shared
+    across families and the sorting rule and the persisted payloads keep
+    working. The sentence is the family's own (`family.kind_words`): an
+    adversary's brinkmanship is an ally's "withhold, then recommit".
+    """
+    press, concede = space.actions[2], space.actions[0]
+    esc_a = sum(1 for s in steps if s["action_a"] == press)
+    esc_b = sum(1 for s in steps if s["action_b"] == press)
+    de_a = sum(1 for s in steps if s["action_a"] == concede)
+    de_b = sum(1 for s in steps if s["action_b"] == concede)
     end_band = int(steps[-1]["intensity_band"]) if steps else opening_band
     first_esc = next(
-        (i for i, s in enumerate(steps) if "escalate" in (s["action_a"], s["action_b"])),
+        (i for i, s in enumerate(steps) if press in (s["action_a"], s["action_b"])),
         None,
     )
     last_de = max(
-        (i for i, s in enumerate(steps)
-         if "de-escalate" in (s["action_a"], s["action_b"])),
+        (i for i, s in enumerate(steps) if concede in (s["action_a"], s["action_b"])),
         default=None,
     )
     if esc_a and esc_b:
         if last_de is not None and first_esc is not None and last_de > first_esc:
-            return "brinkmanship", "both sides escalate, then at least one steps back"
-        return "mutual_escalation", "both sides escalate"
-    if esc_a or esc_b:
+            kind = "brinkmanship"
+        else:
+            kind = "mutual_escalation"
+    elif esc_a or esc_b:
         if last_de is not None and first_esc is not None and last_de > first_esc:
-            return "probe_and_retreat", "one side presses, then steps back"
-        return "one_sided_pressure", "one side presses while the other holds"
-    if de_a or de_b:
-        return "step_down", "at least one side de-escalates and neither presses"
-    if end_band > opening_band:
-        return "drift_up", "both hold, yet the counted kernel drifts intensity up"
-    if end_band < opening_band:
-        return "drift_down", "both hold and intensity subsides"
-    return "holding_pattern", "both sides hold; intensity stays where it is"
+            kind = "probe_and_retreat"
+        else:
+            kind = "one_sided_pressure"
+    elif de_a or de_b:
+        kind = "step_down"
+    elif end_band > opening_band:
+        kind = "drift_up"
+    elif end_band < opening_band:
+        kind = "drift_down"
+    else:
+        kind = "holding_pattern"
+    return kind, family_module.kind_words(space.family, kind)[1]
 
 
-def _presser(steps: list[dict[str, Any]], side_a: str, side_b: str) -> str | None:
-    esc_a = sum(1 for s in steps if s["action_a"] == "escalate")
-    esc_b = sum(1 for s in steps if s["action_b"] == "escalate")
+def _presser(
+    steps: list[dict[str, Any]], side_a: str, side_b: str,
+    space: family_module.ActionSpace = family_module.ADVERSARY,
+) -> str | None:
+    press = space.actions[2]
+    esc_a = sum(1 for s in steps if s["action_a"] == press)
+    esc_b = sum(1 for s in steps if s["action_b"] == press)
     if esc_a and not esc_b:
         return side_a
     if esc_b and not esc_a:
@@ -245,7 +264,8 @@ def market_implications(steps: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
 
 def scenarios_for(
-    priced: dict[str, Any], *, dyad_id: str, dyad_name: str, opening_band: int, bands: int
+    priced: dict[str, Any], *, dyad_id: str, dyad_name: str, opening_band: int, bands: int,
+    space: family_module.ActionSpace = family_module.ADVERSARY,
 ) -> list[dict[str, Any]]:
     """Named scenarios from the priced paths — one per KIND of course.
 
@@ -270,7 +290,7 @@ def scenarios_for(
     grouped: dict[str, dict[str, Any]] = {}
     for course_group in priced.get("kinds") or []:
         steps = course_group["steps"]
-        kind, sentence = classify_course(steps, opening_band)
+        kind, sentence = classify_course(steps, opening_band, space)
         grouped[kind] = {
             "kind": kind, "sentence": sentence,
             "likelihood": float(course_group["probability"]),
@@ -280,7 +300,7 @@ def scenarios_for(
         }
     if not grouped:
         for path in priced.get("paths", []):
-            kind, sentence = classify_course(path["steps"], opening_band)
+            kind, sentence = classify_course(path["steps"], opening_band, space)
             slot = grouped.setdefault(kind, {
                 "kind": kind, "sentence": sentence, "likelihood": 0.0,
                 "lead": 0.0, "courses": 0, "paths": [],
@@ -297,7 +317,7 @@ def scenarios_for(
         kind = str(slot["kind"])
         likelihood = float(slot["likelihood"])
         end_band = int(steps[-1]["intensity_band"]) if steps else opening_band
-        presser = _presser(steps, side_a, side_b)
+        presser = _presser(steps, side_a, side_b, space)
         course = " → ".join(f"{s['action_a']}/{s['action_b']}" for s in steps)
         # Priced over EVERY pooled course's steps: same class of course, more
         # measured events behind the median, and the thinness bar unchanged.
@@ -310,6 +330,10 @@ def scenarios_for(
         out.append({
             "scenario_name": f"{kind}:{dyad_id}",
             "kind": kind,
+            # The family's own label for the kind — "free-riding" where an
+            # adversary's course would read "one-sided pressure".
+            "kind_label": family_module.kind_words(space.family, kind)[0],
+            "family": space.family,
             "likelihood": round(likelihood, 4),
             "courses": int(slot["courses"]),
             "lead_likelihood": round(float(slot["lead"]), 4),
@@ -336,7 +360,11 @@ def scenarios_for(
                 f"moves {band_label(opening_band, bands)} → "
                 f"{band_label(end_band, bands)} over {len(steps)} quarter"
                 f"{'s' if len(steps) != 1 else ''}"
-                + (f"; {presser} is the side pressing" if presser else "")
+                + (
+                    f"; {presser} is the side "
+                    f"{'withholding' if space.family == 'ally' else 'pressing'}"
+                    if presser else ""
+                )
                 + "."
             ),
         })
@@ -371,24 +399,32 @@ def _sharp_departure_probability(marginal: list[dict[str, Any]]) -> float:
     return round(float(sum(dist[TYPICAL_BAND + 1:])), 4)
 
 
-def _propensity(equilibrium: dict[str, Any], capability: int) -> dict[str, list[float]]:
-    escalate = state_module.ACTIONS.index("escalate")
+def _propensity(
+    equilibrium: dict[str, Any], capability: int,
+    space: family_module.ActionSpace = family_module.ADVERSARY,
+) -> dict[str, list[float]]:
+    """P(press | band, type) at the opening period — escalate for an
+    adversary, withhold for an ally."""
+    press = 2
     return {
-        state_module.TYPES[t]: [
-            round(float(equilibrium["policy"][0, b, capability, t][escalate]), 4)
+        space.types[t]: [
+            round(float(equilibrium["policy"][0, b, capability, t][press]), 4)
             for b in range(len(state_module.INTENSITY_EDGES))
         ]
-        for t in range(len(state_module.TYPES))
+        for t in range(len(space.types))
     }
 
 
-def _matrix_at(equilibrium: dict[str, Any], band: int, capability: int, own: int) -> dict[str, Any]:
+def _matrix_at(
+    equilibrium: dict[str, Any], band: int, capability: int, own: int,
+    space: family_module.ActionSpace = family_module.ADVERSARY,
+) -> dict[str, Any]:
     a, b = equilibrium["opening_matrices"]
     return {
         "a": [[round(float(v), 4) for v in row] for row in a[band, capability, own]],
         "b": [[round(float(v), 4) for v in row] for row in b[band, capability, own]],
-        "actions": list(state_module.ACTIONS),
-        "type": state_module.TYPES[own],
+        "actions": list(space.actions),
+        "type": space.types[own],
         "mix_a": [round(float(v), 4) for v in equilibrium["policy"][0, band, capability, own]],
         "mix_b": [round(float(v), 4) for v in equilibrium["policy_b"][0, band, capability, own]],
         "value": round(float(equilibrium["value"][band, capability, own]), 4),
@@ -404,12 +440,18 @@ def solve_dyad(
     graph_conn: Any,
     horizon: int = 4,
     solvers: tuple[str, ...] = ("qre", "lp"),
+    ally_payoffs: solve_module.Payoffs | None = None,
 ) -> dict[str, Any] | None:
     """The full solved game for one dyad at its data-driven opening state.
 
     `context` is the games router's per-region context (table, kernel, joint,
     effects, model_trajectories, model_identity, coverage, as_of). Returns
     None when the dyad has no series in the region.
+
+    THE FAMILY IS DECIDED FIRST, and everything after it is played in that
+    family's space: `payoffs` is the adversary game's (the rival game plays it
+    too, and says so); `ally_payoffs` is the burden-sharing game's, read from
+    `models/game-ally-<region>.json` or the ally defaults when None.
     """
     own = [r for r in context["table"] if r["dyad_id"] == dyad_id]
     if not own:
@@ -431,21 +473,35 @@ def solve_dyad(
     tone_now = read["tone"]
     standing_now = opening_module.standing(graph_conn, dyad_id, as_of=context["as_of"])
     capability = opening_module.capability_state(graph_conn, dyad_id)
-    beliefs = opening_module.filtered_beliefs(context["joint"], dyad_id, payoffs)
     cap = int(capability["band"])
 
-    kernel, tilt = context_module.kernel_for(context, dyad_id)
+    # WHICH GAME, before any number. The family is read from what the pair IS
+    # and how its record READS; the space it names decides the reading of the
+    # record the beliefs are filtered from, the kernel, the payoff, the words.
+    classification = family_module.classify(standing_now, read)
+    space = family_module.space_for(classification["family"])
+    if space.family == "ally":
+        payoffs = ally_payoffs or solve_module.Payoffs(
+            **context_module.fitted_payoffs(region, "ally")
+        )
+    joint = context_module.joint_for(context, space)
+    beliefs = opening_module.filtered_beliefs(joint, dyad_id, payoffs, space=space)
+
+    kernel, tilt = context_module.kernel_for(context, dyad_id, space)
 
     concepts: dict[str, Any] = {}
     for solver in solvers:
-        equilibrium = solve_module.solve(kernel, payoffs, horizon=horizon, solver=solver)
+        equilibrium = solve_module.solve(
+            kernel, payoffs, horizon=horizon, solver=solver, space=space
+        )
         walked = paths_module.enumerate_paths(
             equilibrium, kernel, intensity=band, capability=cap,
             belief_a=float(beliefs["a"]), belief_b=float(beliefs["b"]), payoffs=payoffs,
             # The naming lives here; the walk does the counting. Injected so
             # the kind shares are pooled over EVERY enumerated course rather
             # than over the eight the reading cut keeps.
-            classify=lambda steps: classify_course(steps, band)[0],
+            classify=lambda steps: classify_course(steps, band, space)[0],
+            space=space,
         )
         priced = pricing_module.price_paths(
             walked, context["effects"], as_of=context["as_of"], scale=scale or 1.0
@@ -457,18 +513,18 @@ def solve_dyad(
             "marginal": marginal,
             "escalation_probability": _escalation_probability(marginal, band),
             "sharp_departure_probability": _sharp_departure_probability(marginal),
-            "escalation_propensity": _propensity(equilibrium, cap),
+            "escalation_propensity": _propensity(equilibrium, cap, space),
             "paths": priced["paths"],
             "paths_enumerated": priced["paths_enumerated"],
             "retained_probability": priced["retained_probability"],
             "pricing": priced.get("pricing"),
             "opening_matrix": {
-                state_module.TYPES[t]: _matrix_at(equilibrium, band, cap, t)
-                for t in range(len(state_module.TYPES))
+                space.types[t]: _matrix_at(equilibrium, band, cap, t, space)
+                for t in range(len(space.types))
             },
             "scenarios": scenarios_for(
                 priced, dyad_id=dyad_id, dyad_name=dyad_name,
-                opening_band=band, bands=bands,
+                opening_band=band, bands=bands, space=space,
             ),
         }
 
@@ -502,7 +558,7 @@ def solve_dyad(
             # "probe and retreat". Naming the family is the honest half of the
             # fix; giving each family its own actions and fitted payoffs is
             # the other, and is not done yet.
-            "family": family_module.classify(standing_now, read),
+            "family": classification,
             "latest_intensity": round(float(latest["intensity"]), 3),
             "scale": round(float(scale or 0.0), 3),
             "active_quarters": len([r for r in own if float(r["intensity"]) > 0]),
@@ -515,9 +571,21 @@ def solve_dyad(
             "cost_irresolute": payoffs.cost_irresolute, "stake": payoffs.stake,
             "audience": payoffs.audience,
         },
+        # THE GAME PLAYED: its family, its actions in order (concede / hold /
+        # press) and its private types, so a reader of the payload — and the
+        # explanation below — never has to guess what index 2 meant.
+        "space": {
+            "family": space.family,
+            "actions": list(space.actions),
+            "types": list(space.types),
+            "quads": dict(space.quads),
+        },
         "primary_solver": primary,
         "concepts": concepts,
-        "kernel": context["coverage"],
+        "kernel": (
+            context.get("coverage_by_space", {}).get("ally", context["coverage"])
+            if space.family == "ally" else context["coverage"]
+        ),
         "boundary_statement": BOUNDARY_STATEMENT,
     }
     solution["explanation"] = explain(solution)
@@ -579,8 +647,9 @@ def describe_posture(opening: dict[str, Any]) -> str:
     )
 
 
-def _mix_words(mix: list[float]) -> str:
-    parts = [f"{state_module.ACTIONS[i]} {_pct(m)}" for i, m in enumerate(mix) if m >= 0.05]
+def _mix_words(mix: list[float], actions: list[str] | None = None) -> str:
+    names = list(actions or state_module.ACTIONS)
+    parts = [f"{names[i]} {_pct(m)}" for i, m in enumerate(mix) if m >= 0.05]
     return ", ".join(parts) if parts else "no action above 5%"
 
 
@@ -634,6 +703,10 @@ def explain(solution: dict[str, Any]) -> list[str]:
     lp = solution["concepts"].get("lp")
     qre = solution["concepts"].get("qre")
     horizon = solution["horizon"]
+    space_info = solution.get("space") or {}
+    actions = list(space_info.get("actions") or state_module.ACTIONS)
+    type_one = str((space_info.get("types") or state_module.TYPES)[1])
+    is_ally = space_info.get("family") == "ally"
     out: list[str] = []
 
     cap = op["capability"]
@@ -674,14 +747,15 @@ def explain(solution: dict[str, Any]) -> list[str]:
         out.append(family_module.describe(op["family"]))
 
     if lp:
-        m = lp["opening_matrix"]["resolute"]
+        m = lp["opening_matrix"][type_one]
         gap = lp.get("nash_gap") or {}
         out.append(
             f"The LP solution: at this opening state the welfare-maximal correlated equilibrium "
             f"(entropy-regularised at the fitted precision, so a tie between equilibria is kept "
-            f"rather than resolved into certainty) has a resolute {side_a} playing "
-            f"{_mix_words(m['mix_a'])} and {side_b} playing "
-            f"{_mix_words(m['mix_b'])}. Across the {gap.get('stage_games', 0)} stage games of the "
+            f"rather than resolved into certainty) has a {type_one} {side_a} playing "
+            f"{_mix_words(m['mix_a'], actions)} and {side_b} playing "
+            f"{_mix_words(m['mix_b'], actions)}. Across the {gap.get('stage_games', 0)} "
+            "stage games of the "
             "backward induction it sat on a Nash point in "
             f"{_pct(float(gap.get('share_product_form', 0)))} "
             f"of them (mean nash_gap {float(gap.get('mean', 0)):.3f}, worst "
@@ -694,14 +768,15 @@ def explain(solution: dict[str, Any]) -> list[str]:
             )
         )
     if qre and lp:
-        modal_lp = int(np.argmax(lp["opening_matrix"]["resolute"]["mix_a"]))
-        modal_qre = int(np.argmax(qre["opening_matrix"]["resolute"]["mix_a"]))
+        modal_lp = int(np.argmax(lp["opening_matrix"][type_one]["mix_a"]))
+        modal_qre = int(np.argmax(qre["opening_matrix"][type_one]["mix_a"]))
         agree = modal_lp == modal_qre
         out.append(
             f"The fitted quantal response, the concept the payoffs were estimated under, "
             f"{'agrees' if agree else 'disagrees'} on the modal opening action "
-            f"({state_module.ACTIONS[modal_qre]} vs the LP's {state_module.ACTIONS[modal_lp]}); "
-            f"its escalation probability over {horizon} quarters is "
+            f"({actions[modal_qre]} vs the LP's {actions[modal_lp]}); "
+            f"its {'friction' if is_ally else 'escalation'} probability over "
+            f"{horizon} quarters is "
             f"{_pct(qre['escalation_probability'])} "
             f"against the LP's {_pct(lp['escalation_probability'])}. Where they diverge, "
             "the QRE is "
@@ -716,13 +791,17 @@ def explain(solution: dict[str, Any]) -> list[str]:
         fan_end = marg[-1]["expected_band"] if marg else op["intensity_band"]
         out.append(
             f"The most likely kind of course under the {primary.upper()} is "
-            f"{top['kind'].replace('_', ' ')} at {_pct(top['likelihood'])} of the "
+            f"{top.get('kind_label') or top['kind'].replace('_', ' ')} at "
+            f"{_pct(top['likelihood'])} of the "
             f"walk's own mass — {top.get('courses', 1)} enumerated course"
             f"{'s' if int(top.get('courses', 1)) != 1 else ''} the classifier reads "
             f"the same way, the modal one ({top['course']}, "
             f"{_pct(top.get('lead_likelihood', top['likelihood']))}) ending "
             f"{top['end_label']}"
-            + (f" with {top['presser']} pressing" if top.get("presser") else "")
+            + (
+                f" with {top['presser']} {'withholding' if is_ally else 'pressing'}"
+                if top.get("presser") else ""
+            )
             + f". The fan's expected band moves {fan_start:.2f} → {fan_end:.2f}; "
             f"the chance of a sharper-than-usual departure after {horizon} quarters is "
             f"{_pct(concept['sharp_departure_probability'])} (above the opening band: "
@@ -786,11 +865,16 @@ def region_map(
     Returns the per-dyad solutions in full (the drill-in reads them) beside
     the region aggregate; the writer splits them across rows.
     """
+    # The ally game's payoffs, resolved ONCE for the region: the fitted ally
+    # artifact where one ships, the ally defaults otherwise. `solve_dyad`
+    # picks them up only for pairs its family read makes allies.
+    ally_payoffs = solve_module.Payoffs(**context_module.fitted_payoffs(region, "ally"))
     solutions: list[dict[str, Any]] = []
     for dyad_id in dyad_ids:
         solved = solve_dyad(
             context, region=region, dyad_id=dyad_id, payoffs=payoffs,
             graph_conn=graph_conn, horizon=horizon, solvers=solvers,
+            ally_payoffs=ally_payoffs,
         )
         if solved is not None:
             solutions.append(solved)
@@ -823,6 +907,7 @@ def region_map(
             # WHICH GAME THIS PAIR PLAYS, so the row can say "ally" beside a
             # number that would otherwise read as odds of war.
             "family": s["opening"].get("family"),
+            "space": (s.get("space") or {}).get("family"),
             "escalation_probability": c["escalation_probability"],
             "sharp_departure_probability": c["sharp_departure_probability"],
             "escalation_probability_qre": (
@@ -860,6 +945,7 @@ def region_map(
                     "end_band", "end_band_range", "end_label", "delta_band",
                     "market_implications", "rationale",
                 )},
+                "kind_label": sc.get("kind_label"),
                 "tone_label": s["opening"].get("tone_label"),
                 "posture": s["opening"].get("posture"),
                 "standing": s["opening"].get("standing"),

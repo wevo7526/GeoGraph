@@ -31,6 +31,12 @@ from core.wire import corpus
 _LOCK = threading.Lock()
 _TABLES: dict[str, list[dict[str, Any]]] = {}
 _JOINT: dict[tuple[str, int], tuple[str, str]] = {}
+#: The per-side quad-class counts behind `_JOINT` — a few integers per
+#: dyad-quarter — kept so a FAMILY'S reading (the ally space reads the same
+#: quarter as commit / affirm / withhold) can be derived after the raw rows
+#: are gone, without re-parsing the wire. `_JOINT_BY_SPACE` memoises those.
+_QUADS: dict[tuple[str, int], dict[str, dict[str, int]]] = {}
+_JOINT_BY_SPACE: dict[str, dict[tuple[str, int], tuple[str, str]]] = {}
 # The EXPLORER VIEW: per pack, a time-sorted list of tab-joined slim rows
 # (event_time first, so lexical bisect IS the window query), plus per-pack
 # year counts for the coverage strip. Kept compact — one str per event
@@ -87,6 +93,8 @@ def reset() -> None:
     with _LOCK:
         _TABLES.clear()
         _JOINT.clear()
+        _QUADS.clear()
+        _JOINT_BY_SPACE.clear()
         _EVENTS.clear()
         _COVERAGE.clear()
         _WARMED = False
@@ -127,11 +135,9 @@ def warm() -> dict[str, Any]:
             # lens's update overwrites the earlier one's keys — harmlessly,
             # because both lenses carry the same underlying events for a
             # shared dyad and derive the same joint actions.
-            _JOINT.update(
-                transition.joint_actions(
-                    game_rows, quarter_of=panel_module.quarter_index
-                )
-            )
+            counts = transition.quad_counts(game_rows, quarter_of=panel_module.quarter_index)
+            _QUADS.update(counts)
+            _JOINT.update(transition.joint_from_counts(counts))
         # Pooled coverage, deduped by event id (shared-roster events ship in
         # more than one lens): computed once here — the transient id set is
         # freed when warm returns — so the no-pack ask never rescans 1.3M rows.
@@ -168,13 +174,28 @@ def table(region: str | None) -> list[dict[str, Any]] | None:
     return _TABLES.get(region or "*")
 
 
-def joint_actions() -> dict[tuple[str, int], tuple[str, str]] | None:
-    """(dyad, quarter) → joint action, across every installed lens."""
+def joint_actions(
+    space: Any = None,
+) -> dict[tuple[str, int], tuple[str, str]] | None:
+    """(dyad, quarter) → joint action, across every installed lens — in a
+    family's space when one is given (derived once from the retained quad
+    counts and memoised), the adversary's otherwise."""
     if not available():
         return None
     if not _WARMED:
         warm()
-    return _JOINT
+    if space is None or space.family == "adversary":
+        return _JOINT
+    cached = _JOINT_BY_SPACE.get(space.family)
+    if cached is None:
+        from core.games import transition
+
+        with _LOCK:
+            cached = _JOINT_BY_SPACE.get(space.family)
+            if cached is None:
+                cached = transition.joint_from_counts(_QUADS, space)
+                _JOINT_BY_SPACE[space.family] = cached
+    return cached
 
 
 # ── the explorer view: window queries over the wire ─────────────────────────

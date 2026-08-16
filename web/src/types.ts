@@ -832,6 +832,9 @@ export interface Scenario {
     steps_priced: number
   }>
   rationale: string
+  /** The family's own label for the kind — "free-riding" where an
+   *  adversary's course would read "one-sided pressure". */
+  kind_label?: string | null
   tone_label?: string
   standing?: Standing | null
   posture?: Posture | null
@@ -962,6 +965,11 @@ export interface DyadSolution {
     } | null
   }
   payoffs: Record<string, number>
+  /** THE GAME PLAYED: its family, its actions in order (concede / hold /
+   *  press) and its private types — commit/affirm/withhold and
+   *  reluctant/committed for an ally pair; de-escalate/hold/escalate and
+   *  irresolute/resolute for the rest. */
+  space?: { family: string; actions: string[]; types: string[]; quads: Record<string, string> }
   primary_solver: 'lp' | 'qre'
   concepts: Record<'lp' | 'qre', ConceptSolution>
   kernel: {
@@ -999,6 +1007,7 @@ export interface RegionRanking {
   top_scenario: {
     scenario_name: string
     kind: string
+    kind_label?: string | null
     likelihood: number
     course: string
     end_label: string
