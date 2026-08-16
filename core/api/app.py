@@ -137,7 +137,7 @@ def _start_jobs(app: FastAPI, settings: Any) -> None:
             # urgency: a slice every few minutes converges a hundred-thousand
             # event archive in days while staying invisible to a reader.
             jobs_module.Job(
-                name="study", every=180.0, run=work.study,
+                name="study", every=120.0, run=work.study,
                 enabled=jobs_module._enabled("study"),
             ),
             jobs_module.Job(

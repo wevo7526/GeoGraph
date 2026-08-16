@@ -19,6 +19,7 @@ Order of value, which is also the order they were written:
 
 from __future__ import annotations
 
+import os
 import time
 from typing import Any
 
@@ -46,10 +47,13 @@ def _pack_names() -> list[str]:
 # ── the measurement backlog ────────────────────────────────────────────────
 
 
-#: Events handed to one tick. The bound is the deadline, not this; the cap
-#: only stops a single tick from preloading a panel span for work it will
-#: never reach.
-STUDY_EVENTS_PER_TICK = 400
+#: Events handed to one tick. The DEADLINE is the real bound; this only stops
+#: a tick from preloading a panel span for work it will never reach — so it
+#: has to be comfortably more than a slice can measure, or it becomes the
+#: bound by accident. Measured 2026-08-16: a tick measured 400 events in 23.6s
+#: of a 45s slice, i.e. the cap was doing the stopping and half the slice went
+#: unused, against a backlog of 564,596 events.
+STUDY_EVENTS_PER_TICK = int(os.getenv("GEOGRAPH_STUDY_EVENTS_PER_TICK", "1200"))
 
 #: The archive scan, memoised on the graph's own event count. Reading every
 #: event and parsing every date is ~4s at 456k events and grows with the wire
