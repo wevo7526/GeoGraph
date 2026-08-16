@@ -604,6 +604,13 @@ input[type='range'].timeline:focus-visible {
   border-radius: 999px;
   color: var(--muted);
   white-space: nowrap;
+  /* A chip in a table row must clip, not spill: the standing chip's long
+     form ran out of its column and under the bar beside it (2026-08-16). */
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  display: inline-block;
+  vertical-align: middle;
 }
 .chip--good { color: var(--accent); border-color: var(--accent); }
 .chip--bad { color: var(--alert); border-color: var(--alert); }

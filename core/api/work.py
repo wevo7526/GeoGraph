@@ -394,3 +394,40 @@ def calibration(conn: Any, deadline: float) -> dict[str, Any]:
     if not done:
         return {"note": "every region's scoreboard is current", "archive_rows": size}
     return {"computed": done, "archive_rows": size}
+
+
+# ── Head B over what the wire just loaded ──────────────────────────────────
+
+
+def rescore(conn: Any, deadline: float) -> dict[str, Any]:
+    """Score the escalation of events the loader wrote without it.
+
+    THE GAP THE WIRE JOB OPENS. `gdelt.write_events` writes an event's code,
+    date, actors and Goldstein — not its escalation direction, magnitude or
+    baseline, because Head B folds per dyad in time order and that is a
+    separate pass. Everything that reads escalation OFF THE GRAPH (the dyad
+    timeline, structural pressure, the graph half of the forecast union) sees
+    nulls until this runs, so a wire load without a rescore quietly degrades
+    exactly the surfaces the load was meant to feed.
+
+    One dyad per step, whole history each time — see `rescore_dyad` for why
+    that is equivalent to the archive-wide pass rather than a partial fold.
+    """
+    from core.classifier import rescore as rescore_module
+
+    dyads = rescore_module.unscored_dyads(conn, limit=40)
+    if not dyads:
+        return {"note": "every event carries Head B's coding"}
+    done: list[str] = []
+    events = 0
+    for dyad_id in dyads:
+        if time.monotonic() >= deadline:
+            break
+        outcome = rescore_module.rescore_dyad(conn, dyad_id)
+        events += int(outcome["events_rescored"])
+        done.append(dyad_id)
+    return {
+        "dyads_rescored": len(done),
+        "events": events,
+        "dyads_pending_at_least": len(dyads) - len(done),
+    }

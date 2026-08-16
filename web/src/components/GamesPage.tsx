@@ -9,7 +9,7 @@ import { getDyadSolution, getRegionMap, lastFailureFor } from '../api'
 import { useRegionLabel } from '../regions'
 import type { ConceptSolution, DyadSolution, RegionMap, Scenario } from '../types'
 import { Beat, Chip, Disclosure, Empty, StoryHead } from '../ui'
-import { postureNote, standingLabel } from '../lib/language'
+import { postureNote, standingChip, standingLabel } from '../lib/language'
 import { BandHeat, Bars, MultiLine, PayoffMatrix, Tiles, pct } from './charts/Kit'
 
 const KIND_LABEL: Record<string, string> = {
@@ -123,16 +123,21 @@ function RegionGames({ region, onPick }: { region: string; onPick: (dyad: string
         <div className="space-y-1">
           {ranking.map((r) => (
             <div key={r.dyad_id} className="flex items-center gap-3 text-xs cursor-pointer" onClick={() => onPick(r.dyad_id)}>
-              <span className="w-44 shrink-0 truncate">{r.dyad_name}</span>
-              <span className="w-28 shrink-0" title={postureNote(r.posture) ?? undefined}>
-                <Chip label={standingLabel(r.standing) ?? r.posture?.label ?? 'no declared standing'}
+              <span className="w-44 shrink-0 truncate" title={r.dyad_name}>{r.dyad_name}</span>
+              {/* Fixed width AND overflow-hidden: the long form ("formal allies
+                  since 1949") spilled out of the chip and ran under the bar. */}
+              <span className="w-24 shrink-0 overflow-hidden whitespace-nowrap"
+                    title={[standingLabel(r.standing), postureNote(r.posture)].filter(Boolean).join(' · ')}>
+                <Chip label={standingChip(r.standing) ?? r.posture?.label ?? 'unaligned'}
                       tone={r.standing?.relations?.length ? 'ink' : 'muted'} />
               </span>
-              <span className="relative flex-1 h-3" style={{ background: 'var(--panel)' }}>
-                <span className="absolute top-0 bottom-0 left-0" style={{ width: `${r.sharp_departure_probability * 100}%`, background: r.sharp_departure_probability >= 0.5 ? 'var(--alert)' : 'var(--accent)' }} />
+              <span className="relative flex-1 h-3 min-w-[3rem]" style={{ background: 'var(--panel)' }}>
+                <span className="absolute top-0 bottom-0 left-0" style={{ width: `${Math.max(0, Math.min(1, r.sharp_departure_probability)) * 100}%`, background: r.sharp_departure_probability >= 0.5 ? 'var(--alert)' : 'var(--accent)' }} />
               </span>
-              <span className="mono w-12 text-right">{pct(r.sharp_departure_probability, 0)}</span>
-              <span className="mono w-32 text-right truncate" style={{ color: 'var(--muted)' }}>{r.opening_label}{r.tilted ? ' · tilted' : ''}</span>
+              <span className="mono w-12 text-right shrink-0">{pct(r.sharp_departure_probability, 0)}</span>
+              <span className="mono w-36 shrink-0 text-right truncate"
+                    title={`${r.opening_label}${r.tilted ? ' · tilted by the model' : ''}`}
+                    style={{ color: 'var(--muted)' }}>{r.opening_label}{r.tilted ? ' ·⌁' : ''}</span>
             </div>
           ))}
         </div>

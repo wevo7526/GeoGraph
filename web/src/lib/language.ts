@@ -174,6 +174,28 @@ export function standingLabel(
   return (since ? `${word} since ${since}` : word) + also
 }
 
+/** The same standing, compact enough for a table cell. The long form
+ *  ("formal allies since 1949") overflowed a fixed-width chip and ran under
+ *  the bar beside it; a row needs the fact, not the sentence. */
+export function standingChip(
+  standing?: { relations?: Array<{ relation_type: string; since?: string }> } | null,
+): string | null {
+  const rows = standing?.relations ?? []
+  if (!rows.length) return null
+  const short: Record<string, string> = {
+    rivalry: 'rivalry',
+    alliance: 'allies',
+    proxy: 'patron',
+    membership: 'bloc',
+    trade: 'trade',
+  }
+  const first = rows[0]
+  const word = short[first.relation_type] ?? first.relation_type.replace(/_/g, ' ')
+  const year = (first.since ?? '').slice(2, 4)
+  const also = rows.length > 1 ? `+${rows.length - 1}` : ''
+  return [word, year ? `’${year}` : '', also].filter(Boolean).join(' ')
+}
+
 /** HOW THE RECORD READS LATELY — the coercive share of the pair's coded
  *  events, with its sample. A measurement, worded as one. */
 export function postureNote(

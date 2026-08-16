@@ -1038,6 +1038,9 @@ export interface CalibrationBlock {
 }
 
 export interface CalibrationWalk extends CalibrationBlock {
+  /** The walk is warmed by a background job; a pending payload carries no
+   *  numbers and the surface simply shows no scoreboard yet. */
+  pending?: boolean
   region_pack: string
   horizon_years?: number
   recent?: CalibrationBlock & { years: number }

@@ -46,7 +46,9 @@ def _conn(request: Request) -> Any:
 
 
 @router.get("/forecasts/calibration")
-def calibration_walk(request: Request, region: str = "mena") -> dict[str, Any]:
+def calibration_walk(
+    request: Request, region: str = "mena", compute: bool = False
+) -> dict[str, Any]:
     """THE SCOREBOARD, and it exists today rather than in 2029.
 
     The near-term forecast asks a three-year question, so nothing frozen this
@@ -61,11 +63,25 @@ def calibration_walk(request: Request, region: str = "mena") -> dict[str, Any]:
     """
     from core.reasoning import calibration, forecasting
 
-    # The `calibration` job warms this (core/api/work.py); a reader only pays
-    # for the walk when it arrives before the first tick.
+    # NEVER COMPUTED ON THE REQUEST THREAD. The walk is the archive read plus
+    # ~5s per region — over two minutes as the wire job grows the archive, and
+    # growing. The `calibration` job (core/api/work.py) warms it; until it has,
+    # the honest answer is a fast one that says so. Exactly the same rule the
+    # scenario map now follows, learned from the same failure: an endpoint that
+    # does minutes of work is an endpoint that hangs a page.
     warmed = calibration.cached(region)
     if warmed is not None:
         return warmed
+    if not compute:
+        return {
+            "region_pack": region,
+            "pending": True,
+            "note": (
+                "the calibration walk is computed in the background and is not "
+                "ready yet (watch /api/jobs); add compute=true to run it on "
+                "this request, which takes minutes"
+            ),
+        }
     settings = request.app.state.settings
     try:
         rows = forecasting.all_dyad_event_rows(settings.kuzu_db_path)

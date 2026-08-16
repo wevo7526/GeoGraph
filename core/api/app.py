@@ -147,6 +147,14 @@ def _start_jobs(app: FastAPI, settings: Any) -> None:
             # its roster dyads held 351 events and nothing could be measured
             # against them. A 50% duty cycle converges it in a few hours with
             # the site up.
+            # Head B over what the wire loaded. Runs close behind it, because
+            # an event in the graph without escalation fields is an event the
+            # dyad pages and the structural layer read as a null.
+            jobs_module.Job(
+                name="rescore", every=120.0, run=work.rescore,
+                enabled=jobs_module._enabled("rescore"),
+                slice_seconds=60.0,
+            ),
             # The scoreboard: seconds per region, and it must not be the first
             # reader's problem — the archive read alone grows with the wire.
             jobs_module.Job(
