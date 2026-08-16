@@ -11,8 +11,8 @@ production had measured ~10% of the wire and had walked as far as 2003 while
 mena's flagship dyads held 351 graph events between them.
 
 The API is already the process holding the write lock. So the work belongs
-here, on a second connection to the same open database (`kuzu_store.sibling`),
-in bounded slices, forever. A deploy then costs a seed and an open; the archive
+here, on the API's OWN connection, serialised against request reads by
+`kuzu_store.ACCESS`, in bounded slices, forever. A deploy then costs a seed and an open; the archive
 converges in the background while the site serves; and turning a job on stops
 being a decision about an outage.
 
@@ -165,34 +165,36 @@ class Scheduler:
 
     # ── the loop ───────────────────────────────────────────────────────────
     def _open(self) -> bool:
-        """A SECOND connection on the API's own database.
+        """THE API'S OWN CONNECTION — not a second one.
 
-        Not a second `kuzu.Database`: each one reserves 8 TiB of virtual
-        address space and would take the single-writer lock this process
-        already holds. `sibling` shares the open database, which is the only
-        way a job can write while the API serves.
+        This started as a sibling connection (`kuzu_store.sibling`), which is
+        legal and works on a fresh graph. In production it did not: the study
+        job's first AFFECTED merge died inside Kuzu's rel storage
+        (csr_node_group.cpp KU_UNREACHABLE), and the same write on the OWNER
+        connection is the configuration this archive has been written by all
+        along — the boot's child processes wrote 632k AFFECTED edges and 815k
+        events that way. Reproduced locally on the owner connection at scale
+        with no failure: 200,000 edges onto one market node, then 20,000
+        re-merges through the ON MATCH SET path.
+
+        Exclusion now comes from `kuzu_store.ACCESS` (readers share, writers
+        exclude, writers are never starved), which is what makes sharing one
+        connection between request threads and the job safe. `sibling` stays in
+        the store for read-only helpers; nothing writes through one.
         """
-        from core.graph import kuzu_store
-
         graph = getattr(self.app.state, "graph", None)
         if graph is None:
             return False
-        if self.conn is not None:
-            return True
-        try:
-            self.conn = kuzu_store.sibling(graph)
-            self.error = None
-            return True
-        except Exception as exc:  # noqa: BLE001 - a scheduler must not crash the API
-            self.error = f"cannot open a job connection: {exc}"
-            return False
+        self.conn = graph
+        self.error = None
+        return True
 
     def _loop(self) -> None:
         while not self._stop.wait(TICK_SECONDS):
             if not self._open():
                 continue
-            # The API's graph can be replaced (a reopen after a failure); a
-            # sibling of a closed database is dead, so re-derive it.
+            # The API's graph can be replaced (a reopen after a failure), so
+            # the connection is re-read every pass rather than cached.
             now = time.monotonic()
             for job in self.jobs:
                 if self._stop.is_set():

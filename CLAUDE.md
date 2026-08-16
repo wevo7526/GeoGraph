@@ -523,10 +523,16 @@ of the wire, had walked as far as 2003, and mena's roster dyads held **351**
 graph events against china's 340,784.
 
 So the work moved to the process that already holds the write lock:
-`core/api/jobs.py` (the scheduler) + `core/api/work.py` (the jobs), on a
-SECOND connection to the API's own open database (`kuzu_store.sibling` — Kuzu's
-single-writer rule is per process, not per connection; verified under
-concurrent read/write). Three rules make it safe under live traffic:
+`core/api/jobs.py` (the scheduler) + `core/api/work.py` (the jobs), on the
+API's OWN connection. It started on a second connection (`kuzu_store.sibling`)
+— legal, and fine on a fresh graph — and production refused: the study job's
+first AFFECTED merge died inside Kuzu's rel storage (`csr_node_group.cpp
+KU_UNREACHABLE`) twice, while the same writes on the owner connection are the
+configuration this archive was built by (the boot's children wrote 632k
+AFFECTED edges that way). Reproduced clean on the owner connection at scale:
+200,000 edges onto one market node, then 20,000 re-merges through ON MATCH
+SET. Sharing one connection between request threads and the job is safe
+because of the lock below, not despite it. Three rules make it safe under live traffic:
 
 1. **Every tick is bounded.** A job gets a deadline and stops at the next clean
    boundary. Nothing runs "until done" — `GEOGRAPH_JOB_SLICE` (45s default).
