@@ -13,6 +13,8 @@ from __future__ import annotations
 import time
 from typing import Any
 
+import pytest
+
 from core.api import jobs as jobs_module
 
 
@@ -303,9 +305,14 @@ def test_the_study_is_a_child_and_stops_on_its_own_budget(monkeypatch):
     from core.api import work
     from core.graph import kuzu_store
 
-    # The API registers it as a child.
+    # The API registers it as child-CAPABLE. It runs in-process by default —
+    # the child costs ~90s of graph-dark per slice and the in-process path
+    # costs nothing — and switches for the life of the process only if Kuzu's
+    # storage assertion returns.
     source = Path(app_module.__file__).read_text(encoding="utf-8")
     assert 'name="study"' in source and "child=True" in source
+    assert work._STORAGE_ASSERTION == "KU_UNREACHABLE"
+    assert not work._PREFER_CHILD, "the child must be the fallback, not the default"
 
     # The CLI it drives accepts a budget, and the job passes one.
     cli = (Path(app_module.__file__).resolve().parents[2]
@@ -377,3 +384,44 @@ def test_the_loop_pauses_rather_than_letting_the_container_be_killed(monkeypatch
     payload = scheduler.status()["memory"]
     assert set(payload) >= {"limit_gb", "used_gb", "headroom",
                             "buffer_pool_gb", "paused_for_memory"}
+
+
+def test_the_study_falls_back_to_a_child_only_on_the_storage_assertion(monkeypatch):
+    """Four write topologies died in `csr_node_group.cpp KU_UNREACHABLE`, and
+    the fourth — a child process — is what showed the topology was never the
+    variable: the failing statement was the READ inside `MERGE`. AFFECTED now
+    writes through `write_edges`, which never asks for that scan.
+
+    So the study is back in-process, and the child is kept as a fallback
+    rather than deleted, because it is the configuration that wrote the first
+    632,000 edges. What must hold: the switch fires on THAT assertion and
+    nothing else, and once flipped it stays flipped rather than failing every
+    tick.
+    """
+    from core.api import work
+
+    monkeypatch.setattr(work, "_PREFER_CHILD", False)
+
+    def _boom(conn, deadline):
+        raise RuntimeError(
+            'Assertion failed in file ".../csr_node_group.cpp" on line 411: '
+            "KU_UNREACHABLE"
+        )
+
+    monkeypatch.setattr(work, "_study_in_process", _boom)
+    monkeypatch.setattr(work, "_study_child_plan", lambda d: {"argv": ["x"]})
+    result = work.study(object(), time.monotonic() + 60)
+    assert result["switched_to_child"], result
+    assert work._PREFER_CHILD, "the switch must stick for the process's life"
+    assert work.study(object(), time.monotonic() + 60) == {"argv": ["x"]}
+
+    # Any OTHER RuntimeError is a real failure and must reach the scheduler's
+    # backoff, not be silently converted into a topology change.
+    monkeypatch.setattr(work, "_PREFER_CHILD", False)
+    monkeypatch.setattr(
+        work, "_study_in_process",
+        lambda c, d: (_ for _ in ()).throw(RuntimeError("panel is unreachable")),
+    )
+    with pytest.raises(RuntimeError, match="panel is unreachable"):
+        work.study(object(), time.monotonic() + 60)
+    assert not work._PREFER_CHILD

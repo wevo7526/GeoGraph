@@ -641,6 +641,28 @@ def write_edges(conn: kuzu.Connection, rel: str, rows: list[dict[str, Any]]) -> 
     return written
 
 
+def recreate_edge_table(conn: kuzu.Connection, rel: str) -> None:
+    """DROP and CREATE one rel table, from the ONTOLOGY's own DDL.
+
+    Lives here because every statement against the graph does — the
+    process-wide lock is only enforceable while `kuzu_store` is the single
+    door, and `test_every_graph_write_in_the_codebase_takes_the_lock` refuses
+    a `conn.execute` anywhere else.
+
+    DESTRUCTIVE, and the caller is expected to know why it is safe for the
+    table it names. `scripts/rebuild_affected.py` is the one caller: AFFECTED
+    holds measurements that are a deterministic function of the panel and the
+    event-study code, with the watermark kept outside the graph.
+    """
+    spec = ontology.edges().get(rel)
+    if spec is None:
+        raise ontology.OntologyError(f"{rel!r} is not an edge table.")
+    with ACCESS.write():
+        conn.execute(f"DROP REL TABLE {rel}")
+    with ACCESS.write():
+        conn.execute(spec.ddl())
+
+
 def check_provenance(conn: kuzu.Connection) -> list[str]:
     """THE BACKSTOP (build-spec section 17): every sourced edge's source_id
     resolves to a Source that exists. Returns violations; ingest fails on any.

@@ -85,40 +85,89 @@ def _archive(conn: Any) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     return _archive_cache["events"], _archive_cache["dates"]
 
 
-#: How long the study child may run, and how much of the graph-dark window
-#: that costs. The API RELEASES its connection while the child holds the
-#: single-writer lock, so graph endpoints answer 503 for the slice.
+#: How long a study CHILD may run when one is needed, and how much graph-dark
+#: time that costs. See `study` for when a child is needed at all.
 STUDY_CHILD_SECONDS = float(os.getenv("GEOGRAPH_STUDY_CHILD_SECONDS", "90"))
+
+#: Set once, for the life of the process, if an in-process AFFECTED write ever
+#: dies inside Kuzu's storage. From then on the study runs as a child, which
+#: costs availability but always worked.
+_PREFER_CHILD = os.getenv("GEOGRAPH_STUDY_CHILD", "") == "1"
+
+#: Seconds between CHILD slices. The in-process path runs on the job's own
+#: cadence and costs nothing; a child takes the graph dark for its whole
+#: budget, so it rate-limits ITSELF rather than making the scheduler's
+#: interval depend on which path is in use. 90s dark per 900s is ~90%
+#: availability, which is the deliberate trade when the fallback is in play.
+CHILD_INTERVAL_SECONDS = float(os.getenv("GEOGRAPH_STUDY_CHILD_EVERY", "900"))
+_LAST_CHILD = 0.0
+
+#: The internal-assertion signature that means "this write cannot be done from
+#: this process". Matched narrowly: Kuzu raises RuntimeError for it, and
+#: catching RuntimeError broadly would swallow real failures.
+_STORAGE_ASSERTION = "KU_UNREACHABLE"
 
 
 def study(conn: Any, deadline: float) -> dict[str, Any]:
-    """Measure the backlog IN A CHILD PROCESS, one pack per tick.
+    """Measure the next unmeasured events, one pack at a time.
 
-    THIS IS THE ONE JOB THAT COULD NOT STAY IN-PROCESS, and it took three
-    production failures to accept it. Writing AFFECTED from the API killed the
-    tick with an internal Kuzu assertion every time
-    (`csr_node_group.cpp KU_UNREACHABLE`) — on a sibling connection, then on
-    the API's own connection, then again after the lock was made fair. Every
-    other writer here is fine: the wire job merges events and three rel tables,
-    the rescore merges Event and OF_DYAD, both clean for hours. What is
-    different about AFFECTED is its SHAPE — 756,000 edges pointing at about
-    twenty Market nodes, so one node's adjacency list holds tens of thousands
-    and a merge rewrites a very large CSR group.
+    IN-PROCESS, WITH A CHILD AS THE FALLBACK — and the order matters, because
+    the child costs the graph's availability (~90s of 503 per slice) while the
+    in-process path costs nothing.
 
-    A child process is the configuration that demonstrably wrote every one of
-    those 756,000 edges, so the study goes back to it — but scheduled by this
-    loop rather than by a deploy, which is what the loop was for. The API
-    closes its graph for the slice (graph endpoints answer 503 and say why),
-    the child takes the lock, stops on its own budget so no write is killed
-    mid-commit, and the graph reopens.
+    THE HISTORY, because this looks like flip-flopping and is not. Four write
+    topologies died in `csr_node_group.cpp KU_UNREACHABLE` — a sibling
+    connection, this connection, this connection behind a fair lock, and a
+    child process — and the fourth is what showed the topology was never the
+    variable. Line 411 is the `default:` arm of `CSRNodeGroup::scan()`, so the
+    failing statement was the READ that MERGE performs to decide whether to
+    create, walking a Market node's share of 756,025 edges.
+    `transmission/effects.py` now writes through `kuzu_store.write_edges`,
+    which never asks for that scan, and the first slice after it shipped wrote
+    18,000 edges with provenance clean.
 
-    The cost is stated rather than hidden: ~90s of graph-dark per tick, at a
-    cadence that keeps availability high. The alternative — a study that
-    cannot run at all — leaves the archive at 10% measured forever.
+    So the work comes back here. If the assertion ever returns, the job records
+    it and switches to the child for the rest of the process's life rather
+    than failing every tick — the fallback is kept precisely because it is the
+    configuration that wrote the first 632,000 edges.
+
+    Round-robins by taking whichever pack has the most left, so no pack is
+    starved by alphabet (the failure the boot era's fair-share comment
+    records: mena, always last, measured nothing for weeks).
     """
-    del conn  # this job runs a child; the caller's connection is released
+    global _PREFER_CHILD
+    if _PREFER_CHILD:
+        return _study_child_plan(deadline)
+    try:
+        return _study_in_process(conn, deadline)
+    except RuntimeError as exc:
+        if _STORAGE_ASSERTION not in str(exc):
+            raise
+        _PREFER_CHILD = True
+        return {
+            "switched_to_child": True,
+            "reason": (
+                "an in-process AFFECTED write hit Kuzu's storage assertion "
+                f"({_STORAGE_ASSERTION}); the study runs as a child from now "
+                "on, which costs ~90s of graph-dark time per slice"
+            ),
+        }
+
+
+def _study_child_plan(deadline: float) -> dict[str, Any]:
+    """The plan the scheduler's child runner executes: an argv and a budget.
+
+    The child stops on its OWN budget rather than being killed, because a
+    write killed mid-commit is the one way this loop could damage the volume.
+    """
+    global _LAST_CHILD
     from core.panel import pg_store
 
+    since = time.monotonic() - _LAST_CHILD
+    if _LAST_CHILD and since < CHILD_INTERVAL_SECONDS:
+        return {"skipped": "the child rate-limits itself — each slice takes "
+                           "the graph dark",
+                "next_in_seconds": round(CHILD_INTERVAL_SECONDS - since)}
     names = _pack_names()
     if not names:
         return {"skipped": "no packs"}
@@ -126,7 +175,6 @@ def study(conn: Any, deadline: float) -> dict[str, Any]:
     if panel is None:
         return {"skipped": "no panel"}
     try:
-        # Pick the pack with the most left, so no pack is starved by alphabet.
         backlog: list[tuple[int, str]] = []
         for name in names:
             pack = packs.load(name)
@@ -144,6 +192,7 @@ def study(conn: Any, deadline: float) -> dict[str, Any]:
     if budget < 20:
         return {"skipped": "slice too short", "pack": target}
     script = Path(__file__).resolve().parents[2] / "scripts" / "run_event_study.py"
+    _LAST_CHILD = time.monotonic()
     return {
         "pack": target,
         "budget_seconds": budget,
@@ -151,6 +200,55 @@ def study(conn: Any, deadline: float) -> dict[str, Any]:
                  "--budget-seconds", str(int(budget))],
         "measured_by_pack": {n: c for c, n in backlog},
     }
+
+
+def _study_in_process(conn: Any, deadline: float) -> dict[str, Any]:
+    from core.panel import pg_store
+
+    names = _pack_names()
+    if not names:
+        return {"skipped": "no packs"}
+    panel = _panel()
+    if panel is None:
+        return {"skipped": "no panel"}
+    try:
+        events, all_dates = _archive(conn)
+        if not events:
+            return {"skipped": "empty graph"}
+
+        backlog: list[tuple[int, str, list[dict[str, Any]], Any]] = []
+        for name in names:
+            pack = packs.load(name)
+            curated = runner.curated_event_ids(pack)
+            candidates = runner.select_all(events, curated)
+            measured = pg_store.measured_events(
+                panel, [m["ticker"] for m in pack.markets]
+            )
+            left = [e for e in candidates if e["id"] not in measured]
+            backlog.append((len(left), name, left, pack))
+        backlog.sort(key=lambda item: -item[0])
+
+        remaining_total = sum(item[0] for item in backlog)
+        if not remaining_total:
+            return {"measured": 0, "remaining": 0, "note": "archive fully measured"}
+
+        count, name, left, pack = backlog[0]
+        if time.monotonic() >= deadline:
+            return {"skipped": "no time in this slice", "remaining": remaining_total}
+        outcome = runner.measure(
+            conn, panel, pack, left[:STUDY_EVENTS_PER_TICK],
+            all_dates=all_dates, deadline=deadline,
+        )
+        return {
+            "pack": name,
+            "measured": outcome["events"],
+            "edges": outcome["edges"],
+            "remaining_in_pack": count - outcome["events"],
+            "remaining_total": remaining_total - outcome["events"],
+            "backlog": {n: c for c, n, _, _ in backlog},
+        }
+    finally:
+        panel.close()
 
 
 # ── the region scenario maps ───────────────────────────────────────────────

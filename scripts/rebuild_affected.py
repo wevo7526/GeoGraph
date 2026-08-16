@@ -38,7 +38,6 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from core import settings as settings_module  # noqa: E402
 from core.graph import kuzu_store  # noqa: E402
-from core.ontology import kuzu_schema as ontology  # noqa: E402
 
 
 def counts(conn: Any) -> dict[str, Any]:
@@ -79,15 +78,12 @@ def main() -> None:
         if not args.rebuild:
             return
 
-        spec = ontology.edges()["AFFECTED"]
         print("\ndropping AFFECTED — the measurements are re-derivable and "
               "event_study_runs keeps the watermark")
-        with kuzu_store.ACCESS.write():
-            conn.execute("DROP REL TABLE AFFECTED")
-        # Recreate from the ONTOLOGY's own DDL, never a hand-written copy:
-        # the LinkML file is the source of truth for this table's shape.
-        with kuzu_store.ACCESS.write():
-            conn.execute(spec.ddl())
+        # Through kuzu_store, which recreates from the ONTOLOGY's own DDL —
+        # the LinkML file is the source of truth for this table's shape, and
+        # every statement against the graph goes through the one door.
+        kuzu_store.recreate_edge_table(conn, "AFFECTED")
         after = counts(conn)
         print(f"AFFECTED now holds {after['total']:,} edges")
         print(
