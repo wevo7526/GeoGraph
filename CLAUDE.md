@@ -704,10 +704,16 @@ endpoint served 503 for 25 minutes on a database whose data was never lost.
 - `corpus._loaded` holds ONE lens, not eight. `serving.warm()` already evicted
   it, but `structural` and `forecasting` call `load()` per pack inside jobs, so
   with eight slots all three packs came back and stayed.
-- The scheduler reads `memory.current` each pass: below 25% headroom it drops
-  what it can rebuild, below 12% it stops starting jobs and says so in
-  `/api/jobs`. Every job re-derives something already persisted; a skipped tick
-  costs minutes of freshness and not skipping cost a database.
+- The scheduler reads `memory.current` **before each JOB**, not once a pass —
+  a pass spends nearly all its time inside a job, and one job's working set is
+  what reaches the ceiling (measured: headroom fell to 0.05 with `reclaims: 0`).
+  Below 30% it drops what it can rebuild; below 12% it stops starting jobs and
+  says so in `/api/jobs`. Every job re-derives something already persisted; a
+  skipped tick costs minutes of freshness and not skipping cost a database.
+- **`_reclaim` calls `malloc_trim(0)`.** `gc.collect()` frees Python objects
+  but does not shrink the process: glibc keeps freed arenas, so RSS sits at the
+  high-water mark of the heaviest job that ever ran, and RSS is what the cgroup
+  kills on.
 - **`connect()` quarantines an unreplayable WAL** and opens at the last
   checkpoint. Safe only because every writer here is watermarked and
   idempotent.
@@ -721,12 +727,26 @@ process — and line 411 is the `default:` arm of `CSRNodeGroup::scan()`, so the
 failing statement is the READ that `MERGE` performs to decide whether to
 create. `write_edges` asks an ordinary query which keys exist (scoped to the
 batch's Events, so it walks the forward adjacency), CREATEs the rest, SETs the
-matches. **The cause is still not reproduced**: 720,000 edges onto twenty
-Market nodes across twelve checkpointed sessions ran clean locally, which is
-production's exact concentration — so the remaining hypothesis is that
-production's on-disk CSR for a Market node was damaged by one of the kills, and
-`scripts/rebuild_affected.py` exists for that. Do not describe the shape alone
-as the cause.
+matches — and the first slice after it shipped wrote 18,000 edges with
+provenance clean, after weeks in which every attempt failed. **The statement
+was the cause, not the topology.** It was never reproduced locally (720,000
+edges onto twenty Market nodes across twelve checkpointed sessions ran clean at
+production's exact concentration), so if it ever returns,
+`scripts/rebuild_affected.py` drops and re-derives the table — its edges are
+measurements, and the watermark lives in Postgres.
+
+**The study is IN-PROCESS, and the child is a fallback it selects itself.** A
+child takes the graph dark for its whole budget; the in-process path costs
+nothing. `work.study` catches `KU_UNREACHABLE` narrowly and, on that one
+signature, switches for the rest of the process's life rather than failing
+every tick. The child rate-limits itself to one slice per 900s. Do not read the
+back-and-forth as indecision: four topologies were tried before the statement
+was suspected, and the child is what proved the topology was never the variable.
+
+**The study gets the longest slice in the loop (240s, 4,000 events).** The loop
+is serial, so with forecasts at ~290s and rescore at ~120s a cycle runs ~600s
+and the study gets ONE turn in it: at 60s that was 1,000 events a cycle and 95
+hours for the backlog; at 240s it is 3,000 and about a day.
 
 **The game's kernel is per pair** (`core/models/dynamics.py`, artifacts
 `models/dynamics-<region>.json`). `transition.kernel` counts one table for a
@@ -752,7 +772,17 @@ represent.
 - **The gate is the within-dyad one.** Pooled log-loss is the easy half; the
   graph features improved it too while making ordering worse. A model that
   fails is written with `gate_passed: false` and `context.load_dynamics`
-  refuses to load it — the game falls back to the counted kernel.
+  refuses to load it — the game falls back to the counted kernel. Head B's
+  escalation magnitude, shrunk per-dyad random intercepts and a square/cross
+  basis were all built and dropped on the same rule.
+- **The ORDERING claim holds ONE quarter**, measured by re-fitting at each
+  horizon. The log-loss edge survives four quarters; the within-dyad ordering
+  edge does not (china's turns negative). The game applies this kernel four
+  times, so `ORDERING_HORIZON_QUARTERS` travels in the audit block and the
+  solved game says it — a four-period fan must not imply four periods of edge.
+- **The audit line lists only the features the model READS.** `row_features`
+  computes `level` for the ablation; showing it implied the model used a number
+  it had measured and dropped.
 - `describe_kernel()` owns the audit shapes. `explain` read `tilt["eta"]`
   directly and the dynamics block has no eta; production answered
   `KeyError: 'eta'` on the first solve after the model shipped.
