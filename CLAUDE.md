@@ -665,3 +665,106 @@ Two things it immediately taught us, both kept on the surface:
   window), so it is measured and reported rather than switched silently. The
   game layer already asks the harder version: `sharp_departure_probability` is
   "above this pair's OWN usual band", not "any escalation at all".
+
+## The 2026-08-16 rebuild (a convergence loop, a memory budget, a per-pair kernel)
+
+**The recurring work moved out of the boot and into the running API**
+(`core/api/jobs.py` + `core/api/work.py`). A deploy here is downtime — one
+volume, one instance, stop-then-start — so every job that kept the platform
+current used to cost the site's availability, and the event study reached 2003
+and ~10% of the wire because each pass got one slice per DEPLOY. Ten jobs now
+run on a serial background thread behind the bound port. What makes that safe:
+
+- **`kuzu_store.ACCESS` is FIFO, and both preferences were measured wrong
+  first.** Kuzu checkpoints after a write and a checkpoint needs no active
+  transaction anywhere in the process — fine in a batch job, fatal when request
+  threads read continuously. Reader-preference starved the writer (looping
+  readers hand the lock to each other, the count never reaches zero);
+  writer-preference starved the readers (a 20,000-edge write took reads from a
+  3ms median to 10.2s and timed out a case study at 30s). Strict FIFO with
+  consecutive readers granted together is the only arrangement where a
+  converging archive and a live API coexist.
+- **Statement size IS p95 read latency.** A reader waits at most one statement,
+  so `BATCH_ROWS` is mutable and the serving process sets 100 (0.84s) where a
+  batch job wants 1,000 (3.5s).
+- **A failing job backs off; a job never closes the API's database**; `stop()`
+  joins the thread, because a write killed mid-transaction is the one thing
+  here that can damage the volume.
+
+**The memory budget is explicit, because the kernel's kill is not catchable.**
+Kuzu sizes its buffer pool at 80% of what `sysconf(_SC_PHYS_PAGES)` reports,
+which inside a container is the HOST's RAM — the pool filled past the 8 GB
+cgroup limit, the kernel killed the process mid-write, and Kuzu's WAL replay on
+the next open hit a primary key the last checkpoint already held. Every graph
+endpoint served 503 for 25 minutes on a database whose data was never lost.
+
+- `kuzu_store.buffer_pool_bytes()` reads `/sys/fs/cgroup/memory.max` and takes
+  20% of it. The rest is not spare: the wire corpus is ~1.3 GB in two
+  representations and a job's working set is 1-2 GB more.
+- `corpus._loaded` holds ONE lens, not eight. `serving.warm()` already evicted
+  it, but `structural` and `forecasting` call `load()` per pack inside jobs, so
+  with eight slots all three packs came back and stayed.
+- The scheduler reads `memory.current` each pass: below 25% headroom it drops
+  what it can rebuild, below 12% it stops starting jobs and says so in
+  `/api/jobs`. Every job re-derives something already persisted; a skipped tick
+  costs minutes of freshness and not skipping cost a database.
+- **`connect()` quarantines an unreplayable WAL** and opens at the last
+  checkpoint. Safe only because every writer here is watermarked and
+  idempotent.
+
+**AFFECTED is written by `write_edges`, not `merge_edges`** (both validate
+through `ontology.validate_edge`, so the provenance invariant is unchanged; the
+transmission engine is still the only writer of AFFECTED). Four write
+topologies died in `csr_node_group.cpp KU_UNREACHABLE` — a sibling connection,
+the API's own connection, that connection behind the fair lock, and a child
+process — and line 411 is the `default:` arm of `CSRNodeGroup::scan()`, so the
+failing statement is the READ that `MERGE` performs to decide whether to
+create. `write_edges` asks an ordinary query which keys exist (scoped to the
+batch's Events, so it walks the forward adjacency), CREATEs the rest, SETs the
+matches. **The cause is still not reproduced**: 720,000 edges onto twenty
+Market nodes across twelve checkpointed sessions ran clean locally, which is
+production's exact concentration — so the remaining hypothesis is that
+production's on-disk CSR for a Market node was damaged by one of the kills, and
+`scripts/rebuild_affected.py` exists for that. Do not describe the shape alone
+as the cause.
+
+**The game's kernel is per pair** (`core/models/dynamics.py`, artifacts
+`models/dynamics-<region>.json`). `transition.kernel` counts one table for a
+whole region: at band 2 it returned an expected next band of 0.60 for every
+pair on the board, and the ranked surface put three alliances above US-China.
+The model is `softmax(log P_counted + x·W)` — the counted kernel as an OFFSET,
+so W = 0 is the old behaviour exactly and the residual can only add what
+counting does not know (which matters at 28k dyad-quarters, where a fully
+learned 324-cell kernel would memorise). An additive residual WITHOUT the
+offset lost to the plain counts, because the counted table encodes a
+band×action×action interaction a linear model in those variables cannot
+represent.
+
+- **x is three measured facts** — volume, coercive share, volatility over four
+  quarters — and the EXCLUSIONS are the more useful result. Declared standing,
+  the CINC ratio, betweenness, eigenvector, degree, Burt constraint, community
+  co-membership and mean level were all tested against PRODUCTION's 37,930
+  NetworkMetric nodes (the dev graph holds none — an earlier pass answered this
+  with an empty table and did not count). They move pooled log-loss by
+  0.004-0.025 and move within-dyad ordering by nothing or DOWN. The artifact
+  records every one with its number, so the next reader does not re-add
+  centrality.
+- **The gate is the within-dyad one.** Pooled log-loss is the easy half; the
+  graph features improved it too while making ordering worse. A model that
+  fails is written with `gate_passed: false` and `context.load_dynamics`
+  refuses to load it — the game falls back to the counted kernel.
+- `describe_kernel()` owns the audit shapes. `explain` read `tilt["eta"]`
+  directly and the dynamics block has no eta; production answered
+  `KeyError: 'eta'` on the first solve after the model shipped.
+
+**The game-theory page ranks by an ABSOLUTE measure — coercive events in the
+last four quarters.** `sharp_departure_probability` is P(this pair leaves the
+band it opened in) and the band is a departure from the pair's OWN baseline, so
+a quiet ally at the top of its range outranks a war; over 36 solved dyads it
+separated allies from rivalries by 0.0006. A fitted ranker was tried against
+the plain count and LOST out of sample (mena AUC 0.8617 vs 0.8722, china 0.7587
+vs 0.7730), so the count ships — nothing to train, nothing to drift, and a
+number a reader can check against the events. The departure probability stays
+beside it, labelled as the different question it is. **Bump
+`scenarios.PAYLOAD_VERSION` whenever a ranking field changes**, or Postgres
+serves payloads the surface can no longer read.
