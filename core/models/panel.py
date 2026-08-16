@@ -149,7 +149,8 @@ def build(
         rows = [r for r in rows if str(r["event_time"]) <= cutoff]
 
     cells: dict[tuple[str, int], dict[str, Any]] = defaultdict(
-        lambda: {"n": 0, "intensity": 0.0, "goldstein": [], "conflict": 0}
+        lambda: {"n": 0, "intensity": 0.0, "signed_intensity": 0.0,
+                 "goldstein": [], "conflict": 0}
     )
     names: dict[str, str] = {}
     regional: set[str] = set()
@@ -169,6 +170,18 @@ def build(
         # average over the chatter around it hides exactly that.
         if row["direction"] == "escalating" and row["magnitude"] is not None:
             cell["intensity"] = max(cell["intensity"], float(row["magnitude"]))
+        # SIGNED departure — the same largest-magnitude move, but keeping its
+        # DIRECTION, so a de-escalation is a negative number rather than a zero.
+        # `intensity` filters to escalation because the event study prices
+        # escalation; this carries the sign the direction axis holds, so a
+        # forecaster can be asked which WAY a dyad is about to move, not only
+        # how hard. The magnitude is unsigned (|score - baseline|), so the sign
+        # comes from the classifier's direction.
+        if row["magnitude"] is not None and row["direction"] in ("escalating", "de-escalating"):
+            mag = float(row["magnitude"])
+            signed = mag if row["direction"] == "escalating" else -mag
+            if abs(signed) > abs(cell["signed_intensity"]):
+                cell["signed_intensity"] = signed
 
     covered = well_covered_quarters(cells, min_coverage)
 
@@ -196,6 +209,7 @@ def build(
                 "date": quarter_label(q),
                 # An absent cell is a QUIET quarter, not a missing one.
                 "intensity": float(filled["intensity"]) if filled else 0.0,
+                "signed_intensity": float(filled["signed_intensity"]) if filled else 0.0,
                 "events": int(filled["n"]) if filled else 0,
                 "conflict": int(filled["conflict"]) if filled else 0,
                 "tone": (

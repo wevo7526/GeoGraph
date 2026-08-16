@@ -54,6 +54,46 @@ def test_intensity_is_the_quarters_largest_departure():
     assert table[0]["intensity"] == 11.0
 
 
+def test_the_signed_measure_carries_direction():
+    # `intensity` filters to escalation because the study prices escalation;
+    # `signed_intensity` keeps the direction, so a de-escalation is a NEGATIVE
+    # number rather than a zero — the quantity a directional forecast needs.
+    esc = _events("dyad:a", {0: 4.0})
+    deesc = [{
+        "dyad_id": "dyad:a", "dyad_name": "a",
+        "event_time": "1990-04-15",            # quarter 1
+        "direction": "de-escalating", "magnitude": 3.0, "goldstein": 5.0,
+        "quad_class": "verbal_cooperation", "region_pack": "mena",
+    }]
+    table = panel.build(esc + deesc, min_occupied=1)
+    by_q = {r["q"]: r for r in table}
+    q0, q1 = panel.quarter_index("1990-01-15"), panel.quarter_index("1990-04-15")
+    assert by_q[q0]["intensity"] == 4.0 and by_q[q0]["signed_intensity"] == 4.0
+    # The de-escalation is invisible to the unsigned measure, negative to the
+    # signed one — which is the whole point of adding it.
+    assert by_q[q1]["intensity"] == 0.0
+    assert by_q[q1]["signed_intensity"] == -3.0
+
+
+def test_signed_level_is_computed_but_not_shipped():
+    # The signed feature joins the vector the ablation reads, but must NOT enter
+    # the shipped set without clearing the same within-dyad walk-forward bar
+    # every other feature had to — so the shipped model (and its committed
+    # artifact) is unchanged by adding it.
+    assert "signed_level" in feature_module.FEATURE_NAMES
+    assert "signed_level" not in feature_module.SHIPPED_FEATURES
+    assert feature_module.SHIPPED_FEATURES == ("intercept", "level_now")
+    assert feature_module.shipped_columns() == [0, 1]
+    # It is demeaned within the dyad exactly like level_now, so it carries no
+    # dyad identity: a dyad whose signed history is flat has signed_level 0.
+    rows = _events("dyad:a", {q: 5.0 for q in range(12)})
+    built = feature_module.build(panel.build(rows, min_occupied=2))
+    idx = feature_module.FEATURE_NAMES.index("signed_level")
+    # Every quarter has the same +5.0 signed departure, so after demeaning the
+    # feature is ~0 once the running mean has caught up.
+    assert abs(built[-1]["x"][idx]) < 1e-9
+
+
 def test_a_dyad_without_enough_history_is_absent():
     table = panel.build(_events("dyad:thin", {0: 9.0, 1: 9.0}), min_occupied=8)
     assert table == []

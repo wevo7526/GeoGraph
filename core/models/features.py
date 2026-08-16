@@ -42,6 +42,7 @@ FEATURE_NAMES: tuple[str, ...] = (
     "tone_shift",       # recent tone minus running tone
     "volume_shift",     # log recent volume minus running log volume
     "base_level",       # the dyad's running mean intensity (between-dyad)
+    "signed_level",     # this quarter's SIGNED departure, less its running mean
 )
 #: The single between-dyad feature, isolated so the trainer can ablate it.
 BETWEEN_DYAD = ("base_level",)
@@ -181,6 +182,12 @@ def build_for_dyad(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
         history = [float(r["intensity"]) for r in ordered if int(r["q"]) < q]
         tone_history = [float(r["tone"]) for r in ordered if int(r["q"]) < q]
         volume_history = [float(r["events"]) for r in ordered if int(r["q"]) < q]
+        # Signed departure history — `.get` because a synthetic panel (the game
+        # fit's) carries no signed column, and its default zero makes the
+        # feature inert there rather than a KeyError.
+        signed_history = [
+            float(r.get("signed_intensity", 0.0)) for r in ordered if int(r["q"]) < q
+        ]
 
         # "Hot" is relative to the dyad's OWN history to date, so the same
         # absolute departure can be routine for a rivalry and a rupture for a
@@ -192,8 +199,10 @@ def build_for_dyad(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
         }
 
         base = float(np.mean(history)) if history else 0.0
+        signed_base = float(np.mean(signed_history)) if signed_history else 0.0
         median_run, median_gap = _median_run_and_gap(hot, q)
         intensity_now = float(row["intensity"])
+        signed_now = float(row.get("signed_intensity", 0.0))
         recent_2 = float(np.mean(window(q, 2)))
         recent_4 = float(np.mean(window(q, 4)))
         recent_8 = float(np.mean(window(q, 8)))
@@ -214,6 +223,13 @@ def build_for_dyad(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
             tone_recent - tone_base,
             volume_recent - volume_base,
             base,
+            # SIGNED level, demeaned within the dyad exactly as level_now is, so
+            # it too carries no dyad identity — only which way, and how far, the
+            # dyad is departing from its OWN signed history. Kept for the
+            # ablation to read; it does not enter SHIPPED_FEATURES until a
+            # walk-forward pass on the real panel shows it improves within-dyad
+            # ordering, the same bar every other feature here had to clear.
+            signed_now - signed_base,
         ]
         # TWO TARGETS, because they are two different questions.
         #
