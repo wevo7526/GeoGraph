@@ -64,6 +64,17 @@ function RegionGames({ region, onPick }: { region: string; onPick: (dyad: string
   }, [region])
 
   if (map === undefined) return <div className="reading-column py-10"><Empty>Solving the region…</Empty></div>
+  // The map is being re-solved (a payload-shape change): say so and let the
+  // reader come back, rather than holding the request open for ~130s.
+  if (map && (map as RegionMap & { resolving?: boolean }).resolving) {
+    return (
+      <div className="reading-column py-10">
+        <StoryHead kicker={`Game theory · ${label.toUpperCase()}`}
+                   title="Re-solving this region"
+                   standfirst={map.note ?? 'The scenario map is being rebuilt for the current shape; it lands within a few minutes.'} />
+      </div>
+    )
+  }
   if (map === null) {
     const f = lastFailureFor('/api/games/region')
     return (

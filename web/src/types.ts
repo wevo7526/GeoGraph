@@ -895,6 +895,8 @@ export interface ConceptSolution {
 }
 
 export interface DyadSolution {
+  resolving?: boolean
+  note?: string
   payload_version?: string
   region: string
   dyad_id: string
@@ -1005,6 +1007,9 @@ export interface RegionMap {
   computed_at?: string
   persisted?: boolean
   note?: string
+  /** The map exists but is being re-solved for the current payload shape. A
+   *  fast honest answer beats a request that waits out a ~130s solve. */
+  resolving?: boolean
 }
 
 

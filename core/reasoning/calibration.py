@@ -196,6 +196,32 @@ def retrodict(
 #: grain the base rate counts in.
 _WALK_PER_YEAR = 4
 
+#: region -> (archive size the walk was computed at, the walk). The walk is a
+#: pure function of the rows, so it is cached for the process — and filled by
+#: a background job (core/api/work.py) rather than by the first reader, who
+#: would otherwise wait out the whole archive read.
+CACHE: dict[str, tuple[int, dict[str, Any]]] = {}
+
+
+def cached(region_pack: str) -> dict[str, Any] | None:
+    entry = CACHE.get(region_pack)
+    return entry[1] if entry else None
+
+
+def remember(region_pack: str, size: int, walk_out: dict[str, Any]) -> None:
+    CACHE[region_pack] = (size, walk_out)
+
+
+def is_current(region_pack: str, size: int) -> bool:
+    """The archive grows under the convergence loop, so a walk computed at a
+    much smaller archive is stale. A few thousand new wire events do not move
+    a Brier score, so the bar is proportional rather than exact."""
+    entry = CACHE.get(region_pack)
+    if entry is None:
+        return False
+    was = entry[0]
+    return was > 0 and abs(size - was) / was < 0.05
+
 #: Reliability bins. Ten would be honest and mostly empty at this sample size;
 #: five keeps each bin's count large enough to read.
 _RELIABILITY_BINS = (0.0, 0.2, 0.4, 0.6, 0.8, 1.0)

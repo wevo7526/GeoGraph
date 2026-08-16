@@ -45,13 +45,6 @@ def _conn(request: Request) -> Any:
     return conn
 
 
-#: The walk is a pure function of the corpus+graph rows, which are immutable
-#: for the life of a process (the corpus ships in the image; the graph's wire
-#: grows only as the loader writes). ~5s per region, so it is computed once
-#: and kept — the same posture as `core/wire/serving`.
-_WALK_CACHE: dict[str, dict[str, Any]] = {}
-
-
 @router.get("/forecasts/calibration")
 def calibration_walk(request: Request, region: str = "mena") -> dict[str, Any]:
     """THE SCOREBOARD, and it exists today rather than in 2029.
@@ -68,8 +61,11 @@ def calibration_walk(request: Request, region: str = "mena") -> dict[str, Any]:
     """
     from core.reasoning import calibration, forecasting
 
-    if region in _WALK_CACHE:
-        return _WALK_CACHE[region]
+    # The `calibration` job warms this (core/api/work.py); a reader only pays
+    # for the walk when it arrives before the first tick.
+    warmed = calibration.cached(region)
+    if warmed is not None:
+        return warmed
     settings = request.app.state.settings
     try:
         rows = forecasting.all_dyad_event_rows(settings.kuzu_db_path)
@@ -80,7 +76,7 @@ def calibration_walk(request: Request, region: str = "mena") -> dict[str, Any]:
             raise HTTPException(status_code=503, detail=str(exc)) from exc
         rows = corpus.forecast_rows()
     out = calibration.walk(rows, region_pack=region)
-    _WALK_CACHE[region] = out
+    calibration.remember(region, len(rows), out)
     return out
 
 

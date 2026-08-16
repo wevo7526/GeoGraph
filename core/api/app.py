@@ -137,7 +137,7 @@ def _start_jobs(app: FastAPI, settings: Any) -> None:
                 enabled=jobs_module._enabled("study"),
             ),
             jobs_module.Job(
-                name="games", every=300.0, run=work.games,
+                name="games", every=60.0, run=work.games,
                 enabled=jobs_module._enabled("games"),
                 slice_seconds=240.0,  # one region's solve is ~70s and atomic
             ),
@@ -147,6 +147,13 @@ def _start_jobs(app: FastAPI, settings: Any) -> None:
             # its roster dyads held 351 events and nothing could be measured
             # against them. A 50% duty cycle converges it in a few hours with
             # the site up.
+            # The scoreboard: seconds per region, and it must not be the first
+            # reader's problem — the archive read alone grows with the wire.
+            jobs_module.Job(
+                name="calibration", every=1800.0, run=work.calibration,
+                enabled=jobs_module._enabled("calibration"),
+                slice_seconds=180.0,
+            ),
             jobs_module.Job(
                 name="wire", every=60.0, run=work.wire,
                 enabled=jobs_module._enabled("wire"),

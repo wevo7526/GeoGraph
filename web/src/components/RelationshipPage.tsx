@@ -216,8 +216,8 @@ export default function RelationshipPage({ region, onNavigate }: { region: strin
   // departure bands. Three questions, three sources, one vocabulary each —
   // the page used to run four ladders at once and call a declared rivalry
   // "friendly" beside a "severe" tension reading.
-  const standing = standingLabel(solution?.opening.standing)
-  const posture = postureNote(solution?.opening.posture)
+  const standing = standingLabel(solution?.opening?.standing)
+  const posture = postureNote(solution?.opening?.posture)
   const nextType = nextStep ? bandLabel(nextStep.intensity_band, bands, bandNames) : null
   const nextMove = nextStep ? jointAction(nextStep.action_a, nextStep.action_b) : null
   // The badge tracks where the relationship is HEADING (the trajectory
@@ -351,7 +351,7 @@ export default function RelationshipPage({ region, onNavigate }: { region: strin
               </p>
             ) : null}
 
-            {solution && (
+            {solution?.opening && (
               <div className="mt-3 text-sm">
                 <p>
                   {standing

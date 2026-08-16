@@ -108,6 +108,27 @@ def region_scenarios(
                 stored = pg_store.game_solution(
                     panel, region, scope="region", version=scenarios.PAYLOAD_VERSION
                 )
+                # A ROW OF ANOTHER SHAPE MEANS "BEING RE-SOLVED", NOT "SOLVE IT
+                # NOW". Bumping PAYLOAD_VERSION made every request for a
+                # not-yet-re-solved region fall through to a live solve — ~130s
+                # per call, so the game-theory page simply hung while china
+                # (already re-solved) answered in 0.6s. The convergence loop's
+                # `games` job re-solves within minutes; until it does, the
+                # honest answer is a fast one that says so. `live=true` still
+                # forces the solve for a caller who wants to wait.
+                if stored is None and pg_store.game_solution(
+                    panel, region, scope="region"
+                ) is not None:
+                    return {
+                        "region": region,
+                        "resolving": True,
+                        "payload_version": scenarios.PAYLOAD_VERSION,
+                        "note": (
+                            "this region's scenario map is being re-solved for the "
+                            "current payload shape; it lands within a few minutes "
+                            "(watch /api/jobs). Add live=true to solve on request."
+                        ),
+                    }
             finally:
                 panel.close()
             if stored is not None:
@@ -140,6 +161,22 @@ def dyad_solution(
                     panel, region, scope="dyad", dyad_id=dyad,
                     version=scenarios.PAYLOAD_VERSION,
                 )
+                if stored is None and pg_store.game_solution(
+                    panel, region, scope="dyad", dyad_id=dyad
+                ) is not None:
+                    # See the region endpoint: a re-solve in flight is answered
+                    # fast, not waited out on the request thread. One dyad is
+                    # cheaper than a region, but the region's job re-solves both
+                    # and the wait would still be tens of seconds.
+                    return {
+                        "region": region, "dyad_id": dyad, "resolving": True,
+                        "payload_version": scenarios.PAYLOAD_VERSION,
+                        "note": (
+                            "this pair's solved game is being re-solved for the "
+                            "current payload shape (watch /api/jobs); add "
+                            "live=true to solve on request"
+                        ),
+                    }
             finally:
                 panel.close()
             if stored is not None:

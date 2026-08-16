@@ -152,11 +152,12 @@ def games(conn: Any, deadline: float) -> dict[str, Any]:
     panel = _panel()
     if panel is None:
         return {"skipped": "no panel"}
+    solved_now: list[dict[str, Any]] = []
     try:
         pg_store.apply_schema(panel)
         for name in _pack_names():
             if time.monotonic() >= deadline:
-                return {"skipped": "no time in this slice"}
+                return {"solved": solved_now, "skipped": "slice spent"}
             stored = pg_store.game_solution(
                 panel, name, scope="region", version=scenarios.PAYLOAD_VERSION
             )
@@ -165,7 +166,8 @@ def games(conn: Any, deadline: float) -> dict[str, Any]:
             try:
                 context = context_module.build(conn, name)
             except (context_module.GraphNeeded, context_module.NothingToSolve) as exc:
-                return {"region": name, "skipped": str(exc)}
+                solved_now.append({"region": name, "skipped": str(exc)})
+                continue
             payoffs = solve_module.Payoffs(**context_module.fitted_payoffs(name))
             solved = scenarios.region_map(
                 context, region=name, payoffs=payoffs, graph_conn=conn,
@@ -174,12 +176,15 @@ def games(conn: Any, deadline: float) -> dict[str, Any]:
             written = pg_store.record_game_solutions(
                 panel, name, solved, solver=solved["region"]["primary_solver"]
             )
-            return {
-                "region": name,
-                "rows": written,
+            # KEEP GOING while the slice allows: a version bump leaves EVERY
+            # region stale at once, and one region per tick meant the rest
+            # answered "being re-solved" for as long as it took to come round.
+            solved_now.append({
+                "region": name, "rows": written,
                 "dyads": solved["region"]["dyads_solved"],
-                "version": scenarios.PAYLOAD_VERSION,
-            }
+            })
+        if solved_now:
+            return {"solved": solved_now, "version": scenarios.PAYLOAD_VERSION}
         return {"note": "every region's map is current"}
     finally:
         panel.close()
@@ -357,3 +362,35 @@ def _merge_wire_batch(
     for line in batch:
         seen.add(f"event:gdelt-{line.split(chr(9), 1)[0]}")
     return int(result.written)
+
+
+# ── the scoreboard, warmed ─────────────────────────────────────────────────
+
+
+def calibration(conn: Any, deadline: float) -> dict[str, Any]:
+    """Compute the calibration walk per region and cache it for the process.
+
+    The walk re-runs the near-term estimator at every closed-horizon cutoff —
+    a few seconds per region, plus the archive read. Left to the first reader
+    it is a request that outlives a browser's patience, and it gets slower as
+    the wire job grows the archive. A job pays it instead, and the endpoint
+    serves an answer that is already there.
+    """
+    from core.reasoning import calibration as calibration_module
+    from core.reasoning import forecasting
+
+    rows = forecasting.all_dyad_event_rows(settings_module.load().kuzu_db_path)
+    size = len(rows)
+    done: list[str] = []
+    for name in _pack_names():
+        if calibration_module.is_current(name, size):
+            continue
+        if time.monotonic() >= deadline:
+            return {"computed": done, "note": "slice spent", "archive_rows": size}
+        calibration_module.remember(
+            name, size, calibration_module.walk(rows, region_pack=name)
+        )
+        done.append(name)
+    if not done:
+        return {"note": "every region's scoreboard is current", "archive_rows": size}
+    return {"computed": done, "archive_rows": size}
