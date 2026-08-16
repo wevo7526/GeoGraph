@@ -1158,3 +1158,52 @@ def test_measured_effects_shares_its_repeated_strings():
     assert out[0]["abnormal_return"] == 0.012 and out[1]["abnormal_return"] == -0.004
     assert out[0]["dyad_id"] is None, "a null must stay null, not become ''"
     assert out[0]["magnitude"] == 2.5, "non-strings are untouched"
+
+
+def test_standing_shows_one_row_per_kind_and_antagonism_first():
+    """What the chip says about a pair, and the two ways it said it wrong.
+
+    DUPLICATES: COW carries a pair's alliance history as several live records —
+    NATO, a bilateral treaty, a later protocol — so eurasia's chips read
+    "alliance, alliance" and the sentence said the same thing twice. One row
+    per kind, and the EARLIEST date, because "formal allies since 1949" is what
+    a reader wants, not the date of the most recent accession.
+
+    CONTRADICTION: COW codes the 1991 Basic Agreement between the Koreas as an
+    alliance and packs/china declares the same pair a rivalry from 1948. Both
+    are live and both are true; ordered by recency the chip read "alliance"
+    over the most militarised border in the archive. A pact between rivals is
+    evidence of the rivalry, not a replacement for it.
+    """
+    from core.games import opening
+
+    class _Conn:
+        pass
+
+    rows = [
+        {"relation_type": "alliance", "valid_from": "2011-01-01",
+         "valid_to": None, "source_id": "source:cow-alliances",
+         "from_id": "actor:a", "to_id": "actor:b"},
+        {"relation_type": "alliance", "valid_from": "1949-04-04",
+         "valid_to": None, "source_id": "source:cow-alliances",
+         "from_id": "actor:a", "to_id": "actor:b"},
+        {"relation_type": "rivalry", "valid_from": "1948-01-01",
+         "valid_to": None, "source_id": "source:standing-record",
+         "from_id": "actor:a", "to_id": "actor:b"},
+    ]
+    import core.graph.kuzu_store as store
+    real = store.query
+    store.query = lambda conn, cypher, params=None: rows
+    try:
+        out = opening.standing(_Conn(), "dyad:a--b", as_of="2026-08-16")
+    finally:
+        store.query = real
+
+    kinds = [r["relation_type"] for r in out["relations"]]
+    assert kinds == ["rivalry", "alliance"], (
+        f"antagonism must lead and each kind appear once: {kinds}"
+    )
+    alliance = next(r for r in out["relations"] if r["relation_type"] == "alliance")
+    assert alliance["since"] == "1949-04-04", (
+        "the FOUNDING date is the one a reader wants beside the kind"
+    )

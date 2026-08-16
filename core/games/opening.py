@@ -135,6 +135,19 @@ def standing(conn: Any | None, dyad_id: str, *, as_of: str) -> dict[str, Any]:
     # CHARACTERISES the pair leads and the rest follow (the sentence names
     # both). Python's sort is stable, so recency still orders within a type.
     live.sort(key=lambda row: _STANDING_PRIORITY.get(str(row["relation_type"]), 9))
+    # ONE ROW PER KIND, EARLIEST WINS. COW carries a pair's alliance history as
+    # several records — NATO, a bilateral treaty, a later accession — all live
+    # at once, so the chip read "alliance, alliance" and the sentence said the
+    # same thing twice. The kind is what characterises the pair; the founding
+    # date is what a reader wants beside it ("formal allies since 1949", not
+    # since the most recent protocol). Stable sort, so priority order survives.
+    by_kind: dict[str, dict[str, Any]] = {}
+    for row in live:
+        kind = str(row["relation_type"])
+        keep = by_kind.get(kind)
+        if keep is None or str(row["valid_from"] or "") < str(keep["valid_from"] or ""):
+            by_kind[kind] = row
+    live = [row for row in live if by_kind.get(str(row["relation_type"])) is row]
     return {
         "relations": [
             {

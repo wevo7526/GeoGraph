@@ -63,3 +63,14 @@ sources:
     citation: >-
       Curated by the GeoGraph authors; each event's own provenance is the
       public record.
+  - id: source:standing-record
+    name: The public treaty and diplomatic record
+    kind: report
+    url: https://history.state.gov/countries
+    citation: >-
+      US State Department Office of the Historian country pages for the
+      establishment and severance of diplomatic relations, read alongside the
+      treaty texts and the dated public record of each rupture. Used only for
+      relations the deep-tier datasets do not code: COW Formal Alliances
+      carries the alliance web, but it codes no adversarial standing at all,
+      which is why the pairs a reader most wants characterised were blank.

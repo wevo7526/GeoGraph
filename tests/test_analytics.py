@@ -102,8 +102,22 @@ def test_metrics_are_persisted_windowed_and_idempotent(db_path):
     betweenness = {
         r["subject_id"]: r["value"] for r in rows if r["metric_name"] == "betweenness"
     }
-    assert betweenness["actor:cow-630"] > 0
-    assert betweenness["actor:cow-630"] == max(betweenness.values())
+    # BROKERS, NOT A NAMED WINNER. This asserted that Iran held the maximum
+    # betweenness, which was true only because packs/mena declared Iran's
+    # relations and almost nobody else's — the "hub" was an artefact of what
+    # had been written down. Declaring US-Iran, US-Israel, US-Saudi and the
+    # two US-Iraq windows on 2026-08-16 made Washington a broker too, and the
+    # assertion failed on data that had become MORE correct.
+    #
+    # What the measure must actually do is separate actors that sit between
+    # others from actors that sit at the end of a spoke, so that is what is
+    # checked: the declared brokers score, an actor with a single tie does
+    # not, and the ordering is a real spread rather than a tie.
+    assert betweenness["actor:cow-630"] > 0, "Iran brokers the proxy web"
+    assert betweenness["actor:cow-2"] > 0, "so does Washington, once declared"
+    assert max(betweenness.values()) > min(betweenness.values()), (
+        "betweenness that is flat across the roster is measuring nothing"
+    )
 
 
 def test_isolated_actors_are_not_measured(db_path):

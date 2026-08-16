@@ -340,6 +340,17 @@ relations:
 # ── IGO spotlight ────────────────────────────────────────────────────────────
 # The organisations whose membership edges the COW IGO layer supplies; listed
 # so a reader of this pack knows which blocs the network view is drawing.
+  # ── added 2026-08-16: see packs/mena/actors.yaml. UK–Russia sat third on
+  # eurasia's coercion ranking with no standing declared at all.
+  - a: actor:cow-200            # United Kingdom
+    b: actor:cow-365            # Russia
+    relation_type: rivalry
+    valid_from: "2018-03-04"
+    source: source:standing-record
+    note: >-
+      The Salisbury poisoning and the coordinated expulsions that followed.
+      Dated there rather than at Litvinenko (2006) because 2018 is when the
+      rupture became declared policy on both sides.
 igo_spotlight:
   - actor:igo-nato
   - actor:igo-eu

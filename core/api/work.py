@@ -111,10 +111,27 @@ def forget_archive() -> None:
 #: time that costs. See `study` for when a child is needed at all.
 STUDY_CHILD_SECONDS = float(os.getenv("GEOGRAPH_STUDY_CHILD_SECONDS", "90"))
 
-#: Set once, for the life of the process, if an in-process AFFECTED write ever
-#: dies inside Kuzu's storage. From then on the study runs as a child, which
-#: costs availability but always worked.
-_PREFER_CHILD = os.getenv("GEOGRAPH_STUDY_CHILD", "") == "1"
+#: THE STUDY RUNS AS A CHILD BY DEFAULT, and the reason is not the one that
+#: moved it there the first time.
+#:
+#: 2026-08-16, in production: the container restart-looped for hours. Boot
+#: clean, "Application startup complete", then gone — no traceback, no error
+#: line, 4.25 GB peak against an 8 GB limit, so not the OOM of the day before.
+#: The breadcrumbs named it in three identical cycles: counts finished, games
+#: finished, `study starting`, process dead. A segfault in Kuzu's C++ layer on
+#: the AFFECTED write, which Python cannot catch and which took the whole API
+#: with it every ninety seconds.
+#:
+#: In-process is cheaper and it was measured working — 2,500 events a turn,
+#: clean, all night. It is still the wrong default, because the failure mode
+#: is not "the job fails", it is "the site dies". A child that segfaults is a
+#: recorded non-zero exit and a job that backs off; the graph goes dark for
+#: the slice and comes back. That asymmetry decides it: this loop exists to
+#: keep the platform current, and it must not be able to take the platform
+#: down to do it.
+#:
+#: `GEOGRAPH_STUDY_IN_PROCESS=1` opts back in once the write is trustworthy.
+_PREFER_CHILD = os.getenv("GEOGRAPH_STUDY_IN_PROCESS", "") != "1"
 
 #: Seconds between CHILD slices. The in-process path runs on the job's own
 #: cadence and costs nothing; a child takes the graph dark for its whole
@@ -133,9 +150,11 @@ _STORAGE_ASSERTION = "KU_UNREACHABLE"
 def study(conn: Any, deadline: float) -> dict[str, Any]:
     """Measure the next unmeasured events, one pack at a time.
 
-    IN-PROCESS, WITH A CHILD AS THE FALLBACK — and the order matters, because
-    the child costs the graph's availability (~90s of 503 per slice) while the
-    in-process path costs nothing.
+    IN A CHILD PROCESS, because a segfault in the writer must not be able to
+    take the API with it — see `_PREFER_CHILD` for the morning that decided
+    it. In-process is available via `GEOGRAPH_STUDY_IN_PROCESS=1` and is
+    genuinely cheaper; it is not the default because "cheaper" and "cannot
+    kill the site" are not close in value.
 
     THE HISTORY, because this looks like flip-flopping and is not. Four write
     topologies died in `csr_node_group.cpp KU_UNREACHABLE` — a sibling

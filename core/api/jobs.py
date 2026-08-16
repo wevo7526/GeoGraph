@@ -58,6 +58,13 @@ DEFAULT_SLICE_SECONDS = float(os.getenv("GEOGRAPH_JOB_SLICE", "45"))
 #: container is 8 GB, the corpus is ~1.3 GB in two representations, Kuzu's
 #: page cache is another 1.6 GB, and a job's working set on top of that is
 #: what reached the ceiling on 2026-08-16.
+#: Consecutive signal deaths of a CHILD job before it switches itself off. A
+#: child that segfaults is survivable — that is why the study runs in one —
+#: but each attempt still costs the graph-dark slice, so a write that always
+#: crashes should stop being attempted rather than stop the site's freshness
+#: forever at a cost.
+SIGNAL_DEATHS_BEFORE_GIVING_UP = int(os.getenv("GEOGRAPH_SIGNAL_GIVE_UP", "3"))
+
 MEMORY_RECLAIM_BELOW = float(os.getenv("GEOGRAPH_MEMORY_RECLAIM_BELOW", "0.30"))
 MEMORY_PAUSE_BELOW = float(os.getenv("GEOGRAPH_MEMORY_PAUSE_BELOW", "0.12"))
 
@@ -98,12 +105,16 @@ class JobState:
     last_error: str | None = None
     runs: int = 0
     failures: int = 0
+    #: Consecutive times a CHILD job's process was killed by a signal — a
+    #: segfault leaves no exception to count, only a negative returncode.
+    signal_deaths: int = 0
     next_due: float = 0.0
 
     def payload(self, now: float) -> dict[str, Any]:
         return {
             "name": self.name,
             "enabled": self.enabled,
+            "signal_deaths": self.signal_deaths,
             "every_seconds": self.every,
             "runs": self.runs,
             "failures": self.failures,
@@ -396,7 +407,7 @@ class Scheduler:
                 timeout=budget + 60.0, check=False,
             )
             tail = (proc.stdout or "").strip().splitlines()[-3:]
-            outcome = {
+            outcome: dict[str, Any] = {
                 **{k: v for k, v in plan.items() if k != "argv"},
                 "seconds": round(time.monotonic() - started, 1),
                 "ok": proc.returncode == 0,
@@ -404,6 +415,27 @@ class Scheduler:
             }
             if proc.returncode != 0:
                 outcome["error"] = (proc.stderr or "").strip().splitlines()[-3:]
+            # KILLED BY A SIGNAL is a different thing from exiting non-zero: a
+            # negative returncode means the child died the way this job used
+            # to kill the API — a segfault, with no Python evidence. Running
+            # it in a child is what made that survivable; running it forever
+            # against a write that always crashes would pay the graph-dark
+            # slice for nothing, so it gives up and says so.
+            if proc.returncode is not None and proc.returncode < 0:
+                state = job.state
+                state.signal_deaths += 1
+                outcome["killed_by_signal"] = -proc.returncode
+                outcome["consecutive"] = state.signal_deaths
+                if state.signal_deaths >= SIGNAL_DEATHS_BEFORE_GIVING_UP:
+                    job.enabled = False
+                    outcome["disabled"] = (
+                        f"the child was killed by a signal "
+                        f"{state.signal_deaths} times in a row; the study is "
+                        "off until a deploy re-enables it, because each "
+                        "attempt costs a graph-dark slice and writes nothing"
+                    )
+            else:
+                job.state.signal_deaths = 0
             return outcome
         except subprocess.TimeoutExpired:
             return {"ok": False, "error": "child overran its budget and was killed",

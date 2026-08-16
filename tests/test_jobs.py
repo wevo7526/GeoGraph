@@ -312,7 +312,11 @@ def test_the_study_is_a_child_and_stops_on_its_own_budget(monkeypatch):
     source = Path(app_module.__file__).read_text(encoding="utf-8")
     assert 'name="study"' in source and "child=True" in source
     assert work._STORAGE_ASSERTION == "KU_UNREACHABLE"
-    assert not work._PREFER_CHILD, "the child must be the fallback, not the default"
+    assert work._PREFER_CHILD, (
+        "the study must default to a CHILD: an in-process segfault on the "
+        "AFFECTED write restart-looped the container for hours on 2026-08-16, "
+        "and a child's segfault is a recorded failure instead of an outage"
+    )
 
     # The CLI it drives accepts a budget, and the job passes one.
     cli = (Path(app_module.__file__).resolve().parents[2]
@@ -523,7 +527,7 @@ def test_the_study_shrinks_its_own_tick_when_the_buffer_pool_runs_out(monkeypatc
     """
     from core.api import work
 
-    monkeypatch.setattr(work, "_PREFER_CHILD", False)
+    monkeypatch.setattr(work, "_PREFER_CHILD", False)  # force the in-process path
     monkeypatch.setattr(work, "_events_per_tick", 2500)
 
     def _full(conn: Any, deadline: float) -> dict[str, Any]:
@@ -582,3 +586,64 @@ def test_reclaim_drops_the_cache_that_grows_with_the_archive():
     assert not dyads_router._CACHE
     assert not impact._COVERAGE_CACHE
     assert not calibration.CACHE
+
+
+def test_a_child_killed_by_a_signal_gives_up_after_a_few_tries(monkeypatch):
+    """The morning of 2026-08-16, in one sentence: the study's AFFECTED write
+    segfaulted, and because it ran in-process it took the API down with it —
+    boot, forty-five seconds, dead, repeat, for hours.
+
+    Running it in a child makes that survivable. But survivable is not free:
+    the child needs the write lock, so the API releases the graph for its
+    slice, and a write that ALWAYS crashes would pay that darkness forever
+    while writing nothing. A negative returncode is the signature — a segfault
+    leaves no exception to count — so three in a row switches the job off and
+    says why in its own payload.
+    """
+    import subprocess
+
+    from core.api import app as app_module
+    from core.graph import kuzu_store
+
+    class _Graph:
+        pass
+
+    app = _App()
+    app.state.graph = _Graph()
+    monkeypatch.setattr(kuzu_store, "close", lambda g: None)
+    monkeypatch.setattr(app_module, "_open_graph",
+                        lambda a, s: setattr(a.state, "graph", _Graph()))
+
+    class _Dead:
+        returncode = -11          # SIGSEGV
+        stdout = ""
+        stderr = ""
+
+    monkeypatch.setattr(subprocess, "run", lambda *a, **k: _Dead())
+
+    job = jobs_module.Job(name="study", every=1.0, run=lambda c, d: {},
+                          child=True)
+    scheduler = jobs_module.Scheduler(app, None, [job])
+    plan = {"argv": ["x"], "budget_seconds": 30.0}
+
+    for attempt in range(1, jobs_module.SIGNAL_DEATHS_BEFORE_GIVING_UP):
+        out = scheduler._run_child(job, plan)
+        assert out["killed_by_signal"] == 11
+        assert out["consecutive"] == attempt
+        assert job.enabled, "it should keep trying for a couple of rounds"
+
+    out = scheduler._run_child(job, plan)
+    assert not job.enabled, "a write that always crashes must stop being tried"
+    assert "graph-dark" in out["disabled"]
+
+    # A clean run resets the count — an intermittent crash must not
+    # permanently disable a job that mostly works.
+    class _Fine:
+        returncode = 0
+        stdout = "AFFECTED edges written: 12000"
+        stderr = ""
+
+    monkeypatch.setattr(subprocess, "run", lambda *a, **k: _Fine())
+    job.enabled = True
+    out = scheduler._run_child(job, plan)
+    assert out["ok"] and job.state.signal_deaths == 0

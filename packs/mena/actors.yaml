@@ -186,6 +186,85 @@ relations:
 # when they have members in the window's cast. (COW also carries its own
 # OPEC node, actor:igo-opec; the pack's curated actor:opec stays the marquee
 # OPEC and the two are knowingly distinct until an alias crosswalk lands.)
+  # ── added 2026-08-16: the pairs the ranking surfaced with NO standing at
+  # all. COW Formal Alliances carries the alliance web and codes nothing
+  # adversarial, so seven of mena's eight most coercive pairs — including
+  # US–Iran, the region's defining rivalry — read "under no relation the
+  # archive has declared" while the surface ranked them first. A pair the
+  # platform ranks is a pair it owes a characterisation.
+  - a: actor:cow-2              # United States
+    b: actor:cow-630            # Iran
+    relation_type: rivalry
+    valid_from: "1980-04-07"
+    source: source:standing-record
+    note: >-
+      Diplomatic relations severed 1980-04-07 after the embassy seizure; no
+      accredited mission since. The 2015 JCPOA is an agreement between
+      adversaries, not an end to the structure.
+  - a: actor:cow-2              # United States
+    b: actor:cow-666            # Israel
+    relation_type: alliance
+    valid_from: "1981-11-30"
+    source: source:standing-record
+    note: >-
+      Memorandum of Understanding on Strategic Cooperation, 1981-11-30; Major
+      Non-NATO Ally from 1987. Not a mutual-defence treaty, which is why COW
+      does not carry it and the pair read as unaligned.
+  - a: actor:cow-2              # United States
+    b: actor:cow-670            # Saudi Arabia
+    relation_type: alliance
+    valid_from: "1951-06-18"
+    source: source:standing-record
+    note: Mutual Defense Assistance Agreement, 1951-06-18; the security relationship since.
+  - a: actor:cow-666            # Israel
+    b: actor:cow-660            # Lebanon
+    relation_type: rivalry
+    valid_from: "1948-05-15"
+    source: source:standing-record
+    note: >-
+      Belligerent from the 1948 war; no peace treaty, and the live confrontation
+      runs through Hezbollah rather than the Lebanese state.
+  - a: actor:cow-666            # Israel
+    b: actor:hezbollah
+    relation_type: rivalry
+    valid_from: "1982-06-06"
+    source: source:standing-record
+    note: >-
+      The actual belligerent pair behind the Israel–Lebanon dyad, from the 1982
+      invasion that produced Hezbollah.
+  - a: actor:cow-666            # Israel
+    b: actor:cow-652            # Syria
+    relation_type: rivalry
+    valid_from: "1948-05-15"
+    source: source:standing-record
+    note: >-
+      Belligerent from 1948; the Golan is held and claimed, and the 1974
+      disengagement is a ceasefire line, not a settlement.
+  - a: actor:cow-630            # Iran
+    b: actor:cow-645            # Iraq
+    relation_type: rivalry
+    valid_from: "1980-09-22"
+    valid_to: "1988-08-20"
+    source: source:standing-record
+    note: >-
+      The war and nothing after it. ENDED DELIBERATELY: post-2003 Baghdad is
+      aligned with Tehran, so carrying this forward would characterise the pair
+      by a structure that inverted.
+  - a: actor:cow-2              # United States
+    b: actor:cow-645            # Iraq
+    relation_type: rivalry
+    valid_from: "1990-08-02"
+    valid_to: "2003-04-09"
+    source: source:standing-record
+    note: From the invasion of Kuwait to the fall of Baghdad.
+  - a: actor:cow-2              # United States
+    b: actor:cow-645            # Iraq
+    relation_type: alliance
+    valid_from: "2008-11-17"
+    source: source:standing-record
+    note: >-
+      Strategic Framework Agreement, 2008-11-17. The same pair, the opposite
+      standing, twenty years apart — which is what the date windows are for.
 igo_spotlight:
   - actor:igo-nato        # the US–Turkey tie that keeps Turkey off an island
   - actor:igo-loas        # League of Arab States

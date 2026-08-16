@@ -127,6 +127,35 @@ relations:
       structure.
 
 # ── IGO spotlight ────────────────────────────────────────────────────────────
+  # ── added 2026-08-16: pairs the ranking surfaced with no standing. See the
+  # note in packs/mena/actors.yaml — COW codes alliances and no adversarial
+  # relation, so China–Japan sat fifth on china's coercion ranking with the
+  # chip reading "under no relation the archive has declared".
+  - a: actor:cow-710            # China
+    b: actor:cow-740            # Japan
+    relation_type: rivalry
+    valid_from: "2012-09-11"
+    source: source:standing-record
+    note: >-
+      Japan's nationalisation of the Senkaku/Diaoyu islands, 2012-09-11, and
+      the sustained air and maritime contest since. The wartime history is not
+      the live structure; this is.
+  - a: actor:cow-2              # United States
+    b: actor:cow-731            # North Korea
+    relation_type: rivalry
+    valid_from: "1950-06-25"
+    source: source:standing-record
+    note: >-
+      Belligerent from 1950; the 1953 armistice is not a peace treaty and no
+      diplomatic relations have ever existed.
+  - a: actor:cow-710            # China
+    b: actor:cow-750            # India
+    relation_type: rivalry
+    valid_from: "1962-10-20"
+    source: source:standing-record
+    note: >-
+      The 1962 war and the unresolved Line of Actual Control; Galwan (2020) is
+      the same boundary.
 igo_spotlight:
   - actor:igo-asean
   - actor:igo-apec

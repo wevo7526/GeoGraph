@@ -23,6 +23,7 @@ from core import settings as settings_module
 from core.classifier import escalation
 from core.classifier import typing as event_typing
 from core.graph import kuzu_store
+from core.ontology import kuzu_schema as ontology
 from core.reasoning import regimes
 
 
@@ -36,10 +37,23 @@ def _written(conn: Any, rel: str, rows: list[dict[str, Any]]) -> int:
     `merge_edges` MATCHes both endpoints; a MATCH that finds nothing writes
     nothing, yet the row still counted as attempted. On Railway that gap would
     read as a clean seed over a hollow graph. So every batch is counted back
-    out — deduplicated by (src, dst) first, because that is exactly the
-    identity Kuzu's MERGE uses for these property-keyed-nothing edges.
+    out, deduplicated by THE EDGE'S OWN IDENTITY — (src, dst) plus the
+    ontology's `key_slots`, read from the YAML and never assumed.
+
+    It used to dedupe by (src, dst) alone, on the belief that these edges were
+    "property-keyed-nothing". RELATES_TO is keyed on (relation_type,
+    valid_from), and the moment a pair carried two relations across time — the
+    United States and Iraq, a rivalry from 1990 and an alliance from 2008 —
+    the count read one edge short of what was correctly written. An
+    UNDER-count is the dangerous direction here: this function exists to catch
+    a hollow graph, and one that under-reports would eventually raise on a
+    seed that was fine, or mask a real shortfall by a matching amount.
     """
-    intended = len({(r["src"], r["dst"]) for r in rows})
+    spec = ontology.edges().get(rel)
+    keys = tuple(spec.key_slots) if spec else ()
+    intended = len({
+        (r["src"], r["dst"], *(str(r.get(k, "")) for k in keys)) for r in rows
+    })
     actual = kuzu_store.query(conn, f"MATCH ()-[r:{rel}]->() RETURN count(*) AS n")[0]["n"]
     if actual < intended:
         raise SeedError(
