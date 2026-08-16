@@ -120,6 +120,13 @@ DDL: tuple[str, ...] = (
     # payoffs, model artifact) and stale rows beside fresh ones would blend
     # two solves into one map.
     """
+    CREATE TABLE IF NOT EXISTS market_stories (
+        region_pack   TEXT        NOT NULL PRIMARY KEY,
+        payload       JSONB       NOT NULL,
+        computed_at   TIMESTAMPTZ NOT NULL DEFAULT now()
+    )
+    """,
+    """
     CREATE TABLE IF NOT EXISTS game_solutions (
         region_pack   TEXT        NOT NULL,
         scope         TEXT        NOT NULL,
@@ -423,6 +430,43 @@ def record_game_solutions(
             )
     conn.commit()
     return 1 + len(dyads)
+
+
+def record_market_story(conn: Any, region_pack: str, payload: dict[str, Any]) -> None:
+    """Persist a region's markets story (core/reasoning/markets.py), replaced
+    whole — it is a function of the archive, and the `markets` job recomputes
+    it as the archive moves."""
+    import json
+
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            INSERT INTO market_stories (region_pack, payload, computed_at)
+            VALUES (%s, %s, now())
+            ON CONFLICT (region_pack) DO UPDATE SET
+                payload = EXCLUDED.payload, computed_at = now()
+            """,
+            (region_pack, json.dumps(payload)),
+        )
+    conn.commit()
+
+
+def market_story(conn: Any, region_pack: str) -> dict[str, Any] | None:
+    import json
+
+    with conn.cursor() as cur:
+        cur.execute(
+            "SELECT payload, computed_at FROM market_stories WHERE region_pack = %s",
+            (region_pack,),
+        )
+        row = cur.fetchone()
+    if row is None:
+        return None
+    payload, computed_at = row
+    out = payload if isinstance(payload, dict) else json.loads(payload)
+    out["computed_at"] = computed_at.isoformat()
+    out["persisted"] = True
+    return out
 
 
 def game_solution(

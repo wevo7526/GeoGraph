@@ -180,6 +180,14 @@ def _start_jobs(app: FastAPI, settings: Any) -> None:
             # turn brings that to about a day. The memory guard runs before
             # each job either way, and the study's own deadline still ends the
             # turn at an event boundary.
+            # The markets story per region — quantiles over the measured
+            # effects, the persisted game map, the curve and the flows —
+            # rebuilt as AFFECTED grows and served from Postgres.
+            jobs_module.Job(
+                name="markets", every=900.0, run=work.markets,
+                enabled=jobs_module._enabled("markets"),
+                slice_seconds=240.0,
+            ),
             # An unfinished AFFECTED re-projection, completed with the site
             # up (see work.refill); a no-op when no marker exists.
             jobs_module.Job(

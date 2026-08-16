@@ -1009,6 +1009,83 @@ def backtest(conn: Any, deadline: float) -> dict[str, Any]:
     return {"walked": done, "archive": size}
 
 
+# ── the markets story ──────────────────────────────────────────────────────
+
+
+#: The archive must move by this share of AFFECTED before a region's markets
+#: story is rebuilt — a region-wide read over the effects is seconds and the
+#: story is quantiles, which a few thousand more measurements do not move.
+MARKETS_GROWTH = 0.05
+_markets_at: dict[str, int] = {}
+
+
+def markets(conn: Any, deadline: float) -> dict[str, Any]:
+    """Rebuild each region's markets story (core/reasoning/markets.py) and
+    persist it, when AFFECTED has moved enough since the last build."""
+    from core.games import context as context_module
+    from core.games import duration as duration_module
+    from core.games import pricing as pricing_module
+    from core.games import scenarios
+    from core.graph import kuzu_store
+    from core.models import panel as panel_module
+    from core.panel import pg_store
+    from core.reasoning import impact
+    from core.reasoning import markets as markets_module
+
+    rows = kuzu_store.query(conn, "MATCH ()-[a:AFFECTED]->() RETURN count(a) AS n")
+    affected = int(rows[0]["n"]) if rows else 0
+    panel = _panel()
+    if panel is None:
+        return {"skipped": "no panel"}
+    done: list[str] = []
+    try:
+        pg_store.apply_schema(panel)
+        flows = kuzu_store.query(
+            conn,
+            "MATCH (a:Actor)-[f:FLOW]->(m:Market) "
+            "RETURN a.node_id AS actor_id, a.name AS actor_name, "
+            "m.node_id AS market_id, f.as_of AS as_of, f.value_usd AS value_usd",
+        )
+        for name in _pack_names():
+            was = _markets_at.get(name)
+            if was is not None and was > 0 and abs(affected - was) / was < MARKETS_GROWTH:
+                continue
+            if time.monotonic() >= deadline:
+                return {"built": done, "skipped": "slice spent"}
+            pack = packs.load(name)
+            fund_ids = {str(a["id"]) for a in pack.actors if a.get("actor_type") == "swf"}
+            game_map = pg_store.game_solution(
+                panel, name, scope="region", version=scenarios.PAYLOAD_VERSION
+            )
+            try:
+                context = context_module.build(conn, name)
+                duration = duration_module.report(
+                    context["effects"], pricing_module.dyad_of_event(context["effects"])
+                )
+                dyad_names = {
+                    str(d["dyad_id"]): str(d["dyad_name"])
+                    for d in panel_module.dyad_summary(context["table"])
+                }
+                as_of = context.get("as_of")
+            except (context_module.GraphNeeded, context_module.NothingToSolve):
+                duration, dyad_names, as_of = None, {}, None
+            roster = {str(a["id"]) for a in pack.actors}
+            coverage = impact.dyad_coverage(conn, name, roster)
+            payload = markets_module.story(
+                conn, pack, game_map=game_map, duration=duration,
+                flows=[f for f in flows if str(f["actor_id"]) in fund_ids],
+                coverage=coverage, as_of=as_of, dyad_names=dyad_names,
+            )
+            pg_store.record_market_story(panel, name, payload)
+            _markets_at[name] = affected
+            done.append(name)
+    finally:
+        panel.close()
+    if not done:
+        return {"note": "every region's markets story is current", "affected": affected}
+    return {"built": done, "affected": affected}
+
+
 # ── the counts behind /api/stats ───────────────────────────────────────────
 
 

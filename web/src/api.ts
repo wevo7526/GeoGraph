@@ -29,6 +29,7 @@ import type {
   ForwardView,
   EventImpact,
   ImpactCoverage,
+  MarketsStory,
 } from './types'
 
 /** A recorded API failure — kept so the surface can tell BROKEN from EMPTY.
@@ -285,6 +286,12 @@ export const getDyadSolution = (region: string, dyad: string) =>
   get<DyadSolution>(
     `/api/games/dyad?region=${encodeURIComponent(region)}&dyad=${encodeURIComponent(dyad)}`,
   )
+
+// The markets story: the transmission map, the biggest moves, where the games
+// point, the curve's read on duration, sovereign capital and coverage — built by
+// the markets job and served from Postgres (pending until its first pass).
+export const getMarketsStory = (region: string) =>
+  get<MarketsStory>(`/api/markets/story?region=${encodeURIComponent(region)}`)
 
 // The standing book: the latest frozen near-term call marked at the latest close.
 export const getForward = (region: string) =>

@@ -198,6 +198,30 @@ def _skip_reasons(skipped: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return sorted(families.values(), key=lambda r: -r["quarters"])
 
 
+@router.get("/markets/story")
+def markets_story(region: str = "mena") -> dict[str, Any]:
+    """The region's markets story — the transmission map, the biggest moves,
+    where the games point, the curve's read on duration, sovereign capital and
+    coverage — built by the `markets` job and served from Postgres. Pending
+    (never computed) is said, not filled."""
+    try:
+        panel = pg_store.connect(settings_module.load())
+    except pg_store.PanelUnavailable as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    try:
+        pg_store.apply_schema(panel)
+        stored = pg_store.market_story(panel, region)
+    finally:
+        panel.close()
+    if stored is None:
+        return {
+            "region": region, "pending": True,
+            "note": ("the markets story is built by the markets job on the first "
+                     "pass after a deploy; watch /api/jobs"),
+        }
+    return stored
+
+
 @router.get("/trading/forward")
 def forward_view(request: Request, region: str = "mena") -> dict[str, Any]:
     """The standing book and the long-horizon pressure, in one read.

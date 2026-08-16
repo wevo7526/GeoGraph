@@ -1102,3 +1102,98 @@ export interface CalibrationWalk extends CalibrationBlock {
   method?: string
   note?: string
 }
+
+// ── the markets story (core/reasoning/markets.py) ─────────────────────────────
+
+/** One (kind, window) cell of a market's measured response: quantiles of the
+ *  event study's abnormal returns, with the sample stated. `thin` means the
+ *  cell sits under the bar and is shown as an anecdote, not a number. */
+export interface ResponseCell {
+  n: number
+  median: number
+  p25: number
+  p75: number
+  share_positive: number
+  thin?: boolean
+}
+
+export interface MarketStoryMarket {
+  ticker: string
+  name: string
+  market_type?: string | null
+  inception_date?: string | null
+  trading_calendar?: string | null
+  measured: number
+  windows: string[]
+  /** kind → window → cell. Kinds: sharp_escalation · escalation ·
+   *  de-escalation · stable — the event's own Head B coding. */
+  response: Record<string, Record<string, ResponseCell>>
+  headline: (ResponseCell & { kind: string }) | null
+  first_mover_share: Record<string, number>
+  biggest_moves: Array<{
+    event_id: string
+    name: string
+    date: string
+    kind: string
+    pair: string | null
+    abnormal_return: number
+    first_mover: boolean
+  }>
+}
+
+export interface MarketsStory {
+  region: string
+  pending?: boolean
+  note?: string
+  as_of?: string | null
+  computed_at?: string
+  persisted?: boolean
+  markets: MarketStoryMarket[]
+  forward: {
+    as_of?: string
+    computed_at?: string
+    courses: Array<{
+      dyad_name: string
+      kind: string
+      kind_label?: string | null
+      likelihood: number
+      end_label: string
+      market_implications: Array<{ market_id: string; market_name: string; median: number; n: number }>
+    }>
+    direction: Array<{
+      market_id: string
+      market_name: string
+      expected_abnormal_return: number
+      measurements: number
+      courses: number
+    }>
+    note: string
+  } | null
+  duration: {
+    events_with_a_curve_response?: number
+    tenors_measured?: string[]
+    usable_dyads?: number
+    dyads: Array<{ dyad_id: string; dyad_name?: string; n: number; implied_persistence: number; p25: number; p75: number }>
+    calibration?: string
+    note?: string | null
+    method?: string
+  } | null
+  sovereign_capital: {
+    funds: Array<{
+      actor_id: string
+      name: string
+      as_of: string
+      value_usd: number
+      previous_as_of?: string | null
+      change_usd?: number | null
+      quarters_reported: number
+    }>
+    note: string
+  } | null
+  coverage: {
+    summary?: { dyads: number; dyads_measured: number; events: number; events_measured: number; share_measured: number }
+    dyads?: Array<{ dyad_id: string; dyad_name?: string; events: number; measured: number }>
+  } | null
+  method: string
+  explanation: string[]
+}
