@@ -301,14 +301,18 @@ def _sovereign(flows: list[dict[str, Any]]) -> dict[str, Any]:
         latest = rows[-1]
         previous = rows[-2] if len(rows) > 1 else None
         value = float(latest.get("value_usd") or 0.0)
-        before = float(previous.get("value_usd") or 0.0) if previous else None
+        # A quarter-on-quarter change needs a REPORTED prior quarter with a
+        # value; a fund's first filing, or a prior quarter carrying no value,
+        # is not a $1tn inflow.
+        before = (float(previous["value_usd"]) if previous and previous.get("value_usd")
+                  else None)
         funds.append({
             "actor_id": actor_id,
             "name": latest.get("actor_name"),
             "as_of": latest.get("as_of"),
             "value_usd": value,
             "previous_as_of": previous.get("as_of") if previous else None,
-            "change_usd": (value - before) if before is not None else None,
+            "change_usd": (value - before) if before else None,
             "quarters_reported": len(rows),
         })
     funds.sort(key=lambda f: -float(f["value_usd"] or 0.0))
