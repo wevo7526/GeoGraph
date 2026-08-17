@@ -128,6 +128,64 @@ export interface WireFeed {
   method: string
 }
 
+/** The globe board: three layers that answer three different questions.
+ *  WHO EXISTS (`nodes` + `unplaced`), WHAT IS DECLARED (`links`), and WHAT
+ *  JUST HAPPENED (`pulses`, the only layer that moves). */
+export interface GlobeNode {
+  id: string
+  name: string
+  iso3: string
+  lat: number
+  lng: number
+  packs: string[]
+}
+
+export interface GlobeUnplaced {
+  id: string
+  name: string
+  actor_type: string
+  packs: string[]
+  patron_id?: string
+  patron_name?: string
+}
+
+export interface GlobeLink {
+  source: string
+  target: string
+  relation_type: string
+  valid_from: string
+  valid_to: string
+  pack: string
+}
+
+/** A DEPARTURE from the pair's own running baseline, never a raw score.
+ *  `points_from_baseline` is the distance; `direction` is which way. */
+export interface GlobePulse {
+  source: string
+  target: string
+  initiator_name: string
+  target_name: string
+  cameo_code: string | null
+  quad_class: string | null
+  event_id: string
+  event_time: string
+  points_from_baseline: number
+  direction: 'escalating' | 'deescalating' | 'stable' | null
+  pack: string
+}
+
+export interface GlobeBoard {
+  region: string | null
+  nodes: GlobeNode[]
+  unplaced: GlobeUnplaced[]
+  links: GlobeLink[]
+  pulses: GlobePulse[]
+  counts: { placed: number; unplaced: number; links: number; pulses: number }
+  as_of: string | null
+  departure_points: number
+  method: string
+}
+
 export interface Effect {
   ticker: string
   market: string

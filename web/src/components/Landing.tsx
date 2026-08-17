@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
-import { getEvents, getHealth, getPacks, getRegionMap, getStats } from '../api'
-import type { GraphEvent, Health, RegionMap, Stats } from '../types'
+import { getHealth, getPacks, getRegionMap, getStats } from '../api'
+import SituationPlate from './SituationPlate'
+import type { Health, RegionMap, Stats } from '../types'
 import { courseInWords, standingPhrase } from '../lib/story'
 
 /** The front door, cut to the bone (2026-08-15): masthead, headline, three
@@ -36,17 +37,11 @@ export default function Landing({ onEnter }: { onEnter: (route: string) => void 
   const [health, setHealth] = useState<Health | null>(null)
   const [stats, setStats] = useState<Stats | null>(null)
   const [tiles, setTiles] = useState<Tile[]>([])
-  const [wire, setWire] = useState<GraphEvent[]>([])
 
   useEffect(() => {
     let live = true
     getHealth().then((h) => live && setHealth(h))
     getStats().then((s) => live && setStats(s))
-    const now = new Date()
-    const start = new Date(now.getFullYear() - 1, now.getMonth(), now.getDate()).toISOString().slice(0, 10)
-    getEvents({ start, end: now.toISOString().slice(0, 10), limit: 24, order: 'desc' }).then(
-      (r) => live && setWire(r?.rows ?? []),
-    )
     getPacks().then(async (r) => {
       const keys = r?.packs ?? []
       const labels = r?.labels ?? {}
@@ -92,8 +87,6 @@ export default function Landing({ onEnter }: { onEnter: (route: string) => void 
     window.localStorage.setItem('geograph.region', key)
     onEnter(route)
   }
-  // The ticker doubles its list so the loop is seamless.
-  const ribbon = wire.length ? [...wire, ...wire] : []
 
   return (
     <div className="min-h-full flex flex-col">
@@ -109,6 +102,15 @@ export default function Landing({ onEnter }: { onEnter: (route: string) => void 
           <h1 className="mt-12 text-5xl sm:text-7xl leading-[1.02] tracking-tight" style={{ maxWidth: '18ch' }}>
             A hundred and twenty years of geopolitics, priced.
           </h1>
+
+          {/* THE BOARD. It replaced the ticker on 2026-08-17, and the swap is
+              the point rather than a side effect: the ticker scrolled coded
+              event names past the reader with no figure and no way to stop it,
+              and it was the page's only motion. The plate's rail carries the
+              same events PLUS how far each sat from that pair's own baseline,
+              states them in words a screen reader can read, and stops on hover,
+              on focus, on a hidden tab and off-screen. */}
+          <SituationPlate onNavigate={onEnter} />
 
           {/* Three tiles — the whole front page's content */}
           <section className="mt-14 grid sm:grid-cols-3 gap-px" style={{ background: 'var(--rule-strong)', border: '1px solid var(--rule-strong)' }}>
@@ -145,23 +147,6 @@ export default function Landing({ onEnter }: { onEnter: (route: string) => void 
             ))}
           </section>
 
-          {/* The wire, running */}
-          <div className="ticker mt-10" aria-label="latest on the wire">
-            {ribbon.length ? (
-              <div className="ticker-track">
-                {ribbon.map((ev, i) => (
-                  <span key={ev.node_id + i} className="ticker-item mono text-[11px]">
-                    <span style={{ color: 'var(--muted)' }}>{ev.event_time.slice(0, 10)}</span>
-                    <span style={{ color: ev.escalation_direction === 'escalating' ? 'var(--alert)' : ev.escalation_direction === 'deescalating' ? 'var(--accent)' : 'var(--text)' }}>
-                      {' '}{ev.name}
-                    </span>
-                  </span>
-                ))}
-              </div>
-            ) : (
-              <span className="mono text-[11px]" style={{ color: 'var(--muted)' }}>the wire is loading…</span>
-            )}
-          </div>
 
           <div className="mt-10 flex flex-wrap items-center justify-between gap-4">
             <button type="button" className="ink-button text-lg" onClick={() => onEnter('/explore')}>

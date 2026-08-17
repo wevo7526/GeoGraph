@@ -89,3 +89,55 @@ def test_pulses_can_be_switched_off_entirely():
     out = globe.globe(region=None, pulses=0)
     assert out["pulses"] == []
     assert out["nodes"] and out["links"]
+
+
+def test_what_cannot_be_placed_is_reported_not_dropped():
+    """Nineteen of seventy-five roster actors have no coordinate, and NONE of
+    them is a gap.
+
+    Ten sovereign wealth funds, six organisations (OPEC, the GCC, Hezbollah,
+    Hamas, Ansar Allah, al-Qaeda) and three historical states deliberately
+    given no `iso3` — giving the GDR one would route 1980s wire traffic to the
+    wrong state. A globe that silently omitted a quarter of its own roster
+    would assert coverage it does not have, on a platform whose footer says
+    measured, never asserted. So they are served, and the surface draws them
+    in a margin lane.
+    """
+    out = globe.globe(region=None, pulses=0)
+    assert out["unplaced"], "the roster's unplaceable actors must be served"
+    placed_ids = {n["id"] for n in out["nodes"]}
+    for actor in out["unplaced"]:
+        assert actor["id"] not in placed_ids, "an actor is placed or it is not"
+        assert actor["name"] and actor["actor_type"]
+
+
+def test_a_client_carries_its_patron():
+    """Patronage is the one DIRECTED standing the packs declare, and it is what
+    lets the margin lane point rather than merely list."""
+    out = globe.globe(region="mena", pulses=0)
+    by_name = {a["name"]: a for a in out["unplaced"]}
+    hezbollah = by_name.get("Hezbollah")
+    assert hezbollah is not None
+    assert hezbollah.get("patron_name") == "Iran"
+
+
+def test_counts_are_served_not_recomputed_on_the_surface():
+    """The strapline reads these. Composing it from array lengths in TSX lets
+    the caption and the payload drift apart."""
+    out = globe.globe(region=None, pulses=5)
+    counts = out["counts"]
+    assert counts["placed"] == len(out["nodes"])
+    assert counts["unplaced"] == len(out["unplaced"])
+    assert counts["links"] == len(out["links"])
+    assert counts["pulses"] == len(out["pulses"])
+
+
+def test_a_pulse_carries_named_fields_not_the_coded_string():
+    """The event's own name is machine vocabulary — "Use conventional military
+    force, not specified: Iran → Turkey" — and `test_surface_language.py`
+    refuses that inside a component. The surface composes the sentence."""
+    out = globe.globe(region=None, pulses=8)
+    for pulse in out["pulses"]:
+        assert "name" not in pulse, "the coded string must not reach the surface"
+        assert pulse["initiator_name"] and pulse["target_name"]
+        assert pulse["cameo_code"]

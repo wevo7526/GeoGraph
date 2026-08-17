@@ -1,4 +1,5 @@
 import type {
+  GlobeBoard,
   WireFeed,
   CalibrationWalk,
   Assessment,
@@ -169,6 +170,15 @@ export const getWire = (region?: string, limit = 60) => {
   if (region) query.set('region', region)
   query.set('limit', String(limit))
   return get<WireFeed>(`/api/wire?${query}`)
+}
+
+// The globe board. NOT memoised: the pulses are the live layer, and a shared
+// promise would freeze the front door on whatever the first visitor saw.
+export const getGlobe = (region?: string, pulses = 12) => {
+  const query = new URLSearchParams()
+  if (region) query.set('region', region)
+  query.set('pulses', String(pulses))
+  return get<GlobeBoard>(`/api/globe?${query}`)
 }
 
 export const getCoverage = (pack?: string) =>

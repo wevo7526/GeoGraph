@@ -29,6 +29,8 @@ import type {
   RegionRanking,
   WireFeed,
   WireItem,
+  GlobeBoard,
+  GlobePulse,
 } from '../types'
 
 // ── words ───────────────────────────────────────────────────────────────────
@@ -431,4 +433,43 @@ export function wireLede(feed: WireFeed, label: string): Lede | null {
     `pair\u2019s own running baseline \u2014 not from an absolute scale, because a score ` +
     `that is routine for a rivalry is a rupture for an alliance.`
   return { headline, support, asOf: newest }
+}
+
+/** A pulse, in words.
+ *
+ *  The backend deliberately stops sending the event's coded name — "Use
+ *  conventional military force, not specified: Iran → Turkey" — because
+ *  test_surface_language.py refuses machine vocabulary inside a component and
+ *  because a reader should not have to parse CAMEO. It sends the pair, the
+ *  distance from that pair's own baseline, and which way. The sentence is
+ *  composed here, as every other sentence on this surface is.
+ */
+export function pulseRead(pulse: GlobePulse): string {
+  const pair = `${pulse.initiator_name} and ${pulse.target_name}`
+  const off = pulse.points_from_baseline.toFixed(1)
+  if (pulse.direction === 'deescalating') {
+    return `${pair} — ${off} points calmer than their usual`
+  }
+  if (pulse.direction === 'escalating') {
+    return `${pair} — ${off} points more hostile than their usual`
+  }
+  return `${pair} — ${off} points from their usual`
+}
+
+/** What the plate's strapline says, from SERVED counts.
+ *
+ *  Composed from `board.counts` rather than array lengths, so the caption and
+ *  the payload cannot drift apart — and it states the blind spot rather than
+ *  implying full coverage, because a globe showing 56 of 75 roster actors is
+ *  asserting coverage it does not have unless it says so.
+ */
+export function plateStrapline(board: GlobeBoard): string {
+  const { placed, unplaced, links } = board.counts
+  const spot = unplaced
+    ? ` ${count(unplaced)} more cannot be placed on a map and are listed beside it.`
+    : ''
+  return (
+    `${count(placed)} states, ${count(links)} declared standings between them.` +
+    spot
+  )
 }

@@ -90,18 +90,44 @@ def globe(
     coords = coordinates()
 
     nodes: dict[str, dict[str, Any]] = {}
+    unplaced: dict[str, dict[str, Any]] = {}
     links: list[dict[str, Any]] = []
     seen_links: set[tuple[str, ...]] = set()
+    patrons: dict[str, str] = {}
 
     for name in names:
         pack = packs.load(name)
+        # Patronage is the one DIRECTED standing the packs declare, and the
+        # margin lane draws its clients against their patron — so the map is
+        # built before the actors are walked.
+        for relation in pack.relations:
+            if str(relation.get("relation_type") or "") == "proxy":
+                patrons.setdefault(str(relation.get("b") or ""), str(relation.get("a") or ""))
         for actor in pack.actors:
             iso3 = str(actor.get("iso3") or "").upper()
             node_id = str(actor.get("id") or "")
-            if not node_id or iso3 not in coords:
-                # An actor with no coordinate is not placed. The test asserts
-                # full roster coverage, so this is a non-state actor (a bloc,
-                # a militia) rather than a gap.
+            if not node_id:
+                continue
+            if iso3 not in coords:
+                # NOT PLACEABLE, AND DRAWN RATHER THAN DROPPED. Nineteen of the
+                # seventy-five roster actors have no coordinate and none of
+                # them is a gap: ten sovereign wealth funds, six organisations
+                # (OPEC, the GCC, Hezbollah, Hamas, Ansar Allah, al-Qaeda) and
+                # three historical states deliberately given no iso3 — giving
+                # the GDR one would route 1980s wire traffic to the wrong
+                # state. A globe that silently omitted a quarter of its own
+                # roster would assert coverage it does not have, on a platform
+                # whose whole claim is measured-never-asserted.
+                entry = unplaced.get(node_id)
+                if entry is None:
+                    unplaced[node_id] = {
+                        "id": node_id,
+                        "name": str(actor.get("name") or node_id),
+                        "actor_type": str(actor.get("actor_type") or ""),
+                        "packs": [name],
+                    }
+                elif name not in entry["packs"]:
+                    entry["packs"].append(name)
                 continue
             lat, lng = coords[iso3]
             existing = nodes.get(node_id)
@@ -167,9 +193,18 @@ def globe(
                 pulse_rows.append({
                     "source": source,
                     "target": target,
+                    # NAMED FIELDS, NOT THE CODED STRING. The event's own name
+                    # is machine vocabulary — "Use conventional military force,
+                    # not specified: Iran → Turkey" — and
+                    # `test_surface_language.py` refuses that in a component.
+                    # The surface composes the sentence from these
+                    # (`lib/story.ts`), as it does on every other page.
+                    "initiator_name": nodes[source]["name"],
+                    "target_name": nodes[target]["name"],
+                    "cameo_code": row.get("cameo_code"),
+                    "quad_class": row.get("quad_class"),
                     "event_id": row.get("node_id"),
                     "event_time": row.get("event_time"),
-                    "name": row.get("name"),
                     "points_from_baseline": round(float(magnitude), 2),
                     "direction": row.get("escalation_direction"),
                     "pack": name,
@@ -180,11 +215,27 @@ def globe(
         pulse_rows = pulse_rows[:pulses]
 
     placed = [n for n in nodes.values() if any(p in names for p in n["packs"])]
+    off_globe = sorted(unplaced.values(), key=lambda a: (a["actor_type"], a["name"]))
+    for actor in off_globe:
+        patron = patrons.get(actor["id"])
+        if patron in nodes:
+            actor["patron_id"] = patron
+            actor["patron_name"] = nodes[patron]["name"]
+    kept_links = [ln for ln in links if ln["source"] in nodes and ln["target"] in nodes]
     return {
         "region": region,
         "nodes": placed,
-        "links": [ln for ln in links if ln["source"] in nodes and ln["target"] in nodes],
+        "unplaced": off_globe,
+        "links": kept_links,
         "pulses": pulse_rows,
+        # Composed from SERVED fields rather than array arithmetic in TSX, so
+        # the strapline and the payload can never disagree about the roster.
+        "counts": {
+            "placed": len(placed),
+            "unplaced": len(off_globe),
+            "links": len(kept_links),
+            "pulses": len(pulse_rows),
+        },
         "as_of": pulse_rows[0]["event_time"] if pulse_rows else None,
         "departure_points": PULSE_DEPARTURE_POINTS,
         "method": (

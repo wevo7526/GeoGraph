@@ -508,10 +508,17 @@ input[type='range'].timeline:focus-visible {
   .explorer-main .canvas3d { min-height: 60vh; }
 }
 
-/* ── The front door's tiles and ticker (2026-08-15) ──────────────────────────
-   Three region tiles on a hairline grid — a figure, a kicker, a bar — and the
-   wire running beneath as a ticker. Motion is the ticker alone; the tiles
-   answer hover with a tint, not a lift (paper has no elevation). */
+/* ── The front door's tiles (2026-08-15; the ticker retired 2026-08-17) ──────
+   Three region tiles on a hairline grid — a figure, a kicker, a bar — which
+   answer hover with a tint, not a lift (paper has no elevation).
+
+   THE TICKER IS GONE and its rules with it. It scrolled coded event names past
+   the reader with no figure attached, and it was the page's only motion — so
+   its `prefers-reduced-motion` branch was the front door's only motion guard.
+   The Situation Plate replaced it with a rail that carries the same events
+   PLUS how far each sat from that pair's own baseline, states them in words a
+   screen reader can read, and stops on hover, on focus, on a hidden tab and
+   when scrolled out of view. */
 .tile {
   background: var(--ground);
   color: var(--text);
@@ -524,32 +531,6 @@ input[type='range'].timeline:focus-visible {
   background: var(--panel);
   outline: none;
 }
-.ticker {
-  overflow: hidden;
-  border-top: 1px solid var(--rule-strong);
-  border-bottom: 1px solid var(--rule-strong);
-  padding: 0.5rem 0;
-  white-space: nowrap;
-}
-.ticker-track {
-  display: inline-flex;
-  gap: 2.5rem;
-  animation: ticker-run 90s linear infinite;
-}
-.ticker:hover .ticker-track {
-  animation-play-state: paused;
-}
-.ticker-item {
-  flex: none;
-}
-@keyframes ticker-run {
-  from { transform: translateX(0); }
-  to { transform: translateX(-50%); }
-}
-@media (prefers-reduced-motion: reduce) {
-  .ticker-track { animation: none; }
-}
-
 /* ── Visual hierarchy pass (2026-08-15) ─────────────────────────────────────
    The pages had one voice: body text, dotted underlines, more body text. The
    hierarchy now has four registers, and each element wears exactly one:
@@ -897,4 +878,153 @@ input[type='range'].timeline:focus-visible {
   max-width: 62ch;
   line-height: 1.45;
   margin: 0 0 0.35rem;
+}
+
+/* THE SITUATION PLATE (2026-08-17) ------------------------------------------
+   A plotting board set INTO the broadsheet, not a theme reversal.
+
+   The surface is white by a dated decision this file cites twice and tells the
+   next reader not to "fix" back. That decision stands: the page around this is
+   unchanged white and ink. What changes is that one bounded instrument on it is
+   dark — inside the same 2px black frame the explorer's canvas already wears,
+   which is precisely how an instrument reads as an instrument on paper. A dark
+   field running edge to edge would read as the theme flipping, and the next
+   reader would revert it, correctly.
+
+   The plate's inks are LOCAL rather than tokens, because a 2D canvas cannot
+   read custom properties and a plate whose stylesheet and canvas disagreed
+   would drift silently. --accent and --alert still mean what they mean: the
+   pulse ticks carry sign, lifted for legibility on the dark ground. */
+.plate {
+  border: 2px solid var(--rule-strong);
+  background: #101317;
+  color: #e8e4dc;
+  margin: 1.5rem 0 0;
+  overflow: hidden;
+}
+
+.plate--waiting {
+  min-height: 320px;
+  display: grid;
+  place-items: center;
+  color: #8a929c;
+}
+
+.plate-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.05fr) minmax(0, 1fr);
+  gap: 0;
+}
+
+@media (max-width: 860px) {
+  .plate-grid { grid-template-columns: minmax(0, 1fr); }
+}
+
+.globe-box {
+  position: relative;
+  min-height: 360px;
+  aspect-ratio: 1 / 1;
+  max-height: 460px;
+}
+.globe-box canvas { display: block; width: 100%; height: 100%; }
+
+.plate-rail {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+  padding: 1.1rem 1.2rem;
+  border-left: 1px solid #2a2f36;
+  min-width: 0;
+}
+@media (max-width: 860px) {
+  .plate-rail { border-left: none; border-top: 1px solid #2a2f36; }
+}
+
+.plate-rail-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 1rem;
+  border-bottom: 1px solid #2a2f36;
+  padding-bottom: 0.4rem;
+}
+.plate-rail-head .kicker { color: #8a929c; }
+.plate-rail-head .mono { color: #6d757f; }
+
+.plate-pulses { list-style: none; margin: 0; padding: 0; }
+.plate-pulses li + li { border-top: 1px dotted #262b31; }
+
+/* A dot-leader ledger row, the same device the markets page uses — it is what
+   makes a column of figures scannable without a table's rules. */
+.plate-pulse {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+  width: 100%;
+  background: none;
+  border: none;
+  padding: 0.42rem 0;
+  text-align: left;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+.plate-pulse:hover .plate-pulse-text,
+.plate-pulse:focus-visible .plate-pulse-text { color: #ffffff; }
+.plate-pulse:focus-visible { outline: 1px solid #8a929c; outline-offset: 2px; }
+
+.plate-tick {
+  flex: none;
+  width: 3px;
+  align-self: stretch;
+  background: #6d757f;
+}
+.plate-tick[data-direction='escalating'] { background: #d9573a; }
+.plate-tick[data-direction='deescalating'] { background: #5b9bd8; }
+
+.plate-pulse-text { color: #c9ccd1; min-width: 0; }
+.plate-leader {
+  flex: 1;
+  margin: 0 0.4rem;
+  border-bottom: 1px dotted #333a42;
+  transform: translateY(-0.28em);
+}
+.plate-figure {
+  font-variant-numeric: tabular-nums;
+  color: #e8e4dc;
+  flex: none;
+}
+
+.plate-empty { color: #8a929c; max-width: 46ch; margin: 0.6rem 0; }
+
+/* NOT PLACEABLE. Nineteen of seventy-five roster actors have no coordinate and
+   none of them is a gap — proxy clients, sovereign funds, OPEC, the GCC, and
+   three historical states deliberately without an iso3. Drawing 56 and calling
+   it the roster would assert coverage the archive does not have. */
+.plate-margin {
+  border-top: 1px solid #2a2f36;
+  padding-top: 0.6rem;
+  margin-top: auto;
+}
+.plate-margin .kicker { color: #6d757f; }
+.plate-margin ul { list-style: none; margin: 0.35rem 0 0; padding: 0; }
+.plate-margin li {
+  display: flex;
+  align-items: baseline;
+  gap: 0.4rem;
+  padding: 0.16rem 0;
+  color: #9aa1aa;
+  font-size: 0.85rem;
+}
+.plate-margin-note { flex: none; color: #6d757f; font-size: 0.8rem; }
+.plate-margin-more { color: #6d757f; font-size: 0.8rem; margin: 0.3rem 0 0; }
+
+.plate-strapline {
+  border-top: 1px solid #2a2f36;
+  margin: 0;
+  padding: 0.7rem 1.2rem 0.85rem;
+  color: #8a929c;
+  font-size: 0.85rem;
+  line-height: 1.45;
+  max-width: 92ch;
 }
