@@ -30,7 +30,6 @@ import type {
   WireFeed,
   WireItem,
   GlobeBoard,
-  GlobePulse,
 } from '../types'
 
 // ── words ───────────────────────────────────────────────────────────────────
@@ -435,41 +434,24 @@ export function wireLede(feed: WireFeed, label: string): Lede | null {
   return { headline, support, asOf: newest }
 }
 
-/** A pulse, in words.
- *
- *  The backend deliberately stops sending the event's coded name — "Use
- *  conventional military force, not specified: Iran → Turkey" — because
- *  test_surface_language.py refuses machine vocabulary inside a component and
- *  because a reader should not have to parse CAMEO. It sends the pair, the
- *  distance from that pair's own baseline, and which way. The sentence is
- *  composed here, as every other sentence on this surface is.
- */
-export function pulseRead(pulse: GlobePulse): string {
-  const pair = `${pulse.initiator_name} and ${pulse.target_name}`
-  const off = pulse.points_from_baseline.toFixed(1)
-  if (pulse.direction === 'deescalating') {
-    return `${pair} — ${off} points calmer than their usual`
-  }
-  if (pulse.direction === 'escalating') {
-    return `${pair} — ${off} points more hostile than their usual`
-  }
-  return `${pair} — ${off} points from their usual`
-}
-
-/** What the plate's strapline says, from SERVED counts.
+/** What the map's one line says, from SERVED counts.
  *
  *  Composed from `board.counts` rather than array lengths, so the caption and
- *  the payload cannot drift apart — and it states the blind spot rather than
- *  implying full coverage, because a globe showing 56 of 75 roster actors is
- *  asserting coverage it does not have unless it says so.
+ *  the payload cannot drift apart.
+ *
+ *  IT NAMES THE BLIND SPOT, and after the margin lane was cut this line is the
+ *  ONLY thing that does. Nineteen of the roster's seventy-five actors have no
+ *  coordinate — every proxy client, every sovereign fund, OPEC, the GCC, and
+ *  three historical states deliberately given no iso3. Drawing 56 and calling
+ *  it the archive would assert coverage the data does not have. (It said they
+ *  were "listed beside it" while a lane listed them; when the lane went, that
+ *  clause became false and had to go with it — a caption outliving the thing
+ *  it described is how a surface starts lying quietly.)
  */
 export function plateStrapline(board: GlobeBoard): string {
   const { placed, unplaced, links } = board.counts
   const spot = unplaced
-    ? ` ${count(unplaced)} more cannot be placed on a map and are listed beside it.`
+    ? ` ${count(unplaced)} more — blocs, funds and armed movements — have no place on a map.`
     : ''
-  return (
-    `${count(placed)} states, ${count(links)} declared standings between them.` +
-    spot
-  )
+  return `${count(placed)} states, ${count(links)} declared standings between them.${spot}`
 }

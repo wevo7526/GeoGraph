@@ -1,8 +1,7 @@
 import { useEffect, useState } from 'react'
-import { getHealth, getPacks, getRegionMap, getStats } from '../api'
+import { getHealth, getStats } from '../api'
 import SituationPlate from './SituationPlate'
-import type { Health, RegionMap, Stats } from '../types'
-import { courseInWords, standingPhrase } from '../lib/story'
+import type { Health, Stats } from '../types'
 
 /** The front door, cut to the bone (2026-08-15): masthead, headline, three
  *  live region tiles — one figure each, the frozen near-term call, and the
@@ -10,72 +9,27 @@ import { courseInWords, standingPhrase } from '../lib/story'
  *  ticker, one line of archive figures, one door. No paragraphs. Every
  *  number is served and has a page behind it; a tile is the way in. */
 
-/** THE TILE LEADS WITH THE PAIR AND ITS COURSE, not with a probability.
+/** THE FRONT DOOR IS THE MAP (2026-08-17).
  *
- *  It used to lead with the near-term escalation call — 99% for Asia — and the
- *  platform's own calibration walk says that question's base rate since 2005 is
- *  0.97: "does a focal pair escalate again within three years" is very nearly
- *  "yes, always". A front door whose one number is a near-certainty advertises
- *  a machine predicting what is already known. Beneath it sat `tone_label`,
- *  which scored the United States and China — a declared rivalry — "friendly",
- *  and which core/games/scenarios.py says in as many words must never
- *  characterise a pair. Both are gone: the tile now carries the region's most
- *  coercive pair, the course the game puts most mass on in that pair's own
- *  words, and the count behind the ranking. */
-type Tile = {
-  key: string
-  label: string
-  lead: {
-    name: string
-    course: string | null
-    coercive: number | null
-    standing: string | null
-  } | null
-}
+ *  It was a headline, three region tiles and a scrolling ticker. The tiles are
+ *  gone with the ticker: they each led with a region's most coercive pair and
+ *  the course its game put mass on, which is a page's worth of claim made
+ *  three times over a reader who has not yet been told what the archive IS.
+ *  The globe says that in one object, and the tabs are three clicks from here.
+ *
+ *  What is left is a masthead, one headline, the map, one line of archive
+ *  figures and one door — which is what the 2026-08-15 cut was aiming at
+ *  before it had a map to aim with.
+ */
 
 export default function Landing({ onEnter }: { onEnter: (route: string) => void }) {
   const [health, setHealth] = useState<Health | null>(null)
   const [stats, setStats] = useState<Stats | null>(null)
-  const [tiles, setTiles] = useState<Tile[]>([])
 
   useEffect(() => {
     let live = true
     getHealth().then((h) => live && setHealth(h))
     getStats().then((s) => live && setStats(s))
-    getPacks().then(async (r) => {
-      const keys = r?.packs ?? []
-      const labels = r?.labels ?? {}
-      const built = await Promise.all(
-        keys.map(async (key): Promise<Tile> => {
-          const map = await getRegionMap(key)
-          // THE PAIR WHOSE GAME IS ABOUT COERCION. The ranking counts coercive
-          // acts, and allies accumulate them through co-participation — two
-          // partners in the same operation are coded against each other
-          // (CLAUDE.md records US–Australia's 25 events of "use conventional
-          // military force"). That is why the standing travels beside the
-          // count everywhere it is shown; on a front door, which has room for
-          // one pair per region, it is better to lead with a pair the count
-          // means what a reader will take it to mean. Eurasia led with
-          // US–UK, formal allies since 1949, on 145 such acts.
-          const ranking = map?.ranking ?? []
-          const top: RegionMap['ranking'][number] | undefined =
-            ranking.find((r) => r.family?.family !== 'ally') ?? ranking[0]
-          return {
-            key,
-            label: labels[key] ?? key,
-            lead: top
-              ? {
-                  name: top.dyad_name,
-                  course: courseInWords(top.top_scenario, top.family),
-                  coercive: top.coercive_events ?? null,
-                  standing: standingPhrase(top.standing),
-                }
-              : null,
-          }
-        }),
-      )
-      if (live) setTiles(built)
-    })
     return () => {
       live = false
     }
@@ -83,10 +37,6 @@ export default function Landing({ onEnter }: { onEnter: (route: string) => void 
 
   const graphLive = health?.graph === 'open'
   const n = (v: number | undefined) => (graphLive && v !== undefined ? v.toLocaleString('en-US') : '—')
-  const enter = (route: string, key: string) => {
-    window.localStorage.setItem('geograph.region', key)
-    onEnter(route)
-  }
 
   return (
     <div className="min-h-full flex flex-col">
@@ -110,42 +60,8 @@ export default function Landing({ onEnter }: { onEnter: (route: string) => void 
               same events PLUS how far each sat from that pair's own baseline,
               states them in words a screen reader can read, and stops on hover,
               on focus, on a hidden tab and off-screen. */}
-          <SituationPlate onNavigate={onEnter} />
+          <SituationPlate />
 
-          {/* Three tiles — the whole front page's content */}
-          <section className="mt-14 grid sm:grid-cols-3 gap-px" style={{ background: 'var(--rule-strong)', border: '1px solid var(--rule-strong)' }}>
-            {(tiles.length ? tiles : [{ key: 'a' }, { key: 'b' }, { key: 'c' }].map((t) => ({ ...t, label: '', escalation: null, lead: null }))).map((t) => (
-              <button
-                key={t.key}
-                type="button"
-                className="tile text-left p-6 flex flex-col gap-4"
-                onClick={() => t.label && enter('/games', t.key)}
-                aria-label={t.label ? `Enter ${t.label}` : 'loading'}
-              >
-                <span className="text-lg" style={{ fontVariantCaps: 'small-caps', letterSpacing: '0.12em' }}>{t.label || ' '}</span>
-                {t.lead ? (
-                  <>
-                    <span className="block text-3xl leading-tight" style={{ letterSpacing: '-0.015em' }}>
-                      {t.lead.name}
-                    </span>
-                    {t.lead.standing && (
-                      <span className="block text-sm" style={{ color: 'var(--muted)' }}>{t.lead.standing}</span>
-                    )}
-                    <span className="block text-base">{t.lead.course ?? 'no course named yet'}</span>
-                    <span className="mono text-[11px] block mt-auto pt-3" style={{ color: 'var(--muted)' }}>
-                      {t.lead.coercive != null
-                        ? `${t.lead.coercive.toLocaleString('en-US')} COERCIVE ACTS IN THE LAST YEAR`
-                        : 'THE REGION’S MOST ACTIVE PAIR'}
-                    </span>
-                  </>
-                ) : (
-                  <span className="block text-3xl leading-tight" style={{ color: 'var(--muted)' }}>
-                    {t.label ? 'solving…' : ' '}
-                  </span>
-                )}
-              </button>
-            ))}
-          </section>
 
 
           <div className="mt-10 flex flex-wrap items-center justify-between gap-4">

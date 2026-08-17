@@ -184,3 +184,34 @@ export function shortestTurn(fromLng: number, toLng: number): number {
 export function midLongitude(a: number, b: number): number {
   return a + shortestTurn(a, b) / 2
 }
+
+/** Project a point, pushing the hidden hemisphere onto the horizon.
+ *
+ *  THIS IS WHAT MAKES A FILLED CONTINENT WORK. A landmass that crosses the
+ *  limb has some vertices facing away, and there are only bad options for
+ *  them: dropping them closes the polygon with a straight chord slicing
+ *  across the globe, and keeping them projects the far side back over the
+ *  near side. The standard orthographic answer is to clamp a hidden vertex
+ *  radially onto the limb, which is where it would be seen from if it were
+ *  visible at all — so Asia leaving the eastern edge ends ON the edge.
+ */
+export function projectClamped(
+  lat: number, lng: number, lam0: number, phi0: number,
+  cx: number, cy: number, r: number,
+): Projected {
+  const v = toVector(lat, lng, lam0, phi0)
+  if (v.z >= 0) return project(v, cx, cy, r)
+  const m = Math.hypot(v.x, v.y) || 1
+  return { sx: cx + (v.x / m) * r, sy: cy - (v.y / m) * r, front: false }
+}
+
+/** Is any part of this ring facing us? A ring entirely on the far side would
+ *  otherwise be drawn as a meaningless smear along the limb. */
+export function ringIsVisible(
+  ring: number[], lam0: number, phi0: number,
+): boolean {
+  for (let i = 0; i < ring.length; i += 2) {
+    if (toVector(ring[i + 1], ring[i], lam0, phi0).z >= 0) return true
+  }
+  return false
+}
