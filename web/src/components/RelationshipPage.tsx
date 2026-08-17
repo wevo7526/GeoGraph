@@ -57,10 +57,10 @@ import type {
   TimelineEvent,
   DyadSolution,
 } from '../types'
-import { dyadCall } from '../lib/story'
+import { dyadCall, typicalBand } from '../lib/story'
 import { BoxRow, Fan, LineBand } from './charts/Charts'
 import type { Point } from './charts/Charts'
-import { Bars, MultiLine, pct } from './charts/Kit'
+import { Bars, FanRibbon, MultiLine, pct } from './charts/Kit'
 import { Beat, Disclosure, Empty, MoveRow, StatLine, StoryHead, TensionBadge } from '../ui'
 
 function dyadFromHash(): string {
@@ -201,8 +201,17 @@ export default function RelationshipPage({ region, onNavigate }: { region: strin
   const linePoints: Point[] = rows.map((r) => ({ x: r.q, y: r.intensity }))
 
   // ── THE CALL: where tension heads, the forecasted move + type, its markets ──
-  const bands = game && game.marginal[0] ? game.marginal[0].distribution.length : 5
-  const marginal = game?.marginal ?? []
+  //
+  // SOURCED FROM THE SOLVED GAME, with `exploreGame` as the fallback for a pair
+  // that has no persisted solve. Both compute a fan; rendering one in the call
+  // and the other in the disclosure beneath it is how a plate comes to disagree
+  // with itself, and it is the same single-sourcing that stopped this page and
+  // the game-theory page naming different courses for the same afternoon.
+  const solvedConcept = solution
+    ? solution.concepts[solution.primary_solver] ?? solution.concepts.qre
+    : null
+  const marginal = solvedConcept?.marginal ?? game?.marginal ?? []
+  const bands = marginal[0] ? marginal[0].distribution.length : 5
   const expectedStart = marginal[0]?.expected_band ?? null
   const expectedEnd = marginal.length ? marginal[marginal.length - 1].expected_band : null
   const drift = expectedStart != null && expectedEnd != null ? expectedEnd - expectedStart : null
@@ -225,16 +234,13 @@ export default function RelationshipPage({ region, onNavigate }: { region: strin
   // endpoint), so it agrees with the lede rather than the immediate step —
   // a near-term escalation inside a medium-term easing read as a contradiction.
   const headingType = expectedEnd != null ? bandLabel(Math.round(expectedEnd), bands, bandNames) : nextType
-  const moves = stepMoves(nextStep)
+  const moves = solvedConcept?.scenarios?.[0]
+    ? (solvedConcept.scenarios[0].market_implications ?? [])
+        .map((m) => ({ name: m.market_name, pct: m.median * 100, n: m.n }))
+        .slice(0, 6)
+    : stepMoves(nextStep)
   const horizonQuarters = marginal.length
 
-  // THE CALL COMES FROM THE SOLVED GAME, the same source and the same composer
-  // the game-theory page leads with — so the two pages cannot disagree about
-  // the same pair, which they did until 2026-08-17 (one said "mutual escalation
-  // at 54%", the other "brinkmanship at 52%", for the same afternoon).
-  const solvedConcept = solution
-    ? solution.concepts[solution.primary_solver] ?? solution.concepts.qre
-    : null
   const call = solution && solvedConcept ? dyadCall(solution, solvedConcept) : null
 
   const callLede = (() => {
@@ -380,7 +386,16 @@ export default function RelationshipPage({ region, onNavigate }: { region: strin
             {/* Show me why — the trajectory fan behind the one-line call. */}
             {marginal.length > 1 && (
               <Disclosure label="show me the trajectory">
-                <TrajectoryStrip marginal={marginal} bands={bands} bandNames={bandNames} />
+                {solution && solvedConcept ? (
+                  <FanRibbon
+                    marginal={solvedConcept.marginal.map((m) => m.distribution)}
+                    bandLabels={solution.band_labels}
+                    openingBand={solution.opening.intensity_band}
+                    typicalBand={typicalBand(solution)}
+                  />
+                ) : (
+                  <TrajectoryStrip marginal={marginal} bands={bands} bandNames={bandNames} />
+                )}
                 {solution && (
                   <p className="text-sm mt-3" style={{ color: 'var(--muted)', maxWidth: '64ch' }}>
                     {standing ? `${standing.charAt(0).toUpperCase()}${standing.slice(1)}. ` : ''}
