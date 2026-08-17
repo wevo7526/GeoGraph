@@ -1,4 +1,4 @@
-/** The map: the archive's roster on a turning globe, and nothing else.
+/** The map: the archive's roster on a turning globe, and nothing else at all.
  *
  *  CUT BACK ON 2026-08-17, the same day it shipped. The first version put a
  *  rail of live departures beside the globe and a margin lane under it; the
@@ -6,10 +6,13 @@
  *  door now makes ONE claim and the pages behind it make the rest, and the
  *  departures still have a home on the Wire.
  *
- *  What survives the cut is the honesty, because it costs one line: the
- *  strapline still states the roster it drew AND the nineteen actors it cannot
- *  place. A globe showing 56 of 75 and calling it the archive would assert
- *  coverage the data does not have, whether or not there is room for a list.
+ *  THE STRAPLINE WENT TOO (second cut, same day). It named the nineteen
+ *  actors the globe cannot place — blocs, funds and armed movements with no
+ *  coordinate — and losing it means the front door no longer discloses that
+ *  gap. That is a deliberate trade the owner made for a page with no subtext
+ *  on it, not an oversight: the globe now shows the states it can place and
+ *  claims nothing about the rest, and `/api/globe` still serves `unplaced` for
+ *  any surface that wants to say so.
  *
  *  WHITE, as the rest of the surface is. The dark plate this briefly wore was
  *  an override of a dated decision; it is withdrawn.
@@ -17,7 +20,6 @@
 import { useEffect, useState } from 'react'
 
 import { getGlobe, lastFailureFor } from '../api'
-import { plateStrapline } from '../lib/story'
 import type { GlobeBoard } from '../types'
 import { Empty } from '../ui'
 import OrthoGlobe from './OrthoGlobe'
@@ -49,7 +51,6 @@ export default function SituationPlate({ region }: { region?: string }) {
   return (
     <section className="plate" aria-label="the archive's roster, mapped">
       <OrthoGlobe board={board} />
-      <p className="plate-strapline">{plateStrapline(board)}</p>
     </section>
   )
 }

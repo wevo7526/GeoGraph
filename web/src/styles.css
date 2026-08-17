@@ -864,27 +864,57 @@ input[type='range'].timeline:focus-visible {
   margin: 0 0 0.35rem;
 }
 
-/* THE MAP (2026-08-17) -------------------------------------------------------
-   The front door's globe: white ground, ink limb, the same surface as every
-   page around it.
+/* THE FRONT DOOR AND ITS MAP (2026-08-17) -----------------------------------
+   Four things, centred: the hero line, the globe, one door, one hairline. The
+   page is a single column with the map as its subject, so everything is
+   centred on the same axis — the globe is a circle, and a circle off-axis in a
+   left-aligned column reads as a mistake.
 
-   IT WORE A DARK PLATE FOR ONE AFTERNOON AND THE OVERRIDE IS WITHDRAWN. The
-   white-ground decision is dated twice in this file and tells the next reader
-   not to revert it; a dark instrument set into it was defensible while the
-   globe had no landmasses and needed to read as a plotting board, and it
-   stopped being defensible the moment the globe became a map. Natural Earth
-   coastlines on white are the same broadsheet the rest of the surface is
-   printed on, so there is nothing left to reconcile.
-
-   The canvas paints its own inks (a 2D context cannot read custom properties)
-   but they are THIS file's values — see OrthoGlobe.tsx, where each constant
+   The globe wore a dark plate for one afternoon; the override is withdrawn.
+   The white-ground decision is dated twice in this file and tells the next
+   reader not to revert it. A dark instrument was defensible while the globe
+   had no landmasses and needed to read as a plotting board, and stopped being
+   defensible the moment it became a map. The canvas paints its own inks (a 2D
+   context cannot read custom properties) but every constant in OrthoGlobe.tsx
    names the token it mirrors. */
-.plate {
-  margin: 2rem 0 0;
+.landing {
+  min-height: 100%;
+  display: flex;
+  flex-direction: column;
 }
 
+.landing-main {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 1.75rem;
+  padding: 3rem 1.5rem 2.5rem;
+  text-align: center;
+}
+
+.landing-hero {
+  font-size: clamp(2.1rem, 5.2vw, 4.1rem);
+  line-height: 1.04;
+  letter-spacing: -0.015em;
+  text-wrap: balance;
+  max-width: 20ch;
+  margin: 0;
+}
+
+.landing-foot {
+  border-top: 1px solid var(--rule-strong);
+  padding: 0.85rem 1.5rem;
+  display: flex;
+  justify-content: center;
+  color: var(--muted);
+}
+
+.plate { margin: 0; width: 100%; display: flex; justify-content: center; }
+
 .plate--waiting {
-  min-height: 340px;
+  min-height: 300px;
   display: grid;
   place-items: center;
   color: var(--muted);
@@ -892,23 +922,29 @@ input[type='range'].timeline:focus-visible {
 
 .globe-box {
   position: relative;
-  width: 100%;
-  /* Square, and capped: past about 560px the graticule stops adding
-     information and the headline loses the fold. */
+  width: min(62vh, 100%, 620px);
   aspect-ratio: 1 / 1;
-  max-height: 560px;
+  /* GRAB, not pointer: the globe is a thing you turn, and the cursor is the
+     only affordance saying so on a page with no instructions left. */
+  cursor: grab;
+  touch-action: none;
 }
+.globe-box:active { cursor: grabbing; }
 .globe-box canvas { display: block; width: 100%; height: 100%; }
 
-/* The strapline is the whole honesty budget now that the margin lane is gone:
-   it names the roster the globe drew AND the nineteen actors it cannot place,
-   because 56 of 75 drawn silently would assert coverage the archive lacks. */
-.plate-strapline {
-  border-top: 1px solid var(--line);
-  margin: 0.75rem 0 0;
-  padding-top: 0.6rem;
-  color: var(--muted);
-  font-size: 0.85rem;
-  line-height: 1.45;
-  max-width: 78ch;
+/* The tooltip is the only text the map carries, and it appears only where the
+   reader points. Positioned at the node and lifted clear of it; it never
+   intercepts the pointer, or hovering a node would flicker as the tip covered
+   the very point that summoned it. */
+.globe-tip {
+  position: absolute;
+  transform: translate(-50%, calc(-100% - 12px));
+  pointer-events: none;
+  white-space: nowrap;
+  background: var(--ground);
+  border: 1px solid var(--rule-strong);
+  padding: 0.18rem 0.5rem;
+  font-size: 0.82rem;
+  line-height: 1.2;
+  z-index: 2;
 }

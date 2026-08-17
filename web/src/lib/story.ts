@@ -29,7 +29,6 @@ import type {
   RegionRanking,
   WireFeed,
   WireItem,
-  GlobeBoard,
 } from '../types'
 
 // ── words ───────────────────────────────────────────────────────────────────
@@ -432,26 +431,4 @@ export function wireLede(feed: WireFeed, label: string): Lede | null {
     `pair\u2019s own running baseline \u2014 not from an absolute scale, because a score ` +
     `that is routine for a rivalry is a rupture for an alliance.`
   return { headline, support, asOf: newest }
-}
-
-/** What the map's one line says, from SERVED counts.
- *
- *  Composed from `board.counts` rather than array lengths, so the caption and
- *  the payload cannot drift apart.
- *
- *  IT NAMES THE BLIND SPOT, and after the margin lane was cut this line is the
- *  ONLY thing that does. Nineteen of the roster's seventy-five actors have no
- *  coordinate — every proxy client, every sovereign fund, OPEC, the GCC, and
- *  three historical states deliberately given no iso3. Drawing 56 and calling
- *  it the archive would assert coverage the data does not have. (It said they
- *  were "listed beside it" while a lane listed them; when the lane went, that
- *  clause became false and had to go with it — a caption outliving the thing
- *  it described is how a surface starts lying quietly.)
- */
-export function plateStrapline(board: GlobeBoard): string {
-  const { placed, unplaced, links } = board.counts
-  const spot = unplaced
-    ? ` ${count(unplaced)} more — blocs, funds and armed movements — have no place on a map.`
-    : ''
-  return `${count(placed)} states, ${count(links)} declared standings between them.${spot}`
 }
