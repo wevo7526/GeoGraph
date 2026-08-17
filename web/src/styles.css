@@ -871,46 +871,30 @@ input[type='range'].timeline:focus-visible {
 }
 
 /* THE WIRE ------------------------------------------------------------------
-   A feed, so the rhythm is vertical and even: each item is one block with a
-   timestamp above it and the system's read below the headline. Kept close to
-   the paper language of the rest of the surface — rules and ink, no cards with
-   shadows — because the wire is the same publication as every other page. */
-.wire-feed {
-  display: flex;
-  flex-direction: column;
-  gap: 0.75rem;
-}
-
-.wire-item {
-  display: flex;
-  flex-direction: column;
-  gap: 0.15rem;
+   A departure is one entry: a dot-leader ledger row for when and how far, the
+   coded headline, then the system's read. Separated by the same dotted rule
+   the move rows use, because this is the same publication — the wire is not a
+   different product with its own furniture. No card, no shadow, no radius:
+   this surface is print, and print separates with rules. */
+.wire-entry + .wire-entry {
+  border-top: 1px dotted var(--line);
+  margin-top: 1rem;
+  padding-top: 1rem;
 }
 
 .wire-headline {
-  font-size: 1.05rem;
-  line-height: 1.25;
+  font-size: 1.08rem;
+  line-height: 1.3;
   font-weight: 600;
   text-wrap: balance;
+  margin: 0.15rem 0 0.2rem;
 }
 
-/* The read sits under the headline and must not compete with it. */
-.wire-item > p {
-  max-width: 68ch;
-  line-height: 1.45;
-}
-
-.linklike {
-  align-self: flex-start;
-  background: none;
-  border: none;
-  padding: 0;
-  cursor: pointer;
+/* The read sits under the headline and must not compete with it — the same
+   weight and measure as a beat's aside, which is the same job. */
+.wire-read {
   color: var(--muted);
-  text-decoration: underline;
-  text-underline-offset: 2px;
-}
-
-.linklike:hover {
-  color: var(--text);
+  max-width: 62ch;
+  line-height: 1.45;
+  margin: 0 0 0.35rem;
 }

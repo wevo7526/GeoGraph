@@ -478,12 +478,26 @@ def wire(
 def _actor_names(request: Request) -> dict[str, str]:
     """actor node_id → display name, for the wire's headline.
 
-    One query for the whole roster (tens of rows) rather than a lookup per
-    event: under a writing loop a request's latency is its QUERY COUNT, not
-    its query cost.
+    FROM THE PACKS, NOT THE GRAPH, and that is deliberate. The roster is the
+    same data in both places, but the graph is not always open: the study runs
+    as a child process, a child holds Kuzu's single write lock, and every graph
+    endpoint answers 503 for its slice — measured at ~1 sample in 12. A wire
+    that sourced names from the graph would spend that window printing events
+    with no actors on them, which reads as broken rather than as busy.
+
+    It is also simply cheaper: no query at all, against one per request.
     """
-    conn = _conn_or_none(request)
-    if conn is None:
-        return {}
-    rows = kuzu_store.query(conn, "MATCH (a:Actor) RETURN a.node_id AS id, a.name AS name")
-    return {str(r["id"]): str(r["name"]) for r in rows if r.get("name")}
+    from core import packs
+
+    del request  # no graph access, by design
+    names: dict[str, str] = {}
+    for pack_name in packs.available():
+        try:
+            pack = packs.load(pack_name)
+        except packs.PackError:
+            continue
+        for actor in pack.actors:
+            node_id, name = str(actor.get("id") or ""), actor.get("name")
+            if node_id and name:
+                names.setdefault(node_id, str(name))
+    return names

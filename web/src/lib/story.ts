@@ -388,24 +388,30 @@ export function wireRead(item: WireItem): string {
       : 'Coded, with no reading yet of how far it sits from the pair\u2019s usual.'
   }
 
-  const where = item.departure
-    ? `${off.toFixed(1)} points from ${pair ? 'their' : 'the pair\u2019s'} usual level`
-    : `close to ${pair ? 'their' : 'the pair\u2019s'} usual level`
+  const theirs = pair ? 'their' : 'the pair\u2019s'
 
-  if (item.departure) {
-    const lean =
-      item.tone === 'coercive'
-        ? 'and it leans coercive'
-        : item.tone === 'cooperative'
-          ? 'and it leans cooperative'
-          : ''
+  if (!item.departure) {
     return pair
-      ? `A real departure for ${pair} \u2014 ${where}${lean ? ` ${lean}` : ''}.`
-      : `A real departure \u2014 ${where}.`
+      ? `Routine for ${pair}: ${off.toFixed(1)} points from ${theirs} usual level.`
+      : `Routine traffic: ${off.toFixed(1)} points from ${theirs} usual level.`
   }
-  return pair
-    ? `Routine for ${pair}: ${where}.`
-    : `Routine traffic: ${where}.`
+
+  // WHICH WAY IT DEPARTED COMES FROM `escalation_direction`, NEVER FROM THE
+  // GOLDSTEIN SIGN. `points_from_baseline` is |score \u2212 baseline|, an absolute
+  // distance that says nothing about direction, and the raw sign is the act's
+  // absolute tone rather than its tone RELATIVE to this pair. The archive
+  // supplies the canonical trap on one day: "Disapprove" scores \u22122.0 both
+  // times, but against the United Kingdom and France (baseline +1.7) it is an
+  // escalation, and against Russia and Ukraine (baseline \u22129.1) it is 7.1
+  // points CALMER than their war. Reading the sign would have called both
+  // coercive and got the second exactly backwards.
+  const way =
+    item.escalation_direction === 'escalating'
+      ? `${off.toFixed(1)} points more hostile than ${theirs} usual`
+      : item.escalation_direction === 'deescalating'
+        ? `${off.toFixed(1)} points calmer than ${theirs} usual`
+        : `${off.toFixed(1)} points from ${theirs} usual level`
+  return pair ? `A real departure for ${pair} \u2014 ${way}.` : `A real departure \u2014 ${way}.`
 }
 
 /** The wire's standfirst: what this batch of events amounts to. */
