@@ -247,7 +247,15 @@ export default function MarketsPage({ region }: { region: string; onNavigate: (r
                   <li key={e.event_id} className="flex items-baseline gap-3">
                     <span className="mono w-16 shrink-0 text-right" style={{ color: e.abnormal_return >= 0 ? 'var(--accent)' : 'var(--alert)' }}>{signedPct(e.abnormal_return, 1)}</span>
                     <span className="mono w-24 shrink-0" style={{ color: 'var(--muted)' }}>{e.date}</span>
-                    <span className="truncate">{e.name}{e.pair ? <span style={{ color: 'var(--muted)' }}> · {e.pair}</span> : null}</span>
+                    {/* The wire's event names are built FROM the pair
+                        ("Provide aid: United States → Turkey"), so printing
+                        `pair` beside them said it twice on most rows. */}
+                    <span className="truncate">
+                      {e.name}
+                      {e.pair && !e.name.includes(e.pair) ? (
+                        <span style={{ color: 'var(--muted)' }}> · {e.pair}</span>
+                      ) : null}
+                    </span>
                     <Chip label={KIND_SHORT[e.kind] ?? e.kind} tone={e.kind.includes('escalation') && e.kind !== 'de-escalation' ? 'bad' : 'muted'} />
                     {e.first_mover && <Chip label="printed first" tone="ink" />}
                   </li>

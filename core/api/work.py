@@ -841,6 +841,8 @@ def forecasts(conn: Any, deadline: float) -> dict[str, Any]:
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
 
+    from core.api.jobs import memory_is_tight as jobs_tight
+
     settings = settings_module.load()
     done: list[dict[str, Any]] = []
     for name in _pack_names():
@@ -849,6 +851,14 @@ def forecasts(conn: Any, deadline: float) -> dict[str, Any]:
             continue
         if time.monotonic() >= deadline:
             return {"frozen": done, "skipped": "slice spent", "archive": size}
+        # A REGION BOUNDARY IS A MEMORY BOUNDARY TOO. Freezing a region builds
+        # columnar archives over the whole record, and this is the heaviest
+        # job in the loop: measured at 6.0 GB of a 7.45 GB container on
+        # 2026-08-17, with the wire job disabled. The deadline cannot see that,
+        # and a region already frozen is recorded in `_frozen_at`, so stopping
+        # between regions costs a tick rather than the work.
+        if jobs_tight():
+            return {"frozen": done, "skipped": "paused for memory", "archive": size}
         written = module.freeze(settings.kuzu_db_path, region_pack=name, conn=conn)
         _frozen_at[name] = size
         done.append({"region": name, "modes": [r["mode"] for r in written]})

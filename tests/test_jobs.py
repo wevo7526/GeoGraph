@@ -718,3 +718,33 @@ def test_a_persisted_game_map_goes_stale_when_what_it_read_moves():
     # A version bump still counts.
     assert "version moved" in (
         work.games_stale({"inputs": {**current, "version": "v0"}}, current) or "")
+
+
+def test_a_reclaim_drops_every_cache_that_can_be_rebuilt(monkeypatch) -> None:
+    """A RECLAIM THAT FREES NOTHING IS THE WORST OUTCOME: it costs a rebuild,
+    reports a number that looks like action, and leaves the process exactly as
+    close to the kill line as it was.
+
+    `forget_wire_ids` documented itself as "called under memory pressure" and
+    was called by nothing (found 2026-08-17) — a few hundred thousand id
+    strings per pack, held for the process's life, invisible to the loop that
+    exists to give memory back.
+    """
+    from core.api import jobs as jobs_module
+    from core.api import work
+    from core.games import context as context_module
+    from core.wire import corpus
+
+    work._archive_cache.update({"count": 7, "events": ["x"], "dates": {"x": 1}})
+    work._wire_seen["mena"] = {"event:gdelt-1"}
+    context_module.CACHE["mena"] = {"effects": ["big"]}
+    evicted: list[bool] = []
+    monkeypatch.setattr(corpus, "evict", lambda: evicted.append(True))
+
+    scheduler = jobs_module.Scheduler(app=None, settings=None, jobs=[])
+    scheduler._reclaim()
+
+    assert evicted, "the parsed corpus is the largest of them"
+    assert work._archive_cache["count"] is None, "the study's archive scan"
+    assert not work._wire_seen, "the wire's id sets"
+    assert not context_module.CACHE, "the region contexts, which grow with the study"

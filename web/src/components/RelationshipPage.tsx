@@ -69,6 +69,36 @@ function dyadFromHash(): string {
   return new URLSearchParams(q).get('dyad') ?? ''
 }
 
+/** ONE HAPPENING, ONE ROW. GDELT codes a negotiation from both sides and
+ *  re-reports it across the day, so the timeline showed "Engage in
+ *  negotiation: United States → Israel" and "… Israel → United States" one
+ *  after the other, same date, same measured moves to the basis point. A date
+ *  and a set of measured moves identify the happening; the id identifies the
+ *  coding of it. */
+/** Does a series move at all? A flat line is six hundred pixels saying
+ *  nothing — the model's read for a pair it expects no change from drew two
+ *  perfectly straight lines under a heading claiming to show what it expects. */
+function hasSpread(values: number[]): boolean {
+  if (values.length < 2) return false
+  return Math.max(...values) - Math.min(...values) > 0.05
+}
+
+function dedupeHappenings(events: TimelineEvent[]): TimelineEvent[] {
+  const seen = new Set<string>()
+  const out: TimelineEvent[] = []
+  for (const ev of events) {
+    const signature = [
+      ev.date,
+      ev.goldstein?.toFixed(1) ?? '',
+      ...ev.markets.slice(0, 3).map((m) => `${m.market_id}:${m.car.toFixed(4)}`),
+    ].join('|')
+    if (seen.has(signature)) continue
+    seen.add(signature)
+    out.push(ev)
+  }
+  return out
+}
+
 /** The predicted step's markets, as signed percent moves worth showing — the
  *  measured median abnormal return for comparable events, thin cells dropped. */
 function stepMoves(step: SequenceStep | undefined) {
@@ -434,7 +464,9 @@ export default function RelationshipPage({ region, onNavigate }: { region: strin
                   The scale is this pair's own: {(series.peak ?? 0).toFixed(1)} at the top is the
                   largest quarterly departure it has ever recorded.
                 </p>
-                {modelTrajectory && modelTrajectory.length > 0 && (
+                {modelTrajectory && modelTrajectory.length > 0 && hasSpread(
+                  modelTrajectory.map((m) => m.deviation),
+                ) && (
                   <div className="mt-6">
                     <div className="kicker mb-1">What the learned model expects next</div>
                     <MultiLine
@@ -531,7 +563,7 @@ export default function RelationshipPage({ region, onNavigate }: { region: strin
               <Empty>reading the record…</Empty>
             ) : timeline && timeline.events.length ? (
               <div>
-                {timeline.events.slice(0, 14).map((ev) => (
+                {dedupeHappenings(timeline.events).slice(0, 14).map((ev) => (
                   <TimelineEntry key={ev.event_id} ev={ev} />
                 ))}
               </div>
@@ -752,6 +784,25 @@ function TrajectoryStrip({
  *  which market reacted first, and — on click — the impact read: measured
  *  beside expected (the regime-gated base rate over this pair's other
  *  events) with the surprise. */
+/** The event study's window keys, in sessions. `car_0_5` is five sessions
+ *  after the event; a reader has no way to know that, and the timeline printed
+ *  "S&P 500 · car_0_5" on every row. */
+const WINDOW_SESSIONS: Record<string, string> = {
+  car_0_1: 'after 2 sessions',
+  car_0_3: 'after 4 sessions',
+  car_0_5: 'after 6 sessions',
+  intraday_open_close: 'intraday',
+  monthly: 'over the month',
+  annual: 'over the year',
+}
+
+/** Head B's direction, as a word a reader uses. */
+const DIRECTION_WORD: Record<string, string> = {
+  escalating: 'escalated',
+  deescalating: 'stepped back',
+  stable: 'held',
+}
+
 function TimelineEntry({ ev }: { ev: TimelineEvent }) {
   const [open, setOpen] = useState(false)
   const [impact, setImpact] = useState<EventImpact | null | undefined>(undefined)
@@ -773,19 +824,22 @@ function TimelineEntry({ ev }: { ev: TimelineEvent }) {
           <span className="text-sm" style={{ flex: '1 1 auto', minWidth: 0 }}>{ev.name ?? ev.event_id}</span>
           {ev.goldstein != null && (
             <span className="mono text-[11px]" style={{ color: dirColor }}>
-              {dir ?? 'stable'} · goldstein {ev.goldstein.toFixed(1)}
-              {ev.escalation_magnitude != null ? ` · departure ${ev.escalation_magnitude.toFixed(1)}` : ''}
+              {DIRECTION_WORD[dir ?? 'stable'] ?? dir} · {ev.goldstein.toFixed(1)} on the −10…+10 scale
+              {ev.escalation_magnitude != null
+                ? ` · ${ev.escalation_magnitude.toFixed(1)} from this pair’s norm`
+                : ''}
             </span>
           )}
           {ev.first_mover && (
-            <span className="mono text-[11px]" style={{ color: 'var(--muted)' }}>first to react: {ev.first_mover}</span>
+            <span className="mono text-[11px]" style={{ color: 'var(--muted)' }}>{ev.first_mover} reacted first</span>
           )}
         </div>
       </button>
       {ev.markets.length ? (
         <div className="mt-1">
           {ev.markets.slice(0, open ? ev.markets.length : 4).map((m) => (
-            <MoveRow key={m.market_id + m.window} name={`${m.market_name} · ${m.window}`} pct={m.car * 100}
+            <MoveRow key={m.market_id + m.window}
+                     name={`${m.market_name} ${WINDOW_SESSIONS[m.window] ?? m.window}`} pct={m.car * 100}
                      sub={m.p_value != null && m.p_value < 0.05 ? 'p<0.05' : undefined} />
           ))}
         </div>

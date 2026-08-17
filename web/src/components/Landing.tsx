@@ -53,7 +53,18 @@ export default function Landing({ onEnter }: { onEnter: (route: string) => void 
       const built = await Promise.all(
         keys.map(async (key): Promise<Tile> => {
           const map = await getRegionMap(key)
-          const top: RegionMap['ranking'][number] | undefined = map?.ranking?.[0]
+          // THE PAIR WHOSE GAME IS ABOUT COERCION. The ranking counts coercive
+          // acts, and allies accumulate them through co-participation — two
+          // partners in the same operation are coded against each other
+          // (CLAUDE.md records US–Australia's 25 events of "use conventional
+          // military force"). That is why the standing travels beside the
+          // count everywhere it is shown; on a front door, which has room for
+          // one pair per region, it is better to lead with a pair the count
+          // means what a reader will take it to mean. Eurasia led with
+          // US–UK, formal allies since 1949, on 145 such acts.
+          const ranking = map?.ranking ?? []
+          const top: RegionMap['ranking'][number] | undefined =
+            ranking.find((r) => r.family?.family !== 'ally') ?? ranking[0]
           return {
             key,
             label: labels[key] ?? key,

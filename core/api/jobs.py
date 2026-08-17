@@ -362,6 +362,11 @@ class Scheduler:
         # the largest rebuildable thing this process owns after the corpus, and
         # a tick that has to rebuild it costs seconds, not correctness.
         work.forget_archive()
+        # And the wire's "already in the graph" id sets — hundreds of thousands
+        # of strings per pack, held for the process's life. `forget_wire_ids`
+        # documented itself as "called under memory pressure" and was called by
+        # nothing (2026-08-17); one query rebuilds each.
+        work.forget_wire_ids()
         _forget_region_contexts()
         gc.collect()
         _return_free_arenas()

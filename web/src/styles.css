@@ -626,6 +626,11 @@ input[type='range'].timeline:focus-visible {
   max-width: 100%;
   overflow: hidden;
   text-overflow: ellipsis;
+  /* But it must not be the thing that gets squeezed in a flex row — the
+     movers list rendered "NO DEPARTU…", "PRINTED FIR…", "SHARP ESCALAT…"
+     beside an event name with room to spare (2026-08-17). A chip is a whole
+     short fact; the prose next to it is what truncates. */
+  flex: none;
   display: inline-block;
   vertical-align: middle;
 }
