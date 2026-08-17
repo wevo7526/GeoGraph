@@ -133,7 +133,7 @@ def select_all(
     min_gdelt_goldstein: float = DEFAULT_MIN_GDELT_GOLDSTEIN,
 ) -> list[dict[str, Any]]:
     """`--all`'s event list: the archive above the materiality bar, CURATED
-    FIRST and then in date order.
+    FIRST and then NEWEST FIRST.
 
     The archive arrives ordered by event_time, so a run that exhausts its
     budget measures 1905 forward and stops — and every event a surface is
@@ -142,6 +142,22 @@ def select_all(
     reached 2003; the front page's own episodes were the last thing it would
     ever get to. The watermark is unchanged and so is the total work; what
     changes is WHICH events a truncated pass covers.
+
+    NEWEST-FIRST FOR THE UNCURATED TAIL, changed 2026-08-17, because
+    truncation stopped being temporary. Putting the curated spine first fixed
+    the narrated pages; everything else still walked 1979 forward on the
+    assumption that the pass would eventually finish. It will not. Measured
+    at production scale, an AFFECTED edge costs ~2 KB of volume — 127,071
+    edges took 250 MB — so the 4.51 GB volume tops out around two million
+    edges against the ten million full coverage would need, and the study
+    stops itself at the 400 MB floor. A permanent 20% is a CHOICE about which
+    20%, and oldest-first chooses the 1980s: the wire feed, the scenario
+    pricing, the transmission map and the biggest-moves list all read the
+    recent end and would have found it empty forever.
+
+    Deep-tier events keep their place at the head of the tail by being
+    curated, not by being old — and a market that did not exist at event time
+    is a recorded skip either way, so early events are the cheapest to lose.
     """
     chosen = [
         e for e in events
@@ -149,7 +165,11 @@ def select_all(
         or (e["goldstein"] is not None
             and abs(float(e["goldstein"])) >= min_gdelt_goldstein)
     ]
-    chosen.sort(key=lambda e: (e["id"] not in curated, str(e["date"]), str(e["id"])))
+    # TWO STABLE PASSES, because the sort keys run in opposite directions and
+    # a string date cannot be negated inside one key. Date descending first,
+    # then a stable sort on the curated flag preserves it within each group.
+    chosen.sort(key=lambda e: (str(e["date"]), str(e["id"])), reverse=True)
+    chosen.sort(key=lambda e: e["id"] not in curated)
     return chosen
 
 

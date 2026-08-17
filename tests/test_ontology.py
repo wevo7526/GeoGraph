@@ -125,3 +125,41 @@ def test_fips_crosswalk_keys_survive_yaml():
     assert not coerced, f"YAML coerced these FIPS keys — quote them: {coerced}"
     assert table.get("NO") == "NOR"
     assert all(len(k) == 2 and k.isupper() for k in table), "FIPS keys are two upper-case letters"
+
+
+def test_every_roster_actor_has_a_coordinate():
+    """The globe places actors, and a missing key places nothing — silently.
+
+    The failure this guards is not a crash: an actor absent from the crosswalk
+    simply does not appear on the globe, which looks like a design decision
+    rather than a gap. Coverage is asserted in both directions so a new roster
+    member fails here rather than going quietly missing, and a stale entry for
+    a pruned actor is caught too.
+
+    Coordinates are CENTROIDS, not capitals, and they are a drawing instruction
+    rather than evidence — nothing downstream may measure with them.
+    """
+    import yaml
+    from pathlib import Path
+
+    from core import packs
+
+    path = Path("core/ontology/crosswalks/actor_coordinates.yaml")
+    table = yaml.safe_load(path.read_text(encoding="utf-8"))["actor_coordinates"]
+
+    coerced = [k for k in table if not isinstance(k, str)]
+    assert not coerced, f"YAML coerced these keys — quote them: {coerced}"
+
+    roster = {
+        str(actor["iso3"]).upper()
+        for name in packs.available()
+        for actor in packs.load(name).actors
+        if actor.get("iso3")
+    }
+    assert not (roster - set(table)), f"roster members with no coordinate: {sorted(roster - set(table))}"
+    assert not (set(table) - roster), f"coordinates for non-roster actors: {sorted(set(table) - roster)}"
+
+    for iso3, pair in table.items():
+        lat, lng = pair
+        assert -90 <= lat <= 90, f"{iso3} latitude out of range: {lat}"
+        assert -180 <= lng <= 180, f"{iso3} longitude out of range: {lng}"

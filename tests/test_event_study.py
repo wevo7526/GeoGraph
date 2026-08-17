@@ -511,9 +511,31 @@ def test_the_curated_spine_is_measured_before_the_deep_archive():
     )
     assert [e["id"] for e in chosen] == [
         "event:mena-2025-rising-lion",   # curated, whatever its date
+        "event:gdelt-loud",              # then NEWEST first
         "event:cow-mid-1",
-        "event:gdelt-loud",
     ]  # the sub-materiality GDELT event is still excluded entirely
+
+
+def test_the_uncurated_tail_is_measured_newest_first():
+    """Truncation is permanent here, so the ORDER decides what exists.
+
+    An AFFECTED edge costs ~2 KB of volume at production scale (127,071 edges
+    took 250 MB), so a 4.51 GB volume tops out near two million edges against
+    the ten million full coverage needs, and the study stops itself at the
+    400 MB floor. Oldest-first would spend that budget on the 1980s and leave
+    the wire feed, the scenario pricing and the transmission map reading an
+    empty recent end forever.
+    """
+    study = _study_module()
+    archive = [
+        {"id": "event:gdelt-a", "date": "1981-03-01", "goldstein": -9.0},
+        {"id": "event:gdelt-b", "date": "2026-08-16", "goldstein": -9.0},
+        {"id": "event:gdelt-c", "date": "2004-01-01", "goldstein": -9.0},
+    ]
+    chosen = study.select_all(archive, set(), min_gdelt_goldstein=7.0)
+    assert [e["id"] for e in chosen] == [
+        "event:gdelt-b", "event:gdelt-c", "event:gdelt-a",
+    ]
 
 
 def test_the_pack_names_the_events_the_spine_run_measures():

@@ -1,0 +1,85 @@
+# Where a state actor sits on a globe: ISO3 → [latitude, longitude].
+#
+# The graph knows an actor's identity (`iso3`, `cow_ccode`) and its behaviour,
+# and nothing at all about where it IS. Events carry `geo_lat`/`geo_lng`, but
+# those are the wrong instrument for placing an ACTOR: an event is geocoded
+# where it LANDED, so a centroid of United States events sits somewhere over
+# Iraq. Where a state acts is not where a state is.
+#
+# CENTROIDS, NOT CAPITALS, and that is a deliberate choice on a platform about
+# contested sovereignty. A capital is the sharper anchor — it is where the
+# government sits, and this archive is about state behaviour — but choosing one
+# means ruling on capitals that are themselves disputes the archive is supposed
+# to describe rather than adjudicate. A geographic centroid says only "this is
+# roughly where this country is", which is all a globe needs and the most the
+# data should be made to assert.
+#
+# Approximate to about a degree. They position a marker on a sphere; nothing
+# downstream measures with them, and nothing may start to — a coordinate here
+# is a drawing instruction, not evidence.
+#
+# Keys are the same ISO3 the packs' actors carry (`iso3` in packs/*/actors.yaml).
+# A roster member missing from this file simply does not get placed, which is
+# why the test asserts full coverage rather than letting one silently vanish.
+
+actor_coordinates:
+  AFG: [33.9, 67.7]     # Afghanistan
+  ARE: [23.4, 53.8]     # United Arab Emirates
+  ARM: [40.1, 45.0]     # Armenia
+  AUS: [-25.3, 133.8]   # Australia
+  AUT: [47.5, 14.6]     # Austria
+  AZE: [40.1, 47.6]     # Azerbaijan
+  BGR: [42.7, 25.5]     # Bulgaria
+  BHR: [26.0, 50.55]    # Bahrain
+  BLR: [53.7, 27.95]    # Belarus
+  CHN: [35.9, 104.2]    # China
+  CZE: [49.8, 15.5]     # Czech Republic
+  DEU: [51.2, 10.45]    # Germany
+  EGY: [26.8, 30.8]     # Egypt
+  EST: [58.6, 25.0]     # Estonia
+  FIN: [61.9, 25.75]    # Finland
+  FRA: [46.2, 2.2]      # France
+  GBR: [55.4, -3.4]     # United Kingdom
+  GEO: [42.3, 43.4]     # Georgia
+  HUN: [47.2, 19.5]     # Hungary
+  IND: [20.6, 79.0]     # India
+  IRN: [32.4, 53.7]     # Iran
+  IRQ: [33.2, 43.7]     # Iraq
+  ISR: [31.05, 34.85]   # Israel
+  ITA: [41.9, 12.6]     # Italy
+  JOR: [30.6, 36.2]     # Jordan
+  JPN: [36.2, 138.25]   # Japan
+  KAZ: [48.0, 66.9]     # Kazakhstan
+  KGZ: [41.2, 74.8]     # Kyrgyzstan
+  KOR: [35.9, 127.8]    # South Korea
+  KWT: [29.3, 47.5]     # Kuwait
+  LBN: [33.85, 35.86]   # Lebanon
+  LTU: [55.2, 23.9]     # Lithuania
+  LVA: [56.9, 24.6]     # Latvia
+  MDA: [47.4, 28.4]     # Moldova
+  # QUOTED, like Norway's FIPS key: YAML 1.1 reads a bare NO as the boolean
+  # false, and the same trap sits under any ON/OFF/Y/N key. These are ISO3 so
+  # none of them is two letters, but the habit is cheap and the failure is
+  # silent — see test_fips_crosswalk_keys_survive_yaml.
+  NOR: [60.5, 8.5]      # Norway
+  OMN: [21.5, 55.9]     # Oman
+  PHL: [12.9, 121.8]    # Philippines
+  POL: [51.9, 19.15]    # Poland
+  PRK: [40.3, 127.5]    # North Korea
+  QAT: [25.35, 51.18]   # Qatar
+  ROU: [45.9, 25.0]     # Romania
+  RUS: [61.5, 105.3]    # Russia
+  SAU: [23.9, 45.1]     # Saudi Arabia
+  SRB: [44.0, 21.0]     # Serbia
+  SVK: [48.7, 19.7]     # Slovakia
+  SWE: [60.1, 18.6]     # Sweden
+  SYR: [34.8, 39.0]     # Syria
+  TJK: [38.9, 71.3]     # Tajikistan
+  TKM: [38.97, 59.56]   # Turkmenistan
+  TUR: [38.96, 35.24]   # Turkey
+  TWN: [23.7, 121.0]    # Taiwan
+  UKR: [48.4, 31.2]     # Ukraine
+  USA: [39.8, -98.6]    # United States
+  UZB: [41.4, 64.6]     # Uzbekistan
+  VNM: [14.06, 108.3]   # Vietnam
+  YEM: [15.55, 48.5]    # Yemen
