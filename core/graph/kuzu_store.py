@@ -621,6 +621,37 @@ def query(
         return rows
 
 
+def query_id_set(
+    conn: kuzu.Connection, cypher: str, params: dict[str, Any] | None = None
+) -> set[str]:
+    """The first column of a result as a set of strings, WITHOUT building a row
+    for each one.
+
+    `query` above materialises every row as a dict — the right shape for an API
+    response and the wrong one for "which of these hundreds of thousands of ids
+    do I already hold". The wire job asked exactly that: one dict per gdelt
+    event in a pack, hundreds of thousands of them, built and then thrown away
+    to leave a set of ids behind. That transient was a large part of what put
+    the container over its 8 GB limit on 2026-08-17 — the kill landed while the
+    job that runs this was starting, twice.
+
+    Same locking rule as `query`: the shared side is held for the whole
+    materialisation, because a half-read result is an open transaction and an
+    open transaction is what makes a concurrent write's checkpoint time out.
+    """
+    out: set[str] = set()
+    with ACCESS.read():
+        result = conn.execute(cypher, parameters=params or {})
+        if isinstance(result, list):
+            result = result[-1]
+        while result.has_next():
+            row: Any = result.get_next()
+            value = row[0]
+            if value is not None:
+                out.add(str(value))
+    return out
+
+
 #: UNWIND batch size. One MERGE per row was the deep tier's 25-minute IGO
 #: load; batched it is under a second per ten thousand — same statements,
 #: same semantics, three hundred times fewer round trips.

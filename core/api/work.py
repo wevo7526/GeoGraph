@@ -601,18 +601,29 @@ def wire(conn: Any, deadline: float) -> dict[str, Any]:
         if _lean_marker(name).exists():
             _wire_done.add(name)
             continue
+        # CHECKED BEFORE THE SETUP, not only inside the write loop. Loading a
+        # pack's corpus lens and reading back the ids it already holds is the
+        # peak of this job, and it happens before the first batch — so a guard
+        # that only runs between batches watches the cheap half.
+        if jobs_tight():
+            return {"pack": name, "skipped": "paused for memory"}
         pack = packs.load(name)
         rows = [r for r in serving.rows_of(name) if measurable(r)]
         seen = _wire_seen.get(name)
         if seen is None:
-            found = kuzu_store.query(
+            # AS A SET, NEVER AS ROWS. This asks for every gdelt event id the
+            # pack already holds — hundreds of thousands — and `query` would
+            # build a dict for each one on the way to a set of strings. That
+            # transient is a large part of what took the container over its
+            # 8 GB limit on 2026-08-17: the kill landed as this job started,
+            # twice, and the WAL it left behind made the graph unopenable.
+            seen = kuzu_store.query_id_set(
                 conn,
                 "MATCH (e:Event) WHERE e.region_pack = $pack "
                 "AND starts_with(e.node_id, 'event:gdelt-') "
                 "RETURN e.node_id AS id",
                 {"pack": name},
             )
-            seen = {str(r["id"]) for r in found}
             _wire_seen[name] = seen
         pending = [r for r in rows if r["node_id"] not in seen]
         if not pending:
