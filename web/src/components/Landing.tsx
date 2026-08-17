@@ -58,18 +58,24 @@ export default function Landing({ onEnter }: { onEnter: (route: string) => void 
             start of each line. The globe takes the right half because it is
             the object, not an illustration of the copy. */}
         <div className="landing-split">
-          <h1 className="landing-hero">
-            A hundred and twenty years of geopolitics, priced.
-          </h1>
+          {/* The copy and its door are one column: the door follows the
+              sentence that earns it, on the same left edge, rather than
+              floating on the page's centre axis away from the thing it
+              answers. */}
+          <div className="landing-copy">
+            <h1 className="landing-hero">
+              A hundred and twenty years of geopolitics, priced.
+            </h1>
+            <button
+              type="button"
+              className="ink-button text-lg"
+              onClick={() => onEnter('/explore')}
+            >
+              Enter
+            </button>
+          </div>
           <SituationPlate />
         </div>
-
-        {/* The door stays centred: it is the page's one action, and an action
-            belongs on the axis of the whole page rather than under one column
-            of it. */}
-        <button type="button" className="ink-button text-lg" onClick={() => onEnter('/explore')}>
-          Enter
-        </button>
       </main>
 
       <footer className="landing-foot">

@@ -923,6 +923,15 @@ input[type='range'].timeline:focus-visible {
   .landing-split { grid-template-columns: minmax(0, 1fr); }
 }
 
+/* Copy and door share the left column and its edge. */
+.landing-copy {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 1.6rem;
+  min-width: 0;
+}
+
 .landing-hero {
   /* Smaller than the old display size but still the largest thing on the page
      — the brief was "smaller, but not tiny". */
