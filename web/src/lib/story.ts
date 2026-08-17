@@ -27,6 +27,8 @@ import type {
   Posture,
   Family,
   RegionRanking,
+  WireFeed,
+  WireItem,
 } from '../types'
 
 // ── words ───────────────────────────────────────────────────────────────────
@@ -359,4 +361,68 @@ export function marketsLede(
     : ''
 
   return { headline, support: sample + paper, asOf: story.as_of ?? null }
+}
+
+/** The wire's one-line read of a single event.
+ *
+ *  THE READ IS RELATIVE, and that is the whole point. `points_from_baseline`
+ *  is the distance from THAT PAIR's own running baseline, so the same
+ *  Goldstein score reads as a quiet week for a rivalry and a rupture for an
+ *  alliance. A sentence that said "hostile" off the raw score would call the
+ *  first a crisis and miss the second — which is exactly the mistake the
+ *  relationship page made before the bands became comparatives.
+ *
+ *  Composed HERE from named fields, never rendered from a backend string
+ *  (test_surface_language.py refuses the latter).
+ */
+export function wireRead(item: WireItem): string {
+  const pair =
+    item.initiator_name && item.target_name
+      ? `${item.initiator_name} and ${item.target_name}`
+      : null
+  const off = item.points_from_baseline
+
+  if (off === null) {
+    return pair
+      ? `Coded between ${pair}; too little history on this pair to say how far it sits from their usual.`
+      : 'Coded, with no reading yet of how far it sits from the pair\u2019s usual.'
+  }
+
+  const where = item.departure
+    ? `${off.toFixed(1)} points from ${pair ? 'their' : 'the pair\u2019s'} usual level`
+    : `close to ${pair ? 'their' : 'the pair\u2019s'} usual level`
+
+  if (item.departure) {
+    const lean =
+      item.tone === 'coercive'
+        ? 'and it leans coercive'
+        : item.tone === 'cooperative'
+          ? 'and it leans cooperative'
+          : ''
+    return pair
+      ? `A real departure for ${pair} \u2014 ${where}${lean ? ` ${lean}` : ''}.`
+      : `A real departure \u2014 ${where}.`
+  }
+  return pair
+    ? `Routine for ${pair}: ${where}.`
+    : `Routine traffic: ${where}.`
+}
+
+/** The wire's standfirst: what this batch of events amounts to. */
+export function wireLede(feed: WireFeed, label: string): Lede | null {
+  if (!feed.rows.length) return null
+  const departures = feed.rows.filter((r) => r.departure).length
+  const newest = feed.as_of ?? feed.rows[0].event_time
+  const headline =
+    departures === 0
+      ? `Nothing in ${label} has left its usual band.`
+      : departures === 1
+        ? `One pair in ${label} has stepped outside its usual band.`
+        : `${count(departures)} pairs in ${label} have stepped outside their usual band.`
+  const support =
+    `The newest ${count(feed.rows.length)} coded events, to ${newest}. ` +
+    `A departure means at least ${feed.departure_points} Goldstein points from that ` +
+    `pair\u2019s own running baseline \u2014 not from an absolute scale, because a score ` +
+    `that is routine for a rivalry is a rupture for an alliance.`
+  return { headline, support, asOf: newest }
 }

@@ -106,6 +106,28 @@ export interface EventList {
   truncated: boolean
 }
 
+/** One wire item: a coded event plus the fields for the system's first read.
+ *  `departure` is the judgement; `points_from_baseline` is the number that
+ *  substantiates it; `pair_baseline` is what it departed FROM — carried so the
+ *  surface can show that the bar moves per pair rather than being absolute. */
+export interface WireItem extends GraphEvent {
+  initiator_name: string | null
+  target_name: string | null
+  departure: boolean
+  points_from_baseline: number | null
+  pair_baseline: number | null
+  tone: 'cooperative' | 'coercive' | null
+}
+
+export interface WireFeed {
+  rows: WireItem[]
+  region: string | null
+  truncated: boolean
+  departure_points: number
+  as_of: string | null
+  method: string
+}
+
 export interface Effect {
   ticker: string
   market: string

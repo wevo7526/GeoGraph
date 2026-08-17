@@ -8,7 +8,7 @@ import TopBar from './components/TopBar'
 const CaseStudyView = lazy(() => import('./components/CaseStudyView'))
 const Explorer = lazy(() => import('./components/Explorer'))
 const RelationshipPage = lazy(() => import('./components/RelationshipPage'))
-const WatchlistPage = lazy(() => import('./components/WatchlistPage'))
+const WirePage = lazy(() => import('./components/WirePage'))
 const CasesPage = lazy(() => import('./components/CasesPage'))
 const GamesPage = lazy(() => import('./components/GamesPage'))
 const MarketsPage = lazy(() => import('./components/MarketsPage'))
@@ -57,7 +57,7 @@ export default function App() {
     setRegion(next)
   }
 
-  // A relationship can be linked WITH its region (from the Watchlist, or from a
+  // A relationship can be linked WITH its region (from the Wire, or from a
   // shared URL). The lens follows what you opened: without this, opening a saved
   // China relationship while the lens is on MENA silently shows a MENA pair,
   // because its dyad id is not in the MENA list.
@@ -99,8 +99,8 @@ export default function App() {
   ) {
     page = <RelationshipPage region={region} onNavigate={navigate} />
     scrollPage = true
-  } else if (route.startsWith('/watchlist')) {
-    page = <WatchlistPage region={region} onNavigate={navigate} />
+  } else if (route.startsWith('/wire')) {
+    page = <WirePage region={region} onNavigate={navigate} />
     scrollPage = true
   } else {
     page = <Explorer region={region} onNavigate={navigate} />

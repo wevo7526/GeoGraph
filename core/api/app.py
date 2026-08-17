@@ -156,6 +156,19 @@ def _start_jobs(app: FastAPI, settings: Any) -> None:
                 enabled=jobs_module._enabled("harvest"),
                 slice_seconds=240.0,
             ),
+            # THE OTHER HALF OF "not a snapshot". `harvest` makes new events
+            # arrive; without this, new PRICES never do — they were fetched in
+            # the boot and nowhere else, so on a service that deploys rarely
+            # the panel drifts. A drifting panel does not just age: the study
+            # cannot measure an event whose estimation window runs past the
+            # newest close, so the FRESHEST events are exactly the ones that
+            # stay unmeasured. Postgres only, so no graph lock. Six-hourly
+            # because closes are daily and the check is one query.
+            jobs_module.Job(
+                name="prices", every=21600.0, run=work.prices,
+                enabled=jobs_module._enabled("prices"),
+                slice_seconds=300.0,
+            ),
             # THE WIRE RIGHT AFTER THE COUNTS, because everything below it
             # reads what it writes: after a reset the lean copy is what the
             # study measures, the refill projects onto and the games price. Last

@@ -388,3 +388,102 @@ def list_dyads(request: Request, region: str | None = None) -> dict[str, Any]:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
         rows = [r for r in rows if r["actor_a_id"] in roster and r["actor_b_id"] in roster]
     return {"rows": rows, "region": region}
+
+
+#: How far above a pair's own running baseline counts as a DEPARTURE worth
+#: leading with. `escalation_magnitude` is |score − baseline| in Goldstein
+#: points, so this is "three points off its own usual", not "hostile" — the
+#: whole point of a relational baseline is that a −6 is routine for a rivalry
+#: and a rupture for an alliance.
+WIRE_DEPARTURE_POINTS = 3.0
+
+#: Events a wire page returns. It is a feed, not an archive read.
+WIRE_LIMIT = 60
+
+
+@router.get("/wire")
+def wire(
+    request: Request,
+    region: str | None = None,
+    limit: int = Query(WIRE_LIMIT, ge=1, le=200),
+    since: str | None = Query(None, description="ISO date, inclusive"),
+) -> dict[str, Any]:
+    """The newest coded events, as a wire — each with the system's first read.
+
+    WHAT MAKES THIS A WIRE RATHER THAN A TABLE is the second half: every item
+    carries the fields for a one-line read of what just happened, composed
+    from numbers that already existed. It says how far the event sits from
+    THAT PAIR's own running baseline, which is the only reading that survives
+    contact with this archive — a −6.0 is a routine week for a rivalry and a
+    rupture for an alliance, so an absolute scale would call the first a
+    crisis and miss the second entirely.
+
+    §17 holds here as it does everywhere: the fields are named and the SENTENCE
+    is composed on the surface (`web/src/lib/story.ts`). Nothing in this
+    payload is prose the backend invented, and the agent — when a key is set —
+    narrates AROUND these numbers rather than producing them.
+
+    Reads the same union as `/events` (graph plus corpus, deduped) so a day
+    the harvest fetched an hour ago appears here before any deploy.
+    """
+    rows_payload = list_events(
+        request, start=since, end=None, pack=region, limit=limit, order="desc",
+    )
+    rows = rows_payload["rows"]
+
+    names = _actor_names(request)
+    items: list[dict[str, Any]] = []
+    for row in rows:
+        magnitude = row.get("escalation_magnitude")
+        baseline = row.get("escalation_baseline")
+        goldstein = row.get("goldstein")
+        departure = (
+            magnitude is not None and float(magnitude) >= WIRE_DEPARTURE_POINTS
+        )
+        items.append({
+            **row,
+            "initiator_name": names.get(str(row.get("initiator_id") or "")),
+            "target_name": names.get(str(row.get("target_id") or "")),
+            # THE FIRST READ, as fields. `departure` is the judgement the
+            # surface leads with; `points_from_baseline` is the number that
+            # substantiates it; `baseline` is what it departed FROM, so a
+            # reader can see that the bar moves per pair.
+            "departure": departure,
+            "points_from_baseline": (
+                round(float(magnitude), 2) if magnitude is not None else None
+            ),
+            "pair_baseline": (
+                round(float(baseline), 2) if baseline is not None else None
+            ),
+            "tone": (
+                "cooperative" if goldstein is not None and float(goldstein) > 0
+                else "coercive" if goldstein is not None and float(goldstein) < 0
+                else None
+            ),
+        })
+    return {
+        "rows": items,
+        "region": region,
+        "truncated": rows_payload.get("truncated", False),
+        "departure_points": WIRE_DEPARTURE_POINTS,
+        "as_of": items[0]["event_time"] if items else None,
+        "method": (
+            "the newest coded events, graph and corpus deduped; a departure is "
+            f"an event at least {WIRE_DEPARTURE_POINTS} Goldstein points from "
+            "that pair's own running baseline, not from an absolute scale"
+        ),
+    }
+
+
+def _actor_names(request: Request) -> dict[str, str]:
+    """actor node_id → display name, for the wire's headline.
+
+    One query for the whole roster (tens of rows) rather than a lookup per
+    event: under a writing loop a request's latency is its QUERY COUNT, not
+    its query cost.
+    """
+    conn = _conn_or_none(request)
+    if conn is None:
+        return {}
+    rows = kuzu_store.query(conn, "MATCH (a:Actor) RETURN a.node_id AS id, a.name AS name")
+    return {str(r["id"]): str(r["name"]) for r in rows if r.get("name")}

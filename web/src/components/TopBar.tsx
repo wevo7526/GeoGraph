@@ -46,19 +46,22 @@ export default function TopBar({
 
   // One coherent front-of-house, organised around the user's question, not the
   // machine's parts: browse the web (Explorer), open a relationship (the
-  // answer, past→now→forward), follow it (Watchlist), read the worked cases.
+  // answer, past→now→forward), read what just came in (Wire) and the cases.
   // Reasoning, the game and trading folded INTO the Relationship page as its
   // evidence, its "how it plays out", and its track record — no longer tabs.
   // Six pages since 2026-08-15: the game-theory map and the markets page are
   // tabs again (a solved-game region map and a per-region paper backtest are
   // destinations, not evidence folded under a pair), beside the explorer, the
-  // relationship, the watchlist and the case studies.
+  // relationship, the wire and the case studies. The Wire replaced the
+  // Watchlist on 2026-08-17: a saved list of pairs was a bookmark the user
+  // had to build first, where the wire answers "what just happened" on
+  // arrival — which is the question a live archive is FOR.
   const pages: Array<[string, string]> = [
     ['/explore', 'Explorer'],
     ['/relationships', 'Relationships'],
     ['/games', 'Game theory'],
     ['/markets', 'Markets'],
-    ['/watchlist', 'Watchlist'],
+    ['/wire', 'Wire'],
     ['/cases', 'Case studies'],
   ]
 

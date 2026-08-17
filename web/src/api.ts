@@ -1,4 +1,5 @@
 import type {
+  WireFeed,
   CalibrationWalk,
   Assessment,
   BacktestLedger,
@@ -159,6 +160,15 @@ export const getEvents = (
   if (params.order) query.set('order', params.order)
   const suffix = query.toString() ? `?${query}` : ''
   return get<EventList>(`/api/events${suffix}`)
+}
+
+// The wire: newest coded events with the fields for a one-line read. The
+// SENTENCE is composed in lib/story.ts — the backend names fields, never prose.
+export const getWire = (region?: string, limit = 60) => {
+  const query = new URLSearchParams()
+  if (region) query.set('region', region)
+  query.set('limit', String(limit))
+  return get<WireFeed>(`/api/wire?${query}`)
 }
 
 export const getCoverage = (pack?: string) =>

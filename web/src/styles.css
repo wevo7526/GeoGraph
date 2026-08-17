@@ -869,3 +869,48 @@ input[type='range'].timeline:focus-visible {
   color: var(--muted);
   max-width: 72ch;
 }
+
+/* THE WIRE ------------------------------------------------------------------
+   A feed, so the rhythm is vertical and even: each item is one block with a
+   timestamp above it and the system's read below the headline. Kept close to
+   the paper language of the rest of the surface — rules and ink, no cards with
+   shadows — because the wire is the same publication as every other page. */
+.wire-feed {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.wire-item {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+}
+
+.wire-headline {
+  font-size: 1.05rem;
+  line-height: 1.25;
+  font-weight: 600;
+  text-wrap: balance;
+}
+
+/* The read sits under the headline and must not compete with it. */
+.wire-item > p {
+  max-width: 68ch;
+  line-height: 1.45;
+}
+
+.linklike {
+  align-self: flex-start;
+  background: none;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+  color: var(--muted);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.linklike:hover {
+  color: var(--text);
+}

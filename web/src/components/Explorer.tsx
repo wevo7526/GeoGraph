@@ -27,8 +27,6 @@ import Graph3D, {
   type LinkSelection,
 } from './Graph3D'
 import TimeSlider, { YEAR_NOW } from './TimeSlider'
-import { relationshipName } from '../lib/language'
-import { toggle as toggleWatch, useIsWatched } from '../lib/watchlist'
 import { LineBand } from './charts/Charts'
 import type {
   Dyad,
@@ -300,21 +298,20 @@ function EventDetailPanel({ nodeId }: { nodeId: string }) {
   )
 }
 
-/** Open the full Relationship page for a pair, and follow/unfollow it — the
- *  bridge from browsing the web (Explorer) to the answer-first hero page. The
- *  region rides along in the link so the destination opens the right lens. */
+/** Open the full Relationship page for a pair — the bridge from browsing the
+ *  web (Explorer) to the answer-first hero page. The region rides along in the
+ *  link so the destination opens the right lens. (The follow control went with
+ *  the Watchlist on 2026-08-17: the Wire answers "what just happened" without
+ *  the reader having to build a list first.) */
 function RelationshipControls({
   dyadId,
-  name,
   region,
   onNavigate,
 }: {
   dyadId: string
-  name: string
   region: string
   onNavigate?: (route: string) => void
 }) {
-  const watched = useIsWatched(dyadId)
   return (
     <div className="mt-4 flex items-center gap-4">
       {onNavigate && (
@@ -337,15 +334,6 @@ function RelationshipControls({
           Open relationship →
         </button>
       )}
-      <button
-        type="button"
-        onClick={() => toggleWatch({ dyadId, name, region, addedAt: Date.now() })}
-        aria-pressed={watched}
-        className="text-sm"
-        style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text)' }}
-      >
-        {watched ? '★ Following' : '☆ Follow'}
-      </button>
     </div>
   )
 }
@@ -393,7 +381,6 @@ function DyadPanel({
 
       <RelationshipControls
         dyadId={dyadId}
-        name={relationshipName(trajectory.name, dyadId)}
         region={region}
         onNavigate={onNavigate}
       />
@@ -491,10 +478,6 @@ function RelationPanel({
           </button>
           <RelationshipControls
             dyadId={pairDyad.node_id}
-            name={relationshipName(
-              pairDyad.name,
-              `${relation.a_name} ⇄ ${relation.b_name}`,
-            )}
             region={region}
             onNavigate={onNavigate}
           />

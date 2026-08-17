@@ -24,6 +24,7 @@ import contextlib
 import datetime as _dt
 import functools
 import os
+import subprocess
 import sys
 import time
 from pathlib import Path
@@ -1332,6 +1333,80 @@ def harvest(conn: Any, deadline: float) -> dict[str, Any]:
         "remaining_to_yesterday": max(
             0, (today - _dt.timedelta(days=1) - days[fetched - 1]).days
         ) if fetched else None,
+    }
+
+
+#: How stale the newest close may get before a refresh. Four days covers a
+#: long weekend plus a holiday without fetching for nothing; the same number
+#: the boot guard uses, because they are the same question asked twice.
+PRICES_STALE_DAYS = int(os.getenv("GEOGRAPH_PRICES_STALE_DAYS", "4"))
+
+_LOAD_PANEL_SCRIPT = Path(__file__).resolve().parents[2] / "scripts" / "load_panel.py"
+
+
+def prices(conn: Any, deadline: float) -> dict[str, Any]:
+    """Keep the price panel current — the OTHER half of "not a snapshot".
+
+    The `harvest` job made new EVENTS arrive; this makes new PRICES arrive, and
+    without it the loop only looked live. Prices were fetched in the boot and
+    nowhere else, so on a service that deploys rarely the panel drifts, and a
+    drifting panel does not merely age — the study cannot MEASURE an event
+    whose estimation window runs past the newest close, so the freshest events
+    are exactly the ones that stay unmeasured, and the paper book marks
+    positions against a price that stopped moving.
+
+    Postgres only: `load_panel.py` writes market observations and touches no
+    graph, so this takes no Kuzu lock and cannot block a reader. It runs as a
+    subprocess for the same reason the boot does — it is the same script, so
+    there is one price-loading path rather than two that can disagree.
+
+    Windowed, not a reload. From a week before the newest close, upserted, so
+    a refresh is seconds of yfinance rather than the full-history fetch the
+    depth guard pays for.
+    """
+    del conn  # deliberately no graph access
+    from core.panel import pg_store
+
+    settings = settings_module.load()
+    try:
+        panel = pg_store.connect(settings)
+    except pg_store.PanelUnavailable as exc:
+        return {"skipped": f"no panel: {exc}"}
+    try:
+        with panel.cursor() as cur:
+            cur.execute("SELECT max(obs_date) FROM market_observations")
+            row = cur.fetchone()
+        latest = row[0] if row else None
+    finally:
+        panel.close()
+    if latest is None:
+        return {"skipped": "panel is empty — the boot's depth guard owns the "
+                           "first load, which is a full history, not a window"}
+
+    today = _dt.date.today()
+    stale_days = (today - latest).days
+    if stale_days <= PRICES_STALE_DAYS:
+        return {"note": "prices are current", "latest": latest.isoformat(),
+                "stale_days": stale_days}
+
+    start = (latest - _dt.timedelta(days=7)).isoformat()
+    refreshed: list[dict[str, Any]] = []
+    for name in _pack_names():
+        if time.monotonic() >= deadline:
+            break
+        proc = subprocess.run(  # noqa: S603
+            [sys.executable, str(_LOAD_PANEL_SCRIPT), name, "--start", start],
+            capture_output=True, text=True, timeout=max(30.0, deadline - time.monotonic()),
+            check=False,
+        )
+        refreshed.append({
+            "pack": name, "ok": proc.returncode == 0,
+            "error": (proc.stderr or "").strip()[-160:] if proc.returncode else None,
+        })
+    return {
+        "refreshed_from": start,
+        "was_stale_days": stale_days,
+        "packs": refreshed,
     }
 
 

@@ -40,7 +40,6 @@ import {
   tensionTrend,
   yearOf,
 } from '../lib/language'
-import { toggle as toggleWatch, useIsWatched } from '../lib/watchlist'
 import { useRegionLabel } from '../regions'
 import type {
   CalibrationWalk,
@@ -222,7 +221,6 @@ export default function RelationshipPage({ region, onNavigate }: { region: strin
   }, [region, selected])
 
   const selectedDyad = useMemo(() => dyads?.find((d) => d.dyad_id === selected) ?? null, [dyads, selected])
-  const watched = useIsWatched(selected)
   const name = relationshipName(selectedDyad?.dyad_name ?? (series || undefined)?.dyad_name, selected || 'a relationship')
 
   const rows = series ? series.rows : []
@@ -337,15 +335,6 @@ export default function RelationshipPage({ region, onNavigate }: { region: strin
                   </option>
                 ))}
               </select>
-            )}
-            {selected && (
-              <button
-                className="article-link whitespace-nowrap"
-                onClick={() => toggleWatch({ dyadId: selected, name, region, addedAt: Date.now() })}
-                aria-pressed={watched}
-              >
-                {watched ? '★ Following' : '☆ Follow'}
-              </button>
             )}
           </div>
         }
