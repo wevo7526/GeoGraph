@@ -17,8 +17,6 @@ trusting them to stay aligned.
 
 from __future__ import annotations
 
-import re
-
 from core.ingestion import market_data, shiller
 from core.panel import pg_store
 from core.transmission import runner
@@ -61,7 +59,7 @@ def test_the_sql_rule_and_effect_source_agree_everywhere():
     """Every resolution x ticker the archive can produce."""
     for resolution in RESOLUTIONS:
         for ticker in TICKERS:
-            expected = runner.effect_source(_Result(resolution, ticker))
+            expected = runner.effect_source(_Result(resolution, ticker))  # type: ignore[arg-type]
             got = _sql_equivalent(resolution, ticker)
             assert got == expected, f"{resolution}/{ticker}: SQL {got} != {expected}"
 
@@ -85,7 +83,8 @@ def test_every_source_the_rule_can_return_is_a_real_source_id():
     """The invariant is not "carries a string" — it is "resolves to a Source
     that exists". These are the three the panel loaders actually write."""
     produced = {
-        runner.effect_source(_Result(r, t)) for r in RESOLUTIONS for t in TICKERS
+        runner.effect_source(_Result(r, t))  # type: ignore[arg-type]
+        for r in RESOLUTIONS for t in TICKERS
     }
     assert produced <= {
         shiller.SOURCE_SHILLER, market_data.SOURCE_FRED, market_data.SOURCE_YFINANCE,

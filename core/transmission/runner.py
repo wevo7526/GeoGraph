@@ -53,6 +53,18 @@ PANEL_FREQUENCY: dict[str, str] = {
 #: 400-700s of pure round-trip latency per region.
 DEFAULT_CHUNK = int(os.getenv("GEOGRAPH_STUDY_CHUNK", "500"))
 
+#: Does the study still mirror its measurements into the graph as AFFECTED
+#: edges? Default ON, so nothing changes until it is deliberately turned off.
+#:
+#: AFFECTED is a projection of `event_study_runs`, and the projection is what
+#: does not fit: an edge costs ~2 KB of a 4.51 GB volume against ~40 bytes for
+#: the row it duplicates, so the graph tops out near two million edges against
+#: the ten million full coverage needs. The knowledge graph keeps every actor,
+#: event, dyad and relationship; only the measurement mirror is optional.
+WRITE_GRAPH_EFFECTS = os.getenv("GEOGRAPH_GRAPH_EFFECTS", "1").strip().lower() not in {
+    "0", "false", "no",
+}
+
 #: GDELT materiality bar for `--all`: a ten-mention consultation does not need
 #: a measured CAR, and measuring a hundred thousand of them is attribution
 #: soup by construction. Curated and COW events are ALWAYS measured.
@@ -297,10 +309,26 @@ def measure(
             # order committed the watermark before the merge — a mid-flush
             # graph failure (full volume, lost lock) then stranded up to a
             # chunk of events as measured-with-no-edges, invisibly.
-            for source_id, group in pending_by_source.items():
-                written += effects_writer.write_effects(
-                    graph, group, market_node_ids=market_node_ids, source_id=source_id
-                )
+            #
+            # THE GRAPH COPY IS OPTIONAL NOW (GEOGRAPH_GRAPH_EFFECTS=0).
+            # AFFECTED has always been documented as a PROJECTION of the panel;
+            # Postgres is where the numbers actually live, and an edge costs
+            # ~2 KB of a 4.51 GB volume against ~40 bytes for the row it
+            # duplicates. Measured 2026-08-17: 1.4M edges had taken the volume
+            # to 0.29 GB free, below the study's own floor, so the archive
+            # stopped converging at roughly 15% coverage — not because the
+            # measuring was expensive but because mirroring it was.
+            #
+            # With the copy off, the study keeps measuring into Postgres at
+            # negligible disk cost, and readers move over separately. Nothing
+            # is lost either way: `transmission.rebuild` re-projects the whole
+            # table from these same rows whenever a graph copy is wanted.
+            if WRITE_GRAPH_EFFECTS:
+                for source_id, group in pending_by_source.items():
+                    written += effects_writer.write_effects(
+                        graph, group, market_node_ids=market_node_ids,
+                        source_id=source_id,
+                    )
             if pending_results or pending_skips:
                 # The SAME `effect_source` the graph edge is stamped with, so
                 # the two stores cannot disagree about where a number came

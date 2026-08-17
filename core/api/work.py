@@ -193,7 +193,13 @@ def study(conn: Any, deadline: float) -> dict[str, Any]:
     from core.graph import kuzu_store as _store
 
     graph_path = settings_module.load().kuzu_db_path
-    if _store.disk_is_tight(graph_path):
+    # THE DISK GUARD ONLY BINDS A STUDY THAT WRITES THE GRAPH. With the
+    # AFFECTED mirror off (GEOGRAPH_GRAPH_EFFECTS=0) a slice writes rows to
+    # Postgres and adds essentially nothing to the volume, so refusing to run
+    # on a full disk would stop the archive converging for a reason that no
+    # longer applies — which is exactly the state the volume was in when the
+    # mirror was measured as the thing filling it.
+    if runner.WRITE_GRAPH_EFFECTS and _store.disk_is_tight(graph_path):
         return {"stopped": "volume nearly full", "disk": _store.disk_usage(graph_path)}
     if _PREFER_CHILD:
         return _study_child_plan(deadline)
@@ -331,7 +337,9 @@ def _study_in_process(conn: Any, deadline: float) -> dict[str, Any]:
             plan upgrade or a full rebuild. Checking it per event boundary
             costs one statvfs and removes the whole failure mode.
             """
-            return jobs_tight() or _store.disk_is_tight(graph_path)
+            if jobs_tight():
+                return True
+            return runner.WRITE_GRAPH_EFFECTS and _store.disk_is_tight(graph_path)
 
         outcome = runner.measure(
             conn, panel, pack, left[:_events_per_tick],
