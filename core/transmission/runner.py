@@ -200,6 +200,7 @@ def measure(
     chunk: int = DEFAULT_CHUNK,
     deadline: float | None = None,
     on_event: Any = None,
+    stop_when: Any = None,
 ) -> dict[str, Any]:
     """Measure `chosen` against `pack`'s markets; write effects and runs.
 
@@ -208,6 +209,13 @@ def measure(
     for exactly the reason a truncated boot always was — the watermark makes
     progress fungible — and it is what lets this run as a background job
     without holding the writer for minutes at a time.
+
+    `stop_when` is the same idea for a resource the clock cannot see: a
+    predicate asked once per chunk, which stops the run at the next event
+    boundary when it returns True. The API passes its memory guard, because a
+    slice with time left can still reach the container's limit — and an OOM
+    kill mid-write is what left the graph unopenable on 2026-08-17. Kept as a
+    callable so this module owes nothing to `core.api`.
     """
     market_node_ids = {m["ticker"]: m["id"] for m in pack.markets}
     overlap = _Overlap(all_dates)
@@ -280,9 +288,27 @@ def measure(
         pending_by_source.clear()
 
     stopped_early = False
+    stopped_for = None
     for index, event in enumerate(chosen, 1):
         if deadline is not None and time.monotonic() > deadline:
             stopped_early = True
+            stopped_for = "deadline"
+            break
+        # A SECOND WAY TO STOP, and the reason it exists is that the first one
+        # cannot save the process: a deadline bounds TIME, and what killed the
+        # container on 2026-08-17 was MEMORY inside a slice that still had time
+        # left. The caller passes a predicate (the job scheduler's memory
+        # guard); this loop only knows that when it says stop, the next event
+        # boundary is a clean place to do it. Checked once per chunk — the same
+        # boundary the flush uses, so a stop never straddles a write.
+        if (
+            stop_when is not None
+            and index > 1
+            and index % chunk == 1
+            and stop_when()
+        ):
+            stopped_early = True
+            stopped_for = "memory"
             break
         event_date = all_dates[event["id"]]
         # Each market reads AT ITS OWN ERA'S FREQUENCY, looking back far enough
@@ -329,5 +355,6 @@ def measure(
         "events": measured_events,
         "edges": written,
         "stopped_early": stopped_early,
+        "stopped_for": stopped_for,
         "remaining": len(chosen) - measured_events,
     }

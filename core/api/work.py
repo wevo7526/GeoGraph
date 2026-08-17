@@ -307,14 +307,21 @@ def _study_in_process(conn: Any, deadline: float) -> dict[str, Any]:
         count, name, left, pack = backlog[0]
         if time.monotonic() >= deadline:
             return {"skipped": "no time in this slice", "remaining": remaining_total}
+        from core.api.jobs import memory_is_tight as jobs_tight
+
         outcome = runner.measure(
             conn, panel, pack, left[:_events_per_tick],
             all_dates=all_dates, deadline=deadline,
+            # THE SLICE CAN RUN OUT OF MEMORY BEFORE IT RUNS OUT OF TIME. This
+            # is the job that was writing when the container was killed on
+            # 2026-08-17, and the kill is what left the graph unopenable.
+            stop_when=jobs_tight,
         )
         return {
             "pack": name,
             "measured": outcome["events"],
             "edges": outcome["edges"],
+            "stopped_for": outcome.get("stopped_for"),
             "remaining_in_pack": count - outcome["events"],
             "remaining_total": remaining_total - outcome["events"],
             "backlog": {n: c for c, n, _, _ in backlog},

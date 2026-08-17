@@ -190,6 +190,82 @@ def test_an_unreplayable_write_ahead_log_is_moved_aside_not_kept(tmp_path):
     assert kuzu_store._quarantine_wal(db) is None, "nothing to do twice"
 
 
+def test_an_open_that_crashed_quarantines_the_tail_on_the_next_try(tmp_path):
+    """THE REPLAY DOES NOT ALWAYS RAISE. SOMETIMES IT KILLS THE PROCESS.
+
+    The quarantine above is reached from an `except RuntimeError`, so it only
+    helps when Kuzu manages to report the problem. On 2026-08-17 it did not:
+    an OOM kill landed mid-write, and the WAL it left behind took down the C++
+    extension on replay instead of raising. Every boot step that opened the
+    graph exited by SIGNAL with no output, the API died the same way seconds
+    later, and Railway's three restarts were spent re-crashing — no Python ran,
+    so nothing recovered, and the site stayed down.
+
+    A file beside the database is the only state that outlives a signal: it is
+    written before the open and removed after, so finding one means the last
+    process to try this never came back.
+    """
+    db = tmp_path / "graph.kuzu"
+
+    conn = kuzu_store.connect(db)
+    kuzu_store.close(conn)
+    assert not kuzu_store._opening_marker(db).exists(), "a clean open leaves nothing"
+
+    # A process killed during the replay: the marker it wrote is still there,
+    # and so is the tail that killed it.
+    kuzu_store._opening_marker(db).write_text("opening", encoding="utf-8")
+    wal = tmp_path / "graph.kuzu.wal"
+    wal.write_bytes(b"the tail that crashes the replay")
+
+    conn = kuzu_store.connect(db)
+    try:
+        assert not wal.exists(), "the tail that crashed the last open is moved aside"
+        assert list(tmp_path.glob("graph.kuzu.wal.broken-*")), "kept as evidence"
+        assert not kuzu_store._opening_marker(db).exists(), "and the open came back"
+    finally:
+        kuzu_store.close(conn)
+
+
+def test_a_read_only_open_never_touches_the_volume(tmp_path):
+    """Recovery is a writer's job. A read-only open is often the diagnostic
+    someone runs while looking at this exact failure, and it must not move
+    files out from under the process that is still crashing on them."""
+    db = tmp_path / "graph.kuzu"
+    kuzu_store.close(kuzu_store.connect(db))
+    kuzu_store._opening_marker(db).write_text("opening", encoding="utf-8")
+    wal = tmp_path / "graph.kuzu.wal"
+    wal.write_bytes(b"a tail")
+
+    conn = kuzu_store.connect(db, read_only=True)
+    try:
+        assert wal.exists(), "a reader does not quarantine"
+        assert kuzu_store._opening_marker(db).exists(), "nor clear the crash marker"
+    finally:
+        kuzu_store.close(conn)
+
+
+def test_dirty_pages_are_not_counted_as_free_memory(tmp_path, monkeypatch):
+    """THE GUARD READ HEADROOM THAT WAS NOT THERE.
+
+    `memory.current` counts the file cache, and the cache is mostly reclaimable
+    — that is why it is subtracted. But a DIRTY page cannot be dropped without
+    writing it out first, and a job merging edges into a 2.9 GB database dirties
+    them faster than the kernel retires them. Counting those as free is how the
+    loop reported comfortable headroom while the container was killed at 10.4 GB
+    against an 8 GB limit.
+    """
+    stat = tmp_path / "memory.stat"
+    stat.write_text(
+        "anon 4000\nfile 3000\nkernel 100\nfile_dirty 2000\nfile_writeback 500\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(kuzu_store, "CGROUP_STAT_FILES", (stat,))
+
+    assert kuzu_store.memory_file_cache_bytes() == 500, (
+        "only the clean part of the cache is free for the taking"
+    )
+
+
 def test_write_edges_upserts_by_key_slots_without_a_merge_scan(tmp_path):
     """THE PATH AFFECTED TAKES, and why it is not `merge_edges`.
 

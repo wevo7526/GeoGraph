@@ -235,17 +235,44 @@ def memory_raw_bytes() -> int | None:
 
 
 def memory_file_cache_bytes() -> int:
-    """The reclaimable file cache the cgroup counts in `memory.current`
-    (v2 `file`, v1 `cache`). Zero when unreadable."""
+    """The file cache the kernel can drop CHEAPLY, out of what the cgroup
+    counts in `memory.current` (v2 `file`, v1 `cache`). Zero when unreadable.
+
+    DIRTY AND WRITEBACK PAGES ARE NOT CHEAP, and treating them as free is how
+    the guard was still reporting headroom while the container died. Reclaiming
+    a dirty page means writing it out first; under a job that is merging edges
+    into a 2.9 GB database, pages are dirtied faster than the kernel retires
+    them, so that part of the cache stands between the process and the limit
+    exactly the way anonymous memory does. On 2026-08-17 the container reached
+    10.4 GB against an 8 GB limit and was killed mid-write — with the study job
+    running and the loop's own headroom reading comfortable.
+
+    Subtracting them is deliberately conservative: the guard now under-states
+    free memory a little, pauses a job sooner, and the cost of that is minutes
+    of freshness against the cost of the alternative, which was the database.
+    """
+    wanted = {"file", "cache"}
+    charged = {"file_dirty", "dirty", "file_writeback", "writeback"}
     for candidate in CGROUP_STAT_FILES:
         try:
             text = candidate.read_text(encoding="utf-8")
         except OSError:
             continue
+        cache = 0
+        pinned = 0
+        found = False
         for line in text.splitlines():
             key, _, value = line.partition(" ")
-            if key in ("file", "cache") and value.strip().isdigit():
-                return int(value)
+            value = value.strip()
+            if not value.isdigit():
+                continue
+            if key in wanted and not found:
+                cache = int(value)
+                found = True
+            elif key in charged:
+                pinned += int(value)
+        if found:
+            return max(0, cache - pinned)
     return 0
 
 
@@ -349,8 +376,72 @@ def _quarantine_wal(db_path: Path) -> Path | None:
     return Path(stamp)
 
 
+def _opening_marker(db_path: Path) -> Path:
+    return Path(str(db_path) + ".opening")
+
+
+def _open_crashed_last_time(db_path: Path) -> bool:
+    """Did the previous open of this database take its process down?
+
+    THE REPLAY DOES NOT ALWAYS RAISE — SOMETIMES IT SEGFAULTS, and that is the
+    hole this closes. `_quarantine_wal` below is reached from an `except
+    RuntimeError`, so it only ever helped when Kuzu managed to report the
+    problem. On 2026-08-17 an OOM kill landed mid-write (the container reached
+    10.4 GB against an 8 GB limit during the study job) and the WAL it left
+    behind killed the C++ extension on replay instead: every boot step that
+    opened the graph exited by SIGNAL with no output, the API died the same way
+    a few seconds later, and Railway's three restarts were spent re-crashing.
+    Nothing in Python ran, so nothing recovered — the site was down until a
+    human noticed.
+
+    A file beside the database is the only state that survives a signal. It is
+    written before the open and removed after it, so finding one means the last
+    process to try this never came back.
+    """
+    return _opening_marker(db_path).exists()
+
+
+def _clear_opening_marker(db_path: Path, *, read_only: bool = False) -> None:
+    if read_only:
+        return
+    with contextlib.suppress(OSError):
+        _opening_marker(db_path).unlink(missing_ok=True)
+
+
 def connect(db_path: Path, *, read_only: bool = False) -> kuzu.Connection:
     """Open the embedded graph. Diagnoses the single-writer lock explicitly."""
+    # A READER NEVER MOVES THE VOLUME'S FILES. Recovery is a writer's job, and
+    # a read-only open is often a diagnostic run by someone looking at exactly
+    # this failure.
+    crashed = not read_only and _open_crashed_last_time(db_path)
+    if crashed:
+        moved = _quarantine_wal(db_path)
+        if moved is not None:
+            print(
+                f"graph: the last attempt to open {db_path.name} did not come "
+                f"back — its process was killed or crashed during the write-"
+                f"ahead replay. Moved the tail to {moved.name} and opening at "
+                "the last checkpoint; the watermarked jobs re-measure it.",
+                flush=True,
+            )
+        else:
+            # No tail to blame. Say so loudly rather than quietly trying the
+            # same thing again: if this open crashes too, the storage itself
+            # needs `scripts/rebuild_affected.py` or a GEOGRAPH_RESET_GRAPH
+            # rebuild, and the operator should not have to infer that from a
+            # restart loop.
+            print(
+                f"graph: the last attempt to open {db_path.name} did not come "
+                "back, and there is no write-ahead tail to quarantine. If this "
+                "open crashes as well the storage is damaged: re-project "
+                "AFFECTED (scripts/rebuild_affected.py) or rebuild the graph "
+                "with GEOGRAPH_RESET_GRAPH=<token>.",
+                flush=True,
+            )
+    if not read_only:
+        with contextlib.suppress(OSError):
+            _opening_marker(db_path).parent.mkdir(parents=True, exist_ok=True)
+            _opening_marker(db_path).write_text("opening", encoding="utf-8")
     try:
         db = kuzu.Database(str(db_path), read_only=read_only,
                            buffer_pool_size=buffer_pool_bytes())
@@ -389,12 +480,18 @@ def connect(db_path: Path, *, read_only: bool = False) -> kuzu.Connection:
                                    buffer_pool_size=buffer_pool_bytes())
                 conn = kuzu.Connection(db)
                 conn._geograph_db = db  # type: ignore[attr-defined]
+                _clear_opening_marker(db_path, read_only=read_only)
                 return conn
+        _clear_opening_marker(db_path, read_only=read_only)
         raise GraphUnavailable(f"Cannot open graph at {db_path}: {message}") from exc
     # Keep the Database reachable from the Connection so `close` can shut both.
     # Dropping the Python reference does NOT reliably release the write lock or
     # the reservation; only closing does.
     conn._geograph_db = db  # type: ignore[attr-defined]
+    # THE OPEN CAME BACK — clear the crash marker. It is cleared after a
+    # RuntimeError too: an exception means Python is still running, which is
+    # the case the markers above already handle by message.
+    _clear_opening_marker(db_path, read_only=read_only)
     return conn
 
 
