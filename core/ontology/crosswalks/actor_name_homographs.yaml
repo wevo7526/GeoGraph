@@ -1,0 +1,69 @@
+# Names GDELT resolves to a country that are not that country.
+#
+# GDELT matches an actor to a country by string, then writes that country's
+# code. So a town, a river or a region that shares a name with one of a
+# country's places arrives wearing its flag: "POLE" becomes Poland, and
+# "BIRMINGHAM" (Alabama) becomes the United Kingdom. That is where "use of
+# military force between the United States and Poland, 2011" came from.
+#
+# FOUR AUTOMATIC INSTRUMENTS WERE MEASURED AND ALL FOUR FAILED (the actor
+# code, the actor geo TYPE, the actor geo COUNTRY as a per-name rate, and the
+# code's role suffix — see `gdelt._is_state_actor` for the numbers). No column
+# in GDELT 1.0 separates POLE from POLAND: both are bare, typeless country
+# codes. Curation is the only instrument, so this file is curated.
+#
+# THIS IS A DENY-LIST, NOT AN ALLOWLIST, AND THAT INVERSION IS THE POINT.
+# A deny-list's misses keep today's behaviour; an allowlist's misses DELETE
+# rows, and the names most easily forgotten are heads of state, demonyms and
+# capitals — the archive's own subjects. Nothing may be added here that the
+# country's own reporting would legitimately produce.
+#
+# Two arms, because the names divide cleanly in two:
+#
+#   never_the_state — the string cannot denote the country under any reading.
+#     Dropped outright. Kept deliberately tiny: a name goes here only when the
+#     country's real forms are something else entirely (Poland is POLAND,
+#     POLISH, WARSAW — never POLE).
+#
+#   ambiguous — a REAL name for the country that is also a place elsewhere.
+#     Dropped ONLY when the row's own Actor?Geo_CountryCode resolves to a
+#     DIFFERENT country. Birmingham geolocated in Alabama is not the United
+#     Kingdom; Birmingham geolocated in England is. A row with no geocode, or
+#     one that resolves to the assigned country, is KEPT — the arm cannot fire
+#     on evidence it does not have.
+#
+# Given names are deliberately absent from both arms. ABDULLAH scores 96%
+# "elsewhere" and is also a Saudi king and a Jordanian king; HASSAN is already
+# dropped by the type gate (it always carries JORELI). Denying a given name
+# risks deleting a head of state, which is the allowlist failure mode this
+# file exists to avoid.
+#
+# Codes are the roster ISO3 the actor was assigned to; names are upper-case
+# and matched exactly against Actor?Name.
+
+never_the_state:
+  # "A Pole" is a person; Poland is POLAND / POLISH / WARSAW. 504 of the 652
+  # US-Poland material-conflict rows in the archive came through this name.
+  POL: [POLE]
+
+ambiguous:
+  # Birmingham and Manchester, England — and Alabama, New Hampshire and
+  # Connecticut. BIRMINGHAM/ALABAMA was 186 US-UK "material conflict" rows.
+  GBR: [BIRMINGHAM, MANCHESTER]
+  # Antakya was Antioch; Antioch is also California (762 of 836 slots) and
+  # Smyrna is Izmir and also Tennessee/Georgia.
+  TUR: [ANTIOCH, SMYRNA]
+  # Braunschweig and Frankfurt in English, and Brunswick ME/GA, Frankfort KY.
+  DEU: [BRUNSWICK, FRANKFORT]
+  # Odesa, Ukraine — and Odessa, Texas.
+  UKR: [ODESSA]
+  # The Australian state and the river; also Victoria BC and Murray KY/UT.
+  AUS: [VICTORIA, MURRAY]
+  # Medina, Saudi Arabia — and Medina, Ohio.
+  SAU: [MEDINA]
+  # The Italian region; also the French marche/marché.
+  ITA: [MARCHE]
+  # Tyre, Lebanon — and the English word.
+  LBN: [TYRE]
+  # Guangzhou's older name; also Canton, Ohio (290 of 477 slots).
+  CHN: [CANTON]

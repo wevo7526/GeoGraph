@@ -81,6 +81,13 @@ _A2_TYPE1 = 22
 #: and Alabama came to commit interstate material conflict.
 _A1_GEO_TYPE = 35
 _A2_GEO_TYPE = 42
+#: Actor?Geo_CountryCode — where THIS ACTOR was located, FIPS 10-4. Read only
+#: by the `ambiguous` arm of the homograph deny-list: it is the column that
+#: separates Birmingham, Alabama from Birmingham, England. As a general filter
+#: it is useless (a strike is geocoded where it lands, not where its author
+#: sits) — see `_is_state_actor`, instruments 2 and 3.
+_A1_GEO_COUNTRY = 37
+_A2_GEO_COUNTRY = 44
 _SOURCES = 32
 
 #: CAMEO role suffixes that mean the actor IS the state acting. A bare country
@@ -90,6 +97,32 @@ _STATE_ROLES = frozenset({"GOV", "MIL", "COP", "JUD", "LEG", "SPY"})
 _FIPS_CROSSWALK = (
     Path(__file__).resolve().parent.parent / "ontology" / "crosswalks" / "fips_iso3.yaml"
 )
+_HOMOGRAPH_CROSSWALK = (
+    Path(__file__).resolve().parent.parent
+    / "ontology" / "crosswalks" / "actor_name_homographs.yaml"
+)
+
+
+@functools.lru_cache(maxsize=1)
+def homographs() -> tuple[frozenset[tuple[str, str]], frozenset[tuple[str, str]]]:
+    """(never_the_state, ambiguous) as (iso3, NAME) pairs — the curated file.
+
+    Two sets rather than a dict of lists because the only question ever asked
+    is membership, once per actor slot, over 1.3M rows.
+    """
+    import yaml
+
+    with open(_HOMOGRAPH_CROSSWALK, encoding="utf-8") as fh:
+        table = yaml.safe_load(fh) or {}
+
+    def pairs(section: str) -> frozenset[tuple[str, str]]:
+        out: set[tuple[str, str]] = set()
+        for code, names in (table.get(section) or {}).items():
+            for name in names or ():
+                out.add((str(code).strip().upper(), str(name).strip().upper()))
+        return frozenset(out)
+
+    return pairs("never_the_state"), pairs("ambiguous")
 
 
 @functools.lru_cache(maxsize=1)
@@ -133,11 +166,15 @@ def _latest_plausible_year() -> int:
 def _is_state_actor(
     fields: list[str], code_at: int, name_at: int,
     type_at: int, geo_type_at: int, iso3: str,
+    geo_country_at: int | None = None,
 ) -> bool:
     """Is this actor slot the state, rather than a body inside it?
 
-    THE TYPE ONLY — and the two stronger gates that were tried and REJECTED
-    are the useful part of this docstring, because both looked obviously right.
+    TWO GATES: the actor's TYPE, and a CURATED name deny-list
+    (`crosswalks/actor_name_homographs.yaml`). Four automatic instruments were
+    measured and all four failed, which is why the second gate is a hand-written
+    file and not a rule — that history is the useful part of this docstring,
+    because each of them looked obviously right.
 
     1. The actor CODE. Rejected because it cannot see the problem: GDELT
        resolves an actor to a country by string match and then writes that
@@ -168,10 +205,6 @@ def _is_state_actor(
        not what the actor is. There is no column in GDELT 1.0 that separates
        these rows.
 
-    What ships is the narrow, precise cut: an actor with a non-state TYPE is
-    not the state. Reuters, Pfizer, Boeing and AstraZeneca carry MED/BUS/MNC
-    and go; the homograph rows carry no type at all and stay.
-
     3. The actor's OWN geocode country against its assigned country, as a
        per-NAME rate — "when this name appears, is it usually located in the
        country GDELT assigned it to?". This one SEPARATES, which is why it is
@@ -196,17 +229,38 @@ def _is_state_actor(
        where the EVENT was, not what the actor is. Slovakia scores 7% for the
        honest reason that its events happen in Hungary, Poland and Czechia.
 
-    So: the type gate is what ships, and the remaining discriminator has to be
-    the NAME — a curated allowlist per roster member (the country's name, its
-    variants, its demonym, its capital, its heads of state), against which
-    anything else resolving to that country is refused. It belongs beside
-    `fips_iso3.yaml`, it is roughly sixty countries of curation, and it is
-    deterministic and testable once written. It is NOT derivable from the
-    archive it is meant to clean — which is what all three rejected attempts
-    above were trying to do, and is the reason each of them failed differently.
+    4. The CODE's role suffix (`USAGOV`, `JORELI`, bare `POL`). It separates
+       PEOPLE from PLACES, not homographs from states: POLE is 100% bare and
+       typeless, POLAND 93% — indistinguishable. It does explain why the type
+       gate reaches further than it looks: HASSAN (5,619 slots) is ALWAYS
+       `JORELI` and never survives it.
+
+    SO THE SECOND GATE IS CURATED, and it is a DENY-list rather than an
+    allowlist because the failure modes are not symmetric: a deny-list's
+    misses keep today's behaviour, while an allowlist's misses delete heads of
+    state, demonyms and capitals — the four measurements above are a catalogue
+    of exactly the names an allowlist would forget. `never_the_state` drops
+    outright; `ambiguous` drops only when the row's OWN geocode resolves to a
+    different country, which is the one thing a per-row test can do that a
+    per-name rate cannot — Birmingham in Alabama is not the United Kingdom,
+    Birmingham in England is, and a row with no geocode is kept.
     """
     actor_type = (fields[type_at] if len(fields) > type_at else "").strip().upper()
-    return not (actor_type and actor_type not in _STATE_ROLES)
+    if actor_type and actor_type not in _STATE_ROLES:
+        return False
+    name = (fields[name_at] if len(fields) > name_at else "").strip().upper()
+    if not name:
+        return True
+    never, ambiguous = homographs()
+    if (iso3, name) in never:
+        return False
+    if (iso3, name) in ambiguous and geo_country_at is not None:
+        raw = (fields[geo_country_at] if len(fields) > geo_country_at else "").strip()
+        located = fips_to_iso3().get(raw, "") if raw else ""
+        # No geocode is not evidence — the arm cannot fire on what it lacks.
+        if located and located != iso3:
+            return False
+    return True
 
 
 def _int_or_none(value: str) -> int | None:
@@ -263,13 +317,17 @@ def parse_lines(
         # material-conflict rows had BOTH actors named at national level.
         #
         # That is where "use of military force between the United States and
-        # Poland, 2011" came from, and no filter on the TYPE columns can reach
-        # it — three quarters of these rows carry no type at all. The GEO TYPE
-        # is what separates a state from a place inside it.
-        if not _is_state_actor(fields, _A1_CODE, _A1_NAME, _A1_TYPE1, _A1_GEO_TYPE, a1):
+        # Poland, 2011" came from. The TYPE columns reach the nationals —
+        # Reuters, Pfizer, and HASSAN, which always carries JORELI — and a
+        # CURATED deny-list reaches the place-names, which carry no type at
+        # all and are indistinguishable from their countries on every other
+        # column GDELT ships.
+        if not _is_state_actor(fields, _A1_CODE, _A1_NAME, _A1_TYPE1, _A1_GEO_TYPE, a1,
+                               _A1_GEO_COUNTRY):
             result.drop("initiator is not the state itself")
             continue
-        if not _is_state_actor(fields, _A2_CODE, _A2_NAME, _A2_TYPE1, _A2_GEO_TYPE, a2):
+        if not _is_state_actor(fields, _A2_CODE, _A2_NAME, _A2_TYPE1, _A2_GEO_TYPE, a2,
+                               _A2_GEO_COUNTRY):
             result.drop("target is not the state itself")
             continue
         if a1 in external_powers and a2 in external_powers:

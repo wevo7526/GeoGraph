@@ -275,8 +275,10 @@ def _study_child_plan(deadline: float) -> dict[str, Any]:
 
 
 def _study_in_process(conn: Any, deadline: float) -> dict[str, Any]:
+    from core.graph import kuzu_store as _store
     from core.panel import pg_store
 
+    graph_path = settings_module.load().kuzu_db_path
     names = _pack_names()
     if not names:
         return {"skipped": "no packs"}
@@ -309,13 +311,27 @@ def _study_in_process(conn: Any, deadline: float) -> dict[str, Any]:
             return {"skipped": "no time in this slice", "remaining": remaining_total}
         from core.api.jobs import memory_is_tight as jobs_tight
 
+        def out_of_room() -> bool:
+            """Stop this slice on EITHER ceiling.
+
+            Memory: this is the job that was writing when the container was
+            killed on 2026-08-17, and the kill is what left the graph
+            unopenable.
+
+            Disk: `disk_is_tight` was checked only at job ENTRY, so a slice
+            that started above the 400 MB floor could cross it and keep going
+            — which is how the study filled a 5 GB volume to ZERO bytes free.
+            At zero, Kuzu cannot write a twelve-byte log record, which means it
+            cannot even DROP a table to free itself; the only ways out are a
+            plan upgrade or a full rebuild. Checking it per event boundary
+            costs one statvfs and removes the whole failure mode.
+            """
+            return jobs_tight() or _store.disk_is_tight(graph_path)
+
         outcome = runner.measure(
             conn, panel, pack, left[:_events_per_tick],
             all_dates=all_dates, deadline=deadline,
-            # THE SLICE CAN RUN OUT OF MEMORY BEFORE IT RUNS OUT OF TIME. This
-            # is the job that was writing when the container was killed on
-            # 2026-08-17, and the kill is what left the graph unopenable.
-            stop_when=jobs_tight,
+            stop_when=out_of_room,
         )
         return {
             "pack": name,
@@ -660,6 +676,14 @@ def wire(conn: Any, deadline: float) -> dict[str, Any]:
                 return {"pack": name, "written": written, "held": len(seen),
                         "stopped_early": True}
         if batch:
+            # The trailing partial batch takes the same guard as every full
+            # one — and it matters more, because the line after it MARKS THE
+            # PACK COMPLETE. A batch lost to a full volume here would be a
+            # pack recorded as fully loaded while short of its last rows.
+            if kuzu_store.disk_is_tight(graph_path):
+                return {"pack": name, "written": written, "held": len(seen),
+                        "stopped": "volume nearly full",
+                        "disk": kuzu_store.disk_usage(graph_path)}
             written += _write_lean_batch(conn, batch, name, names_by_id, escalation)
             for row in batch:
                 seen.add(str(row["node_id"]))
