@@ -161,9 +161,12 @@ def classify(
     question the thresholds below were guessing at. Where it is present it
     decides adversary; the thresholds remain for a pair the model cannot see
     and for the case where no model ships. They deserved replacing: on the
-    held-out decade the shipped rule scored 0.533 AUC against the model's
-    0.847 — a coin flip against a usable classifier — and the SHARE it keyed
-    on carries a fitted weight of -0.01, which is no information at all.
+    held-out decade the model scores 0.847 AUC and beats the raw coercion
+    count — the strongest continuous baseline — by +0.0495, while the SHARE
+    the thresholds keyed on carries a fitted weight of -0.01, which is no
+    information at all. (The shipped rule's own 0.533 is a BINARY indicator's
+    score, so it reads as "this operating point barely discriminates" rather
+    than as a like-for-like AUC comparison.)
     """
     kinds = {
         str(r.get("relation_type"))

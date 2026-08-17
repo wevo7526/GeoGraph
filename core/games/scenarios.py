@@ -65,7 +65,8 @@ REGION_DYADS = 12
 #: `2026-08-17.2` is the classification rebuild: the ranking is ordered by a
 #: TRAINED read of whether a pair is in a militarised dispute
 #: (`models.hostility`, fitted on COW's own dispute record, 0.847 AUC on a
-#: held-out decade against 0.533 for the thresholds it replaces), and every row
+#: held-out decade, +0.05 over the strongest continuous baseline it was
+#: gated against), and every row
 #: carries the `hostility` it was ordered by. What counts as coercion changed
 #: underneath it too (`classifier.coercion`), so every persisted number moved.
 #:
@@ -1098,7 +1099,8 @@ def region_map(
     # Russia. `classifier.coercion` fixed what is counted; this decides what
     # the board is ordered BY, and the model that answers it is scored against
     # COW's dispute record rather than set by hand (0.847 AUC on the held-out
-    # decade, against 0.533 for the thresholds it replaces). The count stays
+    # decade, +0.05 over the raw coercion count, the strongest continuous
+    # baseline it was gated against). The count stays
     # as the tiebreak and stays on the surface, because it is the number a
     # reader can check against the events.
     ranking.sort(key=lambda r: (

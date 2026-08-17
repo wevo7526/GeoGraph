@@ -44,6 +44,20 @@ THE HONEST LIMITS, stated because they bound what this may be used for:
     the declared standing alone, and the raw coercion count. A model that
     cannot beat all three is not written — `family` keeps its rules and says
     so, the same contract `models.dynamics` holds.
+  * READ THE THREE BASELINE NUMBERS CORRECTLY, because two of them are
+    BINARY. `shipped_rule` and `declared_rivalry` are indicators, so their
+    "AUC" is arithmetically (sensitivity + specificity) / 2 and is not
+    comparable to a continuous score's. 0.533 for the shipped rule means its
+    operating point carries almost no discriminative power — a true finding,
+    and the one that motivated this — but the HONEST margin to quote is
+    against `coercion_count`, which is continuous: +0.0495 AUC.
+  * The claim is a BETWEEN-PAIR ordering — which pairs are adversaries — and
+    not a within-dyad one. `models.dynamics` and `models.intensity` are gated
+    within dyad because they rank a pair's own quarters; this ranks pairs
+    against each other, so a within-dyad gate would be the wrong test. An
+    adversarial re-check of a within-dyad edge over the raw count found it
+    not significant on a paired bootstrap, which is consistent with that: it
+    is not what this model is for.
 """
 
 from __future__ import annotations
