@@ -15,6 +15,7 @@ from typing import Any
 
 from fastapi import APIRouter, HTTPException, Query, Request
 
+from core import settings as settings_module
 from core.graph import kuzu_store
 from core.wire import serving as wire_serving
 
@@ -475,7 +476,7 @@ def wire(
     }
 
 
-def _actor_names(request: Request) -> dict[str, str]:
+def _actor_names(request: Request | None = None) -> dict[str, str]:
     """actor node_id → display name, for the wire's headline.
 
     FROM THE PACKS, NOT THE GRAPH, and that is deliberate. The roster is the
@@ -501,3 +502,165 @@ def _actor_names(request: Request) -> dict[str, str]:
             if node_id and name:
                 names.setdefault(node_id, str(name))
     return names
+
+
+#: The live poll is cached for this long. GDELT publishes every 15 minutes, so
+#: anything under that is re-fetching a file that has not changed; 60s keeps a
+#: refreshing page responsive without hammering a free service.
+_LIVE_TTL_SECONDS = 60.0
+_live_cache: dict[str, Any] = {"at": 0.0, "payload": None, "region": None}
+
+#: Goldstein bands → the kinds the transmission map measured. RAW SCORE, and
+#: the payload says so: the map's kinds are Head B DEPARTURES from a pair's own
+#: baseline, and a raw score is not that. Labelling a live event by its coding
+#: and attaching what similarly-coded events historically did is honest; calling
+#: it a departure would not be, because the baseline needs the pair's history
+#: and this event is fifteen minutes old.
+def _implied_kind(goldstein: float | None) -> str:
+    if goldstein is None:
+        return "stable"
+    if goldstein <= -7.0:
+        return "sharp_escalation"
+    if goldstein < -2.0:
+        return "escalation"
+    if goldstein > 2.0:
+        return "de-escalation"
+    return "stable"
+
+
+@router.get("/wire/live")
+def wire_live(region: str = "mena", limit: int = Query(30, ge=1, le=100)) -> dict[str, Any]:
+    """The wire, LIVE — GDELT 2.0's 15-minute stream, scored and priced.
+
+    THE ARCHIVE READS GDELT 1.0, WHICH PUBLISHES A DAY IN ARREARS, and that one
+    fact is why nothing here was ever tradeable: by the time an event arrived,
+    session 0 — the session whose return CONTAINS the impact — had closed. The
+    2.0 stream publishes every fifteen minutes, so an event can be read inside
+    the session it moves.
+
+    WHAT THE EDGE IS AND IS NOT. Fifteen minutes is slow against a headline; a
+    news algorithm is in the book before this file exists, and nothing here
+    competes on speed. What this archive has is the MEASURED RECORD: how the
+    region's markets have actually moved on events coded like this one, with the
+    sample size attached. Speed gets you the headline. The record tells you what
+    headlines like it have been worth.
+
+    Every figure on a row is a measurement — `median`/`p25`/`p75` are realised
+    abnormal returns over the four sessions after past events of that coding,
+    `n` is how many, and a thin sample says so rather than rounding to a number.
+    """
+    import time
+
+    from core import packs
+    from core.ingestion import stream as live_stream
+    from core.panel import pg_store
+    from core.reasoning import markets as markets_module
+    from core.reasoning import strategy as strategy_module
+
+    now = time.monotonic()
+    if (_live_cache["payload"] is not None and _live_cache["region"] == region
+            and now - float(_live_cache["at"]) < _LIVE_TTL_SECONDS):
+        cached = dict(_live_cache["payload"])
+        cached["cached"] = True
+        return cached
+
+    try:
+        pack = packs.load(region)
+    except packs.PackError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    roster = {
+        a["iso3"]: {"node_id": a["id"], "name": a["name"]}
+        for a in pack.actors if a.get("iso3")
+    }
+    try:
+        polled = live_stream.poll(pack, roster)
+    except Exception as exc:  # noqa: BLE001 - a live feed failing is not a 500
+        raise HTTPException(
+            status_code=503, detail=f"the GDELT 2.0 stream did not answer: {exc}"
+        ) from exc
+
+    # The measured record, from the persisted market story — no recomputation
+    # on a request thread, and no number invented here.
+    responses: dict[str, Any] = {}
+    settings = settings_module.load()
+    try:
+        panel = pg_store.connect(settings)
+    except pg_store.PanelUnavailable:
+        panel = None
+    if panel is not None:
+        try:
+            story = pg_store.market_story(panel, region)
+            for market in (story or {}).get("markets", []):
+                responses[market["ticker"]] = {
+                    "name": market.get("name"),
+                    "response": market.get("response") or {},
+                }
+        except Exception:  # noqa: BLE001 - the feed stands without the record
+            responses = {}
+        finally:
+            panel.close()
+
+    names = _actor_names(None)
+    rows: list[dict[str, Any]] = []
+    for row in polled.get("rows", [])[:limit]:
+        goldstein = row.get("goldstein")
+        kind = _implied_kind(None if goldstein is None else float(goldstein))
+        outlook = []
+        for ticker, entry in responses.items():
+            cell = ((entry["response"].get(kind) or {}).get(markets_module.HEADLINE_WINDOW)
+                    or {})
+            if not cell.get("n"):
+                continue
+            outlook.append({
+                "ticker": ticker,
+                "market": entry["name"],
+                "median": cell.get("median"),
+                "p25": cell.get("p25"),
+                "p75": cell.get("p75"),
+                "n": cell.get("n"),
+                "share_positive": cell.get("share_positive"),
+                "thin": bool(cell.get("thin")),
+                **strategy_module.assess_cell(cell),
+            })
+        outlook.sort(key=lambda m: abs(m.get("median") or 0.0), reverse=True)
+        rows.append({
+            "node_id": row.get("node_id"),
+            "event_time": row.get("event_time"),
+            "name": row.get("name"),
+            "cameo_code": row.get("action_cameo_code"),
+            "quad_class": row.get("quad_class"),
+            "goldstein": goldstein,
+            "initiator_id": row.get("initiator_id"),
+            "target_id": row.get("target_id"),
+            "initiator_name": names.get(str(row.get("initiator_id") or "")),
+            "target_name": names.get(str(row.get("target_id") or "")),
+            "dyad_id": row.get("dyad_id"),
+            "available_at": row.get("available_at"),
+            "source_url": row.get("source_url"),
+            "mentions": row.get("mentions"),
+            "num_sources": row.get("num_sources"),
+            "implied_kind": kind,
+            "market_outlook": outlook[:4],
+        })
+
+    payload = {
+        "region": region,
+        "published": polled.get("published"),
+        "fetched_at": polled.get("fetched_at"),
+        "scanned": polled.get("scanned"),
+        "kept": polled.get("kept"),
+        "rows": rows,
+        "strategy": strategy_module.strategy_contract(),
+        "cached": False,
+        "method": (
+            "GDELT 2.0's 15-minute export, filtered to this pack's roster. "
+            "`implied_kind` is the event's RAW Goldstein banded to the kinds the "
+            "transmission map measured — it is NOT a Head B departure from the "
+            "pair's own baseline, which needs history this event does not have "
+            "yet. `market_outlook` is the measured record: realised abnormal "
+            "returns over the four sessions after past events of that coding, "
+            "with n. Nothing here is a forecast and nothing is advice."
+        ),
+    }
+    _live_cache.update({"at": now, "payload": payload, "region": region})
+    return payload

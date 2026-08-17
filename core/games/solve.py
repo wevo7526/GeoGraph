@@ -186,11 +186,16 @@ def ally_stage_payoff(
     theirs = _CONTRIBUTION[other]
     good = payoffs.stake * math.sqrt((own + theirs) / 2.0) * strength
     borne = payoffs.cost_of(type_index) * own
-    # THE FRICTION LEVEL BITES ON WITHHOLDING, not on carrying: at high
-    # friction the reluctant partner's temptation to withhold is exactly what
-    # the abandonment cost has to answer, and carrying at high friction is the
-    # repair the alliance runs on.
-    abandonment = payoffs.audience if (action == 2 and intensity >= bands // 2) else 0.0
+    # THE FRICTION LEVEL BITES ON WITHHOLDING, not on carrying — at EVERY
+    # level, and harder as friction rises. A partner seen to withhold pays a
+    # reputational cost even in calm (the alliance's routine assurance is
+    # what withholding refuses), and pays more when the alliance is already
+    # strained. A first version charged it only above the midpoint band, and
+    # the fit then put 42% of calm quarters on withholding against 4%
+    # observed: at calm nothing answered the free-rider's temptation. Scaled
+    # (0.5 + level) so the cut-over is smooth and the fit keeps one parameter.
+    level_share = intensity / max(bands - 1, 1)
+    abandonment = payoffs.audience * (0.5 + level_share) if action == 2 else 0.0
     return float(good - borne - abandonment)
 
 
@@ -317,6 +322,20 @@ def solve_stage(
     return mix_a, mix_b
 
 
+def qre_residual(
+    payoff_a: np.ndarray,
+    payoff_b: np.ndarray,
+    mix_a: np.ndarray,
+    mix_b: np.ndarray,
+    *,
+    precision: float = PRECISION,
+) -> float:
+    """Maximum one-sweep logit fixed-point error for a QRE stage."""
+    target_a = _logit(payoff_a @ mix_b, precision)
+    target_b = _logit(payoff_b.T @ mix_a, precision)
+    return float(max(np.max(np.abs(target_a - mix_a)), np.max(np.abs(target_b - mix_b))))
+
+
 def posterior(
     prior: float, action: int, payoffs: Payoffs,
     space: family_module.ActionSpace = family_module.ADVERSARY,
@@ -398,6 +417,7 @@ def solve(
     gaps: list[float] = []
     entropies: list[float] = []
     violations: list[float] = []
+    qre_residuals: list[float] = []
     lp_status_ok = True
     # The period-0 stage matrices (payoff + discounted continuation) at every
     # state — what a reader sees when asked "what game is being played at the
@@ -449,6 +469,9 @@ def solve(
                     mix_a, mix_b = solve_stage(matrix_a, matrix_b, precision=precision)
                     policy[period, x, k, own] = mix_a
                     policy_b[period, x, k, own] = mix_b
+                    qre_residuals.append(
+                        qre_residual(matrix_a, matrix_b, mix_a, mix_b, precision=precision)
+                    )
                     # A's expected value is mix_a @ payoff_a @ mix_b — the
                     # OPPONENT'S equilibrium mixture, not A's own. Using mix_a
                     # on both sides is exact only for a symmetric stage game,
@@ -475,6 +498,15 @@ def solve(
             )
         ),
     }
+    if solver == "qre":
+        residuals = np.asarray(qre_residuals) if qre_residuals else np.zeros(1)
+        out["qre_residual"] = {
+            "mean": round(float(residuals.mean()), 6),
+            "max": round(float(residuals.max()), 6),
+            "stage_games": int(len(qre_residuals)),
+            "sweeps": _SWEEPS,
+            "equilibrium_status": "fixed_point_audit",
+        }
     if solver == "lp":
         arr = np.asarray(gaps) if gaps else np.zeros(1)
         ent = np.asarray(entropies) if entropies else np.zeros(1)

@@ -22,6 +22,7 @@ from core import packs
 from core import settings as settings_module
 from core.panel import pg_store
 from core.reasoning import backtest, forecasting
+from core.reasoning import strategy
 
 
 def run(pack_name: str) -> dict[str, Any] | None:
@@ -52,6 +53,10 @@ def run(pack_name: str) -> dict[str, Any] | None:
             region_pack=pack_name,
             escalation_book=books["escalation"],
             reversion_book=books["reversion"],
+            # The direct helper defaults to zero for backwards-compatible
+            # notebooks/tests; the persisted platform ledger uses the actual
+            # versioned round-trip hurdle.
+            transaction_cost_bps=strategy.ROUND_TRIP_COST_BPS,
         )
         written = pg_store.record_backtest(panel, pack_name, result)
         # The skips and the summary travel with the ledger — a region whose

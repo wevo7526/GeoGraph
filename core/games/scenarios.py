@@ -580,6 +580,13 @@ def solve_dyad(
         concepts[solver] = {
             "concept": equilibrium["concept"],
             "nash_gap": equilibrium.get("nash_gap"),
+            "qre_residual": equilibrium.get("qre_residual"),
+            "belief_audit": {
+                "policy_conditioned_on": "intensity, capability, own type",
+                "opening_beliefs_used_for_paths": True,
+                "full_belief_state_policy": False,
+                "status": "approximate_bayesian_qre",
+            },
             "marginal": marginal,
             "escalation_probability": _escalation_probability(marginal, band),
             "sharp_departure_probability": _sharp_departure_probability(marginal),

@@ -149,6 +149,28 @@ export default function MarketsPage({ region }: { region: string; onNavigate: (r
         ]} />
       </div>
 
+      {story.market_impact?.length ? (
+        <Beat
+          title="The rule, applied to this region"
+          aside="A trade requires at least eight measured reactions and a median larger than the fixed 10 bps round-trip hurdle. Thin cells remain watch items."
+        >
+          <div className="scroll-x">
+            <table className="rule-table" style={{ minWidth: 520 }}>
+              <thead><tr><th className="text-left">market</th><th className="text-right">median</th><th className="text-right">sample</th><th className="text-right">decision</th></tr></thead>
+              <tbody>{story.market_impact.slice(0, 8).map((impact) => (
+                <tr key={impact.ticker}>
+                  <td>{impact.market} <span className="mono text-xs" style={{ color: 'var(--muted)' }}>{impact.ticker}</span></td>
+                  <td className="text-right mono">{impact.expected_return == null ? '—' : `${impact.expected_return >= 0 ? '+' : ''}${(impact.expected_return * 100).toFixed(2)}%`}</td>
+                  <td className="text-right mono">{impact.n}</td>
+                  <td className="text-right">{impact.action} {impact.direction !== 'flat' ? `· ${impact.direction}` : ''}</td>
+                </tr>
+              ))}</tbody>
+            </table>
+          </div>
+          <p className="figure-note">The persisted paper ledger below uses the same fixed pack books and declared cost hurdle; it is a historical walk-forward, not an in-sample curve fit.</p>
+        </Beat>
+      ) : null}
+
       {/* 1 — THE TRANSMISSION MAP */}
       <Beat
         title="What a sharp escalation does to prices"

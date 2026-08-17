@@ -27,6 +27,7 @@ after loading (core/classifier/rescore.py).
 from __future__ import annotations
 
 import functools
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -46,6 +47,61 @@ _SOURCE_META = {
         "Tone, 1979-2012. ISA Annual Convention."
     ),
 }
+
+@dataclass(frozen=True)
+class Layout:
+    """Where each field sits in a GDELT export row.
+
+    TWO GENERATIONS, AND THE DIFFERENCE IS NOT COSMETIC. GDELT 1.0 rows carry
+    58 columns and 2.0 rows carry 61: each of the three geography blocks gained
+    an `ADM2Code`, so every index from Actor2Geo onward shifts by one, then two,
+    then three. Parsing a 2.0 row with 1.0's constants does not fail — it reads
+    Actor2Geo_Type out of Actor1Geo's FeatureID and carries on, which is the
+    worst kind of wrong. Verified against a live 15-minute file: v1 index 42 is
+    Actor2Geo_Type, v2 index 42 is a FeatureID like '-2595386'.
+
+    The fields before the geography blocks are identical in both, which is why
+    everything the classifier reads — actors, codes, quad class, Goldstein,
+    mentions, sources — needs no per-generation handling.
+    """
+
+    columns: int
+    a1_geo_type: int
+    a1_geo_country: int
+    a2_geo_type: int
+    a2_geo_country: int
+    action_geo_country: int
+    #: 2.0 only: the timestamp the row entered the feed (YYYYMMDDHHMMSS). The
+    #: whole point of the 15-minute stream, and 1.0 has no equivalent.
+    date_added: int | None = None
+    source_url: int | None = None
+
+
+#: The daily export files, 1979 to the present. 58 columns.
+V1 = Layout(
+    columns=58,
+    a1_geo_type=35, a1_geo_country=37,
+    a2_geo_type=42, a2_geo_country=44,
+    action_geo_country=51,
+)
+
+#: The 15-MINUTE stream (gdeltv2), 2015 to the present. 61 columns, and the
+#: reason a live wire is possible at all: 1.0 publishes a day in arrears.
+V2 = Layout(
+    columns=61,
+    a1_geo_type=35, a1_geo_country=37,
+    a2_geo_type=43, a2_geo_country=45,
+    action_geo_country=53,
+    date_added=59, source_url=60,
+)
+
+
+def layout_for(fields: list[str]) -> Layout:
+    """Which generation is this row? Decided by width, which is the only
+    honest signal — the two share a prefix, so nothing earlier distinguishes
+    them."""
+    return V2 if len(fields) >= V2.columns else V1
+
 
 #: GDELT 1.0 export column positions (57 fields, tab-separated, no header).
 _GLOBALEVENTID = 0
@@ -270,6 +326,19 @@ def _int_or_none(value: str) -> int | None:
         return None
 
 
+def _iso_timestamp(value: str | None) -> str | None:
+    """GDELT's YYYYMMDDHHMMSS availability stamp as an ISO UTC string."""
+    if not value or not value.isdigit() or len(value) != 14:
+        return None
+    try:
+        return (
+            f"{value[:4]}-{value[4:6]}-{value[6:8]}T"
+            f"{value[8:10]}:{value[10:12]}:{value[12:14]}Z"
+        )
+    except (IndexError, ValueError):
+        return None
+
+
 def parse_lines(
     lines: Any,
     *,
@@ -278,6 +347,7 @@ def parse_lines(
     min_mentions: int = 10,
     keep_lines: Any = None,
     external_powers: frozenset[str] = EXTERNAL_POWERS,
+    layout: Layout | None = None,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]], LoadResult]:
     """Filter and shape raw export lines → (event rows, edge rows, result).
 
@@ -289,6 +359,10 @@ def parse_lines(
     edges: list[dict[str, Any]] = []
     for line in lines:
         fields = line.rstrip("\n").split("\t")
+        # PER ROW: the 15-minute stream is 2.0 and the archive is 1.0, and
+        # reading a 2.0 row with 1.0 indices does not fail - it silently
+        # returns Actor1Geo FeatureID where Actor2Geo type belongs.
+        lay = layout or layout_for(fields)
         if len(fields) < 35:
             result.drop("malformed line")
             continue
@@ -322,12 +396,12 @@ def parse_lines(
         # CURATED deny-list reaches the place-names, which carry no type at
         # all and are indistinguishable from their countries on every other
         # column GDELT ships.
-        if not _is_state_actor(fields, _A1_CODE, _A1_NAME, _A1_TYPE1, _A1_GEO_TYPE, a1,
-                               _A1_GEO_COUNTRY):
+        if not _is_state_actor(fields, _A1_CODE, _A1_NAME, _A1_TYPE1, lay.a1_geo_type, a1,
+                               lay.a1_geo_country):
             result.drop("initiator is not the state itself")
             continue
-        if not _is_state_actor(fields, _A2_CODE, _A2_NAME, _A2_TYPE1, _A2_GEO_TYPE, a2,
-                               _A2_GEO_COUNTRY):
+        if not _is_state_actor(fields, _A2_CODE, _A2_NAME, _A2_TYPE1, lay.a2_geo_type, a2,
+                               lay.a2_geo_country):
             result.drop("target is not the state itself")
             continue
         if a1 in external_powers and a2 in external_powers:
@@ -372,8 +446,8 @@ def parse_lines(
         # THE ACTION'S COUNTRY, as ISO3 — '' when the row has none or the
         # crosswalk cannot place it. Not a graph property: it rides on the
         # corpus row for the co-participation reading and nowhere else.
-        geo = fields[_ACTION_GEO_COUNTRY] if len(fields) > _ACTION_GEO_COUNTRY else ""
-        events.append({
+        geo = fields[lay.action_geo_country] if len(fields) > lay.action_geo_country else ""
+        event = {
             "node_id": event_id,
             "name": f"{label}: {initiator['name']} → {target['name']}",
             "event_time": event_time,
@@ -394,7 +468,22 @@ def parse_lines(
             "actor1_type": fields[_A1_TYPE1].strip() if len(fields) > _A1_TYPE1 else "",
             "actor2_type": fields[_A2_TYPE1].strip() if len(fields) > _A2_TYPE1 else "",
             "num_sources": _int_or_none(fields[_SOURCES]) if len(fields) > _SOURCES else None,
-        })
+        }
+        # GDELT 1.0 has no publication timestamp. Keep the 2.0-only
+        # availability metadata on the stream/corpus row, where it can make a
+        # live decision, and strip it before a graph merge. This avoids
+        # claiming that an archive event was observable at its event date.
+        if lay.date_added is not None and len(fields) > lay.date_added:
+            available_at = _iso_timestamp(fields[lay.date_added].strip())
+            if available_at:
+                event["available_at"] = available_at
+        if lay.source_url is not None and len(fields) > lay.source_url:
+            source_url = fields[lay.source_url].strip()
+            if source_url:
+                event["source_url"] = source_url
+        if lay is V2:
+            event["mentions"] = _int_or_none(fields[_MENTIONS])
+        events.append(event)
         edges.append({"kind": "INITIATED_BY", "src": event_id,
                       "dst": initiator["node_id"], "source_id": SOURCE_GDELT})
         edges.append({"kind": "DIRECTED_AT", "src": event_id,
@@ -407,7 +496,10 @@ def parse_lines(
 #: Row keys the parser adds for the CORPUS reading that are not Event
 #: properties. `merge_nodes` only SETs ontology properties, so they would be
 #: ignored anyway; stripped explicitly so the graph write says what it writes.
-_CORPUS_ONLY = ("action_geo", "initiator_iso3", "target_iso3")
+_CORPUS_ONLY = (
+    "action_geo", "initiator_iso3", "target_iso3", "available_at", "source_url",
+    "mentions",
+)
 
 
 def write_events(

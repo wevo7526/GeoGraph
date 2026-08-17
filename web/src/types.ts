@@ -128,6 +128,55 @@ export interface WireFeed {
   method: string
 }
 
+export interface WireLiveMarketImpact {
+  ticker: string
+  market: string
+  median: number | null
+  p25: number | null
+  p75: number | null
+  n: number
+  share_positive: number | null
+  thin: boolean
+  action: 'trade' | 'watch' | 'stand_aside'
+  direction: 'long' | 'short' | 'flat'
+  expected_return: number | null
+  edge_after_cost: number | null
+  confidence: string
+  reason: string
+}
+
+export interface WireLiveItem {
+  node_id: string
+  event_time: string
+  available_at?: string | null
+  source_url?: string | null
+  name: string
+  cameo_code: string
+  quad_class: string | null
+  goldstein: number | null
+  initiator_id: string | null
+  target_id: string | null
+  dyad_id: string | null
+  initiator_name: string | null
+  target_name: string | null
+  mentions?: number | null
+  num_sources?: number | null
+  implied_kind: string
+  market_outlook: WireLiveMarketImpact[]
+}
+
+export interface WireLiveFeed {
+  region: string
+  published: string | null
+  fetched_at: string | null
+  scanned: number
+  kept: number
+  cached: boolean
+  rows: WireLiveItem[]
+  strategy: Record<string, unknown>
+  method: string
+}
+
 /** The globe board: three layers that answer three different questions.
  *  WHO EXISTS (`nodes` + `unplaced`), WHAT IS DECLARED (`links`), and WHAT
  *  JUST HAPPENED (`pulses`, the only layer that moves). */
@@ -1229,6 +1278,17 @@ export interface ResponseCell {
   thin?: boolean
 }
 
+export interface StrategySignal {
+  action: 'trade' | 'watch' | 'stand_aside'
+  direction: 'long' | 'short' | 'flat'
+  expected_return: number | null
+  edge_after_cost: number | null
+  n: number
+  thin: boolean
+  confidence: string
+  reason: string
+}
+
 export interface MarketStoryMarket {
   ticker: string
   name: string
@@ -1241,6 +1301,7 @@ export interface MarketStoryMarket {
    *  de-escalation · stable — the event's own Head B coding. */
   response: Record<string, Record<string, ResponseCell>>
   headline: (ResponseCell & { kind: string }) | null
+  strategy_signal?: StrategySignal
   first_mover_share: Record<string, number>
   biggest_moves: Array<{
     event_id: string
@@ -1266,6 +1327,12 @@ export interface MarketsStory {
   computed_at?: string
   persisted?: boolean
   markets: MarketStoryMarket[]
+  strategy?: Record<string, unknown>
+  market_impact?: Array<{
+    ticker: string
+    market: string
+    kind?: string | null
+  } & StrategySignal>
   forward: {
     as_of?: string
     computed_at?: string

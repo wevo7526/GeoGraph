@@ -19,6 +19,7 @@ from collections import defaultdict
 from typing import Any
 
 from core.graph import kuzu_store
+from core.reasoning import strategy
 
 #: An escalation whose magnitude — the departure from the pair's own baseline,
 #: in Goldstein points — clears this is SHARP: three points is the gap between
@@ -239,6 +240,10 @@ def story(
             "inception_date": market.get("inception_date"),
             "trading_calendar": market.get("trading_calendar"),
             **shape,
+            "strategy_signal": strategy.assess_cell(
+                shape.get("headline"),
+                transaction_cost_bps=strategy.ROUND_TRIP_COST_BPS,
+            ),
             "biggest_moves": (
                 biggest_moves(conn, ticker, pack.name, roster=roster)
                 if shape["measured"] else []
@@ -255,6 +260,10 @@ def story(
 
     forward = _forward_from_map(game_map)
     sovereign = _sovereign(flows)
+    impact = strategy.market_impact(
+        markets,
+        transaction_cost_bps=strategy.ROUND_TRIP_COST_BPS,
+    )
     payload = {
         # THE KEY AND THE CAPTION ARE DIFFERENT FIELDS. `region` is the pack
         # key — what every `region=` parameter takes and what every record
@@ -266,6 +275,8 @@ def story(
         "region_label": pack.label,
         "as_of": as_of,
         "markets": markets,
+        "market_impact": impact,
+        "strategy": strategy.strategy_contract(),
         "forward": forward,
         "duration": _trim_duration(
             duration, dyad_display_names(conn, _kept_duration_dyads(duration), dyad_names)
@@ -278,7 +289,10 @@ def story(
             "of the persisted game map; events are cut by Head B's escalation coding "
             f"(sharp = a departure of {SHARP_MAGNITUDE:g}+ Goldstein points from the "
             f"pair's own baseline); the headline window is {HEADLINE_WINDOW}; a cell "
-            f"under {MIN_CELL} measurements is flagged thin. Nothing here is modelled."
+            f"under {MIN_CELL} measurements is flagged thin. The strategy layer "
+            f"applies a fixed {strategy.ROUND_TRIP_COST_BPS:g} bps round-trip "
+            "hurdle and labels thin or sub-hurdle cells; it does not fit a "
+            "threshold to the resulting equity curve."
         ),
     }
     payload["explanation"] = explain(payload)

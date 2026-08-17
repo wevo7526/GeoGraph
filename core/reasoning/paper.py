@@ -24,11 +24,14 @@ from __future__ import annotations
 
 from typing import Any
 
+from core.reasoning import strategy
+
 NOTIONAL_USD = 1_000_000
 
 
 def method_for(
-    escalation_book: dict[str, float], reversion_book: dict[str, float]
+    escalation_book: dict[str, float], reversion_book: dict[str, float],
+    *, transaction_cost_bps: float = 0.0,
 ) -> str:
     """The rule, printed in full beside every result it produced."""
     def _side(book: dict[str, float]) -> str:
@@ -41,7 +44,8 @@ def method_for(
         f"with fixed books (escalation: {_side(escalation_book)}; "
         f"reversion: {_side(reversion_book)}); enter first close after the "
         "forecast's data cutoff, mark at latest close; P&L = "
-        "weight * notional * (mark/entry - 1). Mechanical, unfitted, not advice."
+        "weight * notional * (mark/entry - 1), less the declared round-trip "
+        f"cost of {transaction_cost_bps:g} bps. Mechanical, unfitted, not advice."
     )
 
 
@@ -88,6 +92,7 @@ def mark_book(
     *,
     entry_after: str,
     mark_through: str | None = None,
+    transaction_cost_bps: float = 0.0,
 ) -> dict[str, Any]:
     """Mark the book against panel series. Pure — testable exactly.
 
@@ -99,7 +104,10 @@ def mark_book(
     """
     positions: list[dict[str, Any]] = []
     total = 0.0
+    gross_total = 0.0
+    costs = 0.0
     deployed = 0.0
+    cost_rate = max(0.0, float(transaction_cost_bps)) / 10_000.0
     for ticker, weight in net.items():
         series = [
             row for row in series_by_ticker.get(ticker, [])
@@ -114,8 +122,15 @@ def mark_book(
             continue
         entry = float(series[0]["price"])
         mark = float(series[-1]["price"])
-        pnl = weight * NOTIONAL_USD * (mark / entry - 1.0)
+        gross_pnl = weight * NOTIONAL_USD * (mark / entry - 1.0)
+        # One entry and one exit. The caller can leave this at zero for the
+        # historical helper's compatibility path; the production backtest
+        # opts into the versioned strategy hurdle explicitly.
+        transaction_cost = abs(weight) * NOTIONAL_USD * 2.0 * cost_rate
+        pnl = gross_pnl - transaction_cost
         deployed += abs(weight) * NOTIONAL_USD
+        gross_total += gross_pnl
+        costs += transaction_cost
         total += pnl
         positions.append({
             "ticker": ticker,
@@ -125,11 +140,15 @@ def mark_book(
             "entry": entry,
             "mark_date": str(series[-1]["obs_date"]),
             "mark": mark,
+            "gross_pnl_usd": round(gross_pnl, 2),
+            "transaction_cost_usd": round(transaction_cost, 2),
             "pnl_usd": round(pnl, 2),
         })
     return {
         "notional_usd": NOTIONAL_USD,
         "deployed_usd": round(deployed, 2),
+        "gross_pnl_usd": round(gross_total, 2),
+        "transaction_cost_usd": round(costs, 2),
         "pnl_usd": round(total, 2),
         "return_on_notional": round(total / NOTIONAL_USD, 6),
         "positions": positions,

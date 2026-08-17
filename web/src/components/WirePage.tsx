@@ -21,11 +21,11 @@
  */
 import { useEffect, useState } from 'react'
 
-import { getWire, lastFailureFor } from '../api'
+import { getWire, getWireLive, lastFailureFor } from '../api'
 import { count, wireLede, wireRead } from '../lib/story'
 import { useRegionLabel } from '../regions'
-import type { WireFeed, WireItem } from '../types'
-import { Beat, Disclosure, Empty, StoryHead } from '../ui'
+import type { WireFeed, WireItem, WireLiveFeed } from '../types'
+import { Beat, Chip, Disclosure, Empty, StoryHead } from '../ui'
 import { Tiles } from './charts/Kit'
 
 /** A departure, at full width: when, how far, what happened, what it means.
@@ -78,11 +78,14 @@ export default function WirePage({
 }) {
   const label = useRegionLabel(region)
   const [feed, setFeed] = useState<WireFeed | null | undefined>(undefined)
+  const [liveFeed, setLiveFeed] = useState<WireLiveFeed | null | undefined>(undefined)
 
   useEffect(() => {
     let live = true
     setFeed(undefined)
+    setLiveFeed(undefined)
     getWire(region).then((r) => live && setFeed(r))
+    getWireLive(region).then((r) => live && setLiveFeed(r))
     return () => {
       live = false
     }
@@ -135,6 +138,41 @@ export default function WirePage({
         title={lede?.headline ?? `The newest events in ${label}`}
         standfirst={lede?.support}
       />
+
+      {liveFeed?.rows.length ? (
+        <Beat
+          title="What is actionable now"
+          major
+          aside="GDELT 2.0's newest 15-minute export, filtered to this region. A market is tradable only when its measured median clears both the sample floor and the declared round-trip cost hurdle; thin cells remain watch items."
+        >
+          {liveFeed.rows.slice(0, 8).map((item) => (
+            <article key={item.node_id} className="wire-entry">
+              <div className="ledger-row">
+                <time className="mono text-xs" style={{ color: 'var(--muted)' }}>{item.available_at ?? item.event_time}</time>
+                <span className="ledger-leader" aria-hidden="true" />
+                <span className="ledger-figure">{item.mentions ?? '—'} mentions</span>
+              </div>
+              <h3 className="wire-headline">{item.name}</h3>
+              {item.market_outlook.length ? (
+                <div className="scroll-x mt-2">
+                  <table className="rule-table" style={{ minWidth: 520 }}>
+                    <thead><tr><th className="text-left">market impact</th><th className="text-right">median</th><th className="text-right">edge after cost</th><th className="text-right">read</th></tr></thead>
+                    <tbody>{item.market_outlook.map((market) => (
+                      <tr key={market.ticker}>
+                        <td>{market.market} <span className="mono text-xs" style={{ color: 'var(--muted)' }}>{market.n} reactions</span></td>
+                        <td className="text-right mono">{market.median == null ? '—' : `${market.median >= 0 ? '+' : ''}${(market.median * 100).toFixed(2)}%`}</td>
+                        <td className="text-right mono">{market.edge_after_cost == null ? '—' : `${(market.edge_after_cost * 100).toFixed(2)}%`}</td>
+                        <td className="text-right"><Chip label={`${market.action} · ${market.direction}`} tone={market.action === 'trade' ? 'ink' : 'muted'} /></td>
+                      </tr>
+                    ))}</tbody>
+                  </table>
+                </div>
+              ) : <p className="figure-note">No measured market cell clears the live event&rsquo;s historical kind.</p>}
+            </article>
+          ))}
+          <p className="figure-note">{liveFeed.method}</p>
+        </Beat>
+      ) : null}
 
       <div className="mt-8">
         <Tiles

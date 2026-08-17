@@ -26,7 +26,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from core.reasoning import forecasting, paper
+from core.reasoning import forecasting, paper, strategy
 
 #: A quarter only trades when its base rate rests on at least this many
 #: episodes — a likelihood counted from three episodes is noise wearing a
@@ -61,6 +61,7 @@ def walk_forward(
     escalation_book: dict[str, float],
     reversion_book: dict[str, float],
     horizon_years: int = 3,
+    transaction_cost_bps: float = 0.0,
 ) -> dict[str, Any]:
     """The whole backtest, pure: dyad-event rows + panel series in, the
     quarterly ledger and its summary out. Deterministic — same archive, same
@@ -132,6 +133,7 @@ def walk_forward(
         marked = paper.mark_book(
             net, series_by_ticker,
             entry_after=cutoff, mark_through=mark_through,
+            transaction_cost_bps=transaction_cost_bps,
         )
         if marked["deployed_usd"] == 0:
             skipped.append({
@@ -168,6 +170,8 @@ def walk_forward(
             "escalation_likelihood": likelihood,
             "episodes": episodes,
             "pnl_usd": marked["pnl_usd"],
+            "gross_pnl_usd": marked["gross_pnl_usd"],
+            "transaction_cost_usd": marked["transaction_cost_usd"],
             "quarter_return": round(quarter_return, 6),
             "equity_usd": round(equity, 2),
             "positions": marked["positions"],
@@ -193,7 +197,11 @@ def walk_forward(
             "total_return": round(total_return, 6),
             "hit_rate": round(wins / len(ledger), 4) if ledger else None,
             "max_drawdown": round(max_drawdown, 6),
+            "transaction_cost_bps": round(float(transaction_cost_bps), 4),
         },
+        "strategy": strategy.strategy_contract(
+            transaction_cost_bps=transaction_cost_bps,
+        ),
         "method": (
             "walk-forward: each quarter end, forecast from events <= cutoff "
             "only (same estimator as live freezes), build the pack's paper "
@@ -201,6 +209,10 @@ def walk_forward(
             f"quarters with < {MIN_EPISODES} base-rate episodes, focal dyads "
             "below the standard episode bar, or any unenterable leg are "
             "recorded skips — only fully-entered books compound. "
-            + paper.method_for(escalation_book, reversion_book)
+            + paper.method_for(
+                escalation_book,
+                reversion_book,
+                transaction_cost_bps=transaction_cost_bps,
+            )
         ),
     }

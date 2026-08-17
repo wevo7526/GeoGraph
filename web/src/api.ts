@@ -1,6 +1,7 @@
 import type {
   GlobeBoard,
   WireFeed,
+  WireLiveFeed,
   CalibrationWalk,
   Assessment,
   BacktestLedger,
@@ -170,6 +171,11 @@ export const getWire = (region?: string, limit = 60) => {
   if (region) query.set('region', region)
   query.set('limit', String(limit))
   return get<WireFeed>(`/api/wire?${query}`)
+}
+
+export const getWireLive = (region: string, limit = 30) => {
+  const query = new URLSearchParams({ region, limit: String(limit) })
+  return get<WireLiveFeed>(`/api/wire/live?${query}`)
 }
 
 // The globe board. NOT memoised: the pulses are the live layer, and a shared
