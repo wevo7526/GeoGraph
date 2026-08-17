@@ -14,6 +14,13 @@
 # never meant. The window (`state_from`/`state_to`) is what makes them
 # queryable at the dates they existed.
 
+# What to CALL this lens. The pack is KEYED `eurasia` — that string is written
+# into every record's region_pack, into gdelt-eurasia-2025.tsv.gz and into the
+# deployed volume, so it stays put; the caption is the same word set as a name
+# rather than as a key, because prose renders it ("when eurasia escalates
+# sharply" is what a lower-cased key reads like in a sentence).
+region_label: Eurasia
+
 actors:
   # ── the external anchor ────────────────────────────────────────────────────
   - id: actor:cow-2

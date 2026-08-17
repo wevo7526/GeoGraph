@@ -6,6 +6,14 @@
 # the actors named here and invents none — the packs define the scope, and an
 # actor no pack names is pruned with everything hanging off it.
 
+# What to CALL this lens. The pack is KEYED `mena` — that string is written
+# into every record's region_pack, into gdelt-mena-2025.tsv.gz and into the
+# deployed volume, so it stays put. But `mena` is an internal acronym, not a
+# caption: the markets page read its payload's key straight into prose and
+# printed "when mena's coded record shows a sharp escalation". The reader is
+# owed the region's name.
+region_label: the Middle East
+
 actors:
   # ── states ─────────────────────────────────────────────────────────────────
   - id: actor:cow-2

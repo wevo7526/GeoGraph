@@ -54,7 +54,21 @@ REGION_DYADS = 12
 #: play named at 100%, because those rows also predate the belief ceiling that
 #: stopped a filtered belief reaching certainty. A persisted computation
 #: outlives the code that wrote it; the version is what makes that safe.
-PAYLOAD_VERSION = "2026-08-16.11"
+#:
+#: `2026-08-16.12` was a PROSE correction, and the version is how prose reaches
+#: the page: `explanation` is a persisted field, so a sentence fixed in this
+#: module keeps serving its old text out of Postgres until something re-solves.
+#: Fixed there: the region sentence named one concept twice ("under the QRE and
+#: the fitted QRE") and the posture clause read "is mixed record" while quoting
+#: a mean tone the archive has shown cannot characterise a pair.
+#:
+#: `2026-08-17.1` is the surface rewrite: BAND_LABELS became comparatives that
+#: survive being read inside a sentence, and two fields the reader's own words
+#: needed started travelling — `typical_band` (the line the headline
+#: probability counts above, without which a page cannot tell "breaks above"
+#: from "is still above") and `kind_sentence` (what a course kind MEANS, which
+#: `family.kind_words` had always carried and only the label ever left with).
+PAYLOAD_VERSION = "2026-08-17.1"
 
 #: A step's market row needs this many measurements before the scenario
 #: names it as an implication (the pricing module's own thinness bar).
@@ -69,9 +83,17 @@ _MARKET_MIN = pricing_module.MIN_MEASUREMENTS
 #: `opening.posture` (how its coded record READS lately — the coercive share
 #: of its events). Mean tone was the absolute read until it called two thirds
 #: of every region "friendly", the United States and China among them.
+#: THE WORDS ARE COMPARATIVES BECAUSE THEY ARE READ INSIDE SENTENCES
+#: (2026-08-17). The nouns they replace were exact and unusable in prose: the
+#: relationship page rendered "The most likely next move: both sides hold — a
+#: notable departure turn", which is not English, and a reader who met "sharp
+#: departure" in a headline had no way to know whether it was worse than a
+#: "rupture". A comparative carries the same relative meaning ("above this
+#: pair's own norm") and survives being dropped into a clause. The two ends
+#: keep their nouns: a rupture is a rupture at any baseline.
 BAND_LABELS = (
-    "at baseline", "mild departure", "notable departure",
-    "sharp departure", "rupture", "extreme rupture",
+    "at its norm", "a little above", "well above",
+    "far above", "rupture", "extreme rupture",
 )
 BAND_SEMANTICS = (
     "bands are departures from the pair's own baseline (relative friction, "
@@ -112,6 +134,30 @@ BOUNDARY_STATEMENT = (
     "are fitted at bounds and read as a direction; the LP's nash_gap says how "
     "far its welfare-maximal play is from a Nash point. Not advice."
 )
+
+
+#: WHAT EACH SOLVER IS, in a reader's words. `primary_solver` and `solvers`
+#: hold KEYS ("qre", "lp"), not captions, and the region sentence used to
+#: upper-case the key and then append a second clause naming a concept it had
+#: already named: "12 pairs solved under the QRE and the fitted QRE". The two
+#: stage concepts are the fitted quantal response (the estimator's own, and
+#: the default primary) and the LP correlated equilibrium; they are named once
+#: each, off `solvers` — what actually ran.
+SOLVER_WORDS = {
+    "qre": "the fitted quantal response",
+    "lp": "the LP correlated equilibrium",
+}
+
+
+def describe_solvers(solvers: list[str] | tuple[str, ...]) -> str:
+    """The stage concepts a solve ran under, listed once each. An unmapped
+    solver prints its own key rather than being dropped."""
+    words = [SOLVER_WORDS.get(str(s), f"the {str(s).upper()}") for s in solvers]
+    if not words:
+        return "no stage concept"
+    if len(words) == 1:
+        return words[0]
+    return ", ".join(words[:-1]) + " and " + words[-1]
 
 
 def band_label(band: int, bands: int) -> str:
@@ -333,6 +379,12 @@ def scenarios_for(
             # The family's own label for the kind — "free-riding" where an
             # adversary's course would read "one-sided pressure".
             "kind_label": family_module.kind_words(space.family, kind)[0],
+            # AND THE SENTENCE THAT SAYS WHAT IT MEANS. `kind_words` has always
+            # carried both; only the label travelled, so every reader surface
+            # had to print the raw course string ("escalate/escalate →
+            # de-escalate/de-escalate → …") to say what the kind actually was,
+            # or keep its own copy of this table.
+            "kind_sentence": family_module.kind_words(space.family, kind)[1],
             "family": space.family,
             "likelihood": round(likelihood, 4),
             "courses": int(slot["courses"]),
@@ -545,6 +597,14 @@ def solve_dyad(
         "bands": bands,
         "band_labels": [band_label(b, bands) for b in range(bands)],
         "band_semantics": BAND_SEMANTICS,
+        # THE BAND THE HEADLINE PROBABILITY COUNTS FROM, travelling with the
+        # probability. `sharp_departure_probability` is P(the pair ends the
+        # horizon ABOVE its own typical band), and a surface that does not know
+        # where that line sits cannot choose the right verb: US–Iran opens at
+        # band 3 with a fan drifting DOWN, so "25% that they see a sharper-
+        # than-usual departure" described a break the game expects to ease. A
+        # pair already above the line is being asked whether it is STILL there.
+        "typical_band": TYPICAL_BAND,
         "opening": {
             "intensity_band": band,
             "intensity_label": band_label(band, bands),
@@ -636,9 +696,36 @@ def describe_standing(opening: dict[str, Any]) -> str:
     return " and ".join(parts)
 
 
+#: HOW A POSTURE LABEL READS INSIDE A SENTENCE. The labels
+#: (`opening.POSTURE_EDGES`) are written as chips first and their grammar
+#: differs — "mostly talk" is a predicate, "mixed record" is a bare noun
+#: phrase — so no single connective serves both, and the sentence shipped as
+#: "their record over the last 4 quarters is mixed record". The phrase is the
+#: label plus whatever the grammar needs and nothing else; an unmapped label
+#: falls back to itself, and a test refuses a label with no entry so a new cut
+#: in `POSTURE_EDGES` cannot reintroduce the defect silently.
+POSTURE_PHRASES = {
+    "almost all talk": "almost all talk",
+    "mostly talk": "mostly talk",
+    "mixed record": "a mixed record",
+    "often coercive": "often coercive",
+    "mostly coercive": "mostly coercive",
+}
+
+
 def describe_posture(opening: dict[str, Any]) -> str:
     """How the CODED RECORD reads lately — a measurement with its sample
-    stated, so it can never be mistaken for the sentence above."""
+    stated, so it can never be mistaken for the sentence above.
+
+    MEAN TONE IS NOT IN THIS SENTENCE and must not return to it. It is the
+    mean Goldstein of the pair's coded events, which is dominated by the wire's
+    diplomacy volume: it called 65% of china's pairs, 64% of eurasia's and 51%
+    of mena's "friendly" or better, the United States and China among them at
+    +1.65 (see `tone_label`). Printing it beside the coercive share put a
+    number that reads as a verdict inside a clause whose whole point is that it
+    is not one. The share and its sample are the measurement; `tone` stays in
+    the payload for a reader who wants the raw sign.
+    """
     read = opening.get("posture") or {}
     if not read or read.get("thin") or read.get("share") is None:
         return (
@@ -646,14 +733,10 @@ def describe_posture(opening: dict[str, Any]) -> str:
             f"({int(read.get('events', 0))} coded events in the last "
             f"{int(read.get('quarters', 0))} quarters)"
         )
+    label = str(read["label"])
     return (
         f"their record over the last {int(read['quarters'])} quarters is "
-        f"{read['label']} ({_pct(float(read['share']))} of "
-        f"{int(read['events'])} coded interactions were coercive, mean tone "
-        f"{float(read['tone']):+.2f})"
-        if read.get("tone") is not None else
-        f"their record over the last {int(read['quarters'])} quarters is "
-        f"{read['label']} ({_pct(float(read['share']))} of "
+        f"{POSTURE_PHRASES.get(label, label)} ({_pct(float(read['share']))} of "
         f"{int(read['events'])} coded interactions were coercive)"
     )
 
@@ -941,7 +1024,8 @@ def region_map(
             ),
             "top_scenario": (
                 {k: top.get(k) for k in (
-                    "scenario_name", "kind", "kind_label", "likelihood", "courses",
+                    "scenario_name", "kind", "kind_label", "kind_sentence",
+                    "likelihood", "courses",
                     "lead_likelihood", "course", "end_label", "presser",
                 )}
                 if top else None
@@ -965,6 +1049,7 @@ def region_map(
                     "market_implications", "rationale",
                 )},
                 "kind_label": sc.get("kind_label"),
+                "kind_sentence": sc.get("kind_sentence"),
                 "tone_label": s["opening"].get("tone_label"),
                 "posture": s["opening"].get("posture"),
                 "standing": s["opening"].get("standing"),
@@ -1030,6 +1115,9 @@ def region_map(
         "bands": bands,
         "band_labels": [band_label(b, bands) for b in range(bands)],
         "band_semantics": BAND_SEMANTICS,
+        # The band the ranking's departure probability counts above — see the
+        # note on the per-dyad payload.
+        "typical_band": TYPICAL_BAND,
         "primary_solver": primary,
         "solvers": list(solvers),
         "concepts": {
@@ -1068,9 +1156,12 @@ def explain_region(aggregate: dict[str, Any]) -> list[str]:
         return ["No dyad in this region cleared the panel's modelling bar; nothing was solved."]
     hot = [r for r in ranking if (r["sharp_departure_probability"] or 0) >= 0.5]
     lead = ranking[0]
+    # THE CONCEPTS ARE NAMED ONCE, AND FROM `solvers` — what actually ran. An
+    # aggregate frozen before that field existed falls back to its primary.
+    solvers = aggregate.get("solvers") or [aggregate["primary_solver"]]
     out.append(
-        f"{aggregate['dyads_solved']} pairs solved under the {aggregate['primary_solver'].upper()} "
-        f"and the fitted QRE at their own opening states ({aggregate['dyads_cinc']} with "
+        f"{aggregate['dyads_solved']} pairs solved at their own opening states under "
+        f"{describe_solvers(solvers)} ({aggregate['dyads_cinc']} with "
         "CINC-measured "
         f"capability, {aggregate['dyads_tilted']} on a model-conditioned kernel). "
         # THE ORDERING IS ABSOLUTE and the sentence says so, because the

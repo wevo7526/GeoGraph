@@ -86,22 +86,39 @@ def market_rows(conn: Any, ticker: str, region_pack: str) -> list[dict[str, Any]
 
 
 def biggest_moves(
-    conn: Any, ticker: str, region_pack: str, *, limit: int = 8
+    conn: Any, ticker: str, region_pack: str, *, roster: set[str], limit: int = 8
 ) -> list[dict[str, Any]]:
-    """The events that moved this market most, at the headline window."""
+    """The events that moved this market most, at the headline window — OF
+    THIS REGION.
+
+    THE ROSTER IS PART OF THE FILTER, and leaving it out is what put
+    "Militarized dispute: South Korea – China" and "Russia – Ukraine (2008)"
+    under "the events that moved US 2-Year Treasury yield most" on MENA's
+    page. Deep-tier events carry `region_pack = ''` and ride with EVERY
+    region, which is right for a quantile — more measurements behind the same
+    median — and wrong for a named list, which is a claim about who did what
+    here. Region membership is `impact.dyad_coverage`'s rule, reused exactly:
+    an event counts for a pack when the pack's own wire coded it, or when it
+    is deep tier and the pack's roster holds BOTH of its actors. The actor
+    edges are the provenance invariant, so an event that cannot be placed is
+    dropped rather than guessed at.
+    """
+    if not roster:
+        return []
     rows = kuzu_store.query(
         conn,
-        "MATCH (e:Event)-[a:AFFECTED]->(m:Market {ticker: $ticker}) "
-        "WHERE (e.region_pack = $pack OR e.region_pack = '') AND a.window = $window "
-        "AND a.abnormal_return IS NOT NULL "
-        "OPTIONAL MATCH (e)-[:INITIATED_BY]->(i:Actor) "
-        "OPTIONAL MATCH (e)-[:DIRECTED_AT]->(t:Actor) "
+        "MATCH (i:Actor)<-[:INITIATED_BY]-(e:Event)-[:DIRECTED_AT]->(t:Actor), "
+        "(e)-[a:AFFECTED]->(m:Market {ticker: $ticker}) "
+        "WHERE (e.region_pack = $pack OR e.region_pack = '') "
+        "AND i.node_id IN $roster AND t.node_id IN $roster "
+        "AND a.window = $window AND a.abnormal_return IS NOT NULL "
         "RETURN e.node_id AS event_id, e.name AS name, e.event_time AS date, "
         "e.escalation_direction AS direction, e.escalation_magnitude AS magnitude, "
         "i.name AS initiator, t.name AS target, a.abnormal_return AS ar, "
         "a.first_mover AS first_mover "
         "ORDER BY abs(a.abnormal_return) DESC LIMIT $limit",
-        {"ticker": ticker, "pack": region_pack, "window": HEADLINE_WINDOW, "limit": limit},
+        {"ticker": ticker, "pack": region_pack, "window": HEADLINE_WINDOW,
+         "roster": sorted(roster), "limit": limit},
     )
     return [
         {
@@ -173,6 +190,7 @@ def story(
 ) -> dict[str, Any]:
     """The whole markets story for one region — assembled from measured
     effects, the persisted game map, the curve report and the SWF flows."""
+    roster = {str(actor["id"]) for actor in pack.actors}
     markets: list[dict[str, Any]] = []
     for market in pack.markets:
         ticker = str(market["ticker"])
@@ -185,7 +203,10 @@ def story(
             "inception_date": market.get("inception_date"),
             "trading_calendar": market.get("trading_calendar"),
             **shape,
-            "biggest_moves": biggest_moves(conn, ticker, pack.name) if shape["measured"] else [],
+            "biggest_moves": (
+                biggest_moves(conn, ticker, pack.name, roster=roster)
+                if shape["measured"] else []
+            ),
         })
     # RANKED BY THE HEADLINE: how far a sharp escalation moves the market at
     # the headline window, largest |median| first — the transmission map's
@@ -199,11 +220,20 @@ def story(
     forward = _forward_from_map(game_map)
     sovereign = _sovereign(flows)
     payload = {
+        # THE KEY AND THE CAPTION ARE DIFFERENT FIELDS. `region` is the pack
+        # key — what every `region=` parameter takes and what every record
+        # carries in `region_pack` — and the prose below used to render it, so
+        # the page said "when mena's coded record shows a sharp escalation".
+        # `region_label` is what the pack itself declares it should be CALLED
+        # (`Pack.label` ← `region_label` in its actors.yaml).
         "region": pack.name,
+        "region_label": pack.label,
         "as_of": as_of,
         "markets": markets,
         "forward": forward,
-        "duration": _trim_duration(duration, dyad_names),
+        "duration": _trim_duration(
+            duration, dyad_display_names(conn, _kept_duration_dyads(duration), dyad_names)
+        ),
         "sovereign_capital": sovereign,
         "coverage": coverage,
         "method": (
@@ -268,6 +298,65 @@ def _forward_from_map(game_map: dict[str, Any] | None) -> dict[str, Any] | None:
     }
 
 
+#: What a duration row is called when NEITHER side resolves to an actor the
+#: graph names. Never the key: `dyad:cow-365--cow-372` is an internal id and
+#: the page printed it as if it were a pair of countries.
+UNNAMED_DYAD = "a pair the graph holds no names for"
+
+#: Duration rows the payload keeps: the ones the curve could actually read.
+_DURATION_ROWS = 8
+
+
+def _kept_duration_dyads(duration: dict[str, Any] | None) -> list[str]:
+    """The dyad ids of the rows `_trim_duration` will keep — so names are
+    resolved for exactly those, and the two selections cannot drift apart."""
+    return [
+        str(d.get("dyad_id") or "")
+        for d in (duration or {}).get("dyads") or [] if not d.get("thin")
+    ][:_DURATION_ROWS]
+
+
+def dyad_display_names(
+    conn: Any, dyad_ids: list[str], known: dict[str, str] | None = None
+) -> dict[str, str]:
+    """dyad_id → a human name, for the rows the panel's summary never named.
+
+    THE DURATION REPORT IS KEYED BY DYADS RECONSTRUCTED FROM THE ACTOR EDGES
+    (`pricing.dyad_of_event`), so it holds pairs the modelled panel does not —
+    and those rows arrived with no `dyad_name` and printed their raw id. A dyad
+    id IS the sorted actor pair (`escalation.dyad_id`), so the names are one
+    Actor read away; ONE query for every unnamed row together, because under a
+    writing loop a request's latency is its query COUNT, not its query cost.
+    """
+    from core.games import opening as opening_module
+
+    out = dict(known or {})
+    wanted = {
+        dyad: opening_module.dyad_actors(dyad)
+        for dyad in dyad_ids if dyad and not out.get(dyad)
+    }
+    if not wanted:
+        return out
+    ids = sorted({actor for pair in wanted.values() for actor in pair})
+    rows = kuzu_store.query(
+        conn,
+        "MATCH (a:Actor) WHERE a.node_id IN $ids RETURN a.node_id AS node_id, a.name AS name",
+        {"ids": ids},
+    )
+    names = {str(r["node_id"]): str(r["name"]) for r in rows if r["name"]}
+    for dyad, (left, right) in wanted.items():
+        a, b = names.get(left), names.get(right)
+        if a and b:
+            # The corpus's own construction (`wire/corpus.py`), so a resolved
+            # name splits back into sides the same way everywhere.
+            out[dyad] = f"{a}–{b}"
+        elif a or b:
+            out[dyad] = f"{a or b} and a side the graph does not name"
+        else:
+            out[dyad] = UNNAMED_DYAD
+    return out
+
+
 def _trim_duration(
     duration: dict[str, Any] | None, names: dict[str, str] | None = None
 ) -> dict[str, Any] | None:
@@ -279,9 +368,9 @@ def _trim_duration(
         "tenors_measured": duration.get("tenors_measured"),
         "usable_dyads": duration.get("usable_dyads"),
         "dyads": [
-            {**d, "dyad_name": names.get(str(d.get("dyad_id")), str(d.get("dyad_id")))}
+            {**d, "dyad_name": names.get(str(d.get("dyad_id")), UNNAMED_DYAD)}
             for d in (duration.get("dyads") or []) if not d.get("thin")
-        ][:8],
+        ][:_DURATION_ROWS],
         "calibration": duration.get("calibration"),
         "note": duration.get("note"),
         "method": duration.get("method"),
@@ -331,7 +420,10 @@ def _pct(x: float) -> str:
 
 def explain(payload: dict[str, Any]) -> list[str]:
     """Paragraphs written from the payload's own fields."""
-    region = payload["region"]
+    # THE CAPTION, NOT THE KEY. `region` is `mena`; what a reader is owed is
+    # what the pack calls itself. A payload frozen before the label existed
+    # falls back to the key rather than to nothing.
+    region = payload.get("region_label") or payload["region"]
     out: list[str] = []
     headlined = [m for m in payload["markets"] if m.get("headline")]
     if headlined:
@@ -379,7 +471,7 @@ def explain(payload: dict[str, Any]) -> list[str]:
     if dur.get("dyads"):
         d = max(dur["dyads"], key=lambda r: float(r.get("implied_persistence") or 0.0))
         out.append(
-            f"The yield curve's read on duration: {d.get('dyad_name') or d.get('dyad_id')} "
+            f"The yield curve's read on duration: {d.get('dyad_name') or UNNAMED_DYAD} "
             f"carries the largest long-end share of the curve's response "
             f"({float(d.get('implied_persistence', 0.0)):.0%} at the 10Y over {d.get('n', 0)} "
             "events) — the shape of a crisis markets expect to last."

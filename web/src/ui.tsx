@@ -35,7 +35,18 @@ export function StoryHead({
   )
 }
 
-/** A numbered working-paper beat, ruled off from the last. */
+/** A working-paper beat, ruled off from the last.
+ *
+ *  THE ASIDE SITS UNDER THE TITLE, NOT BESIDE IT. It used to share the
+ *  headline's flex row with `margin-left:auto`, and a long aside then squeezed
+ *  the h2 into two lines on every page that had one — "Where coercion is being
+ *  / measured", "The transmission / map", "The paper / book". A subhead is also
+ *  what the aside actually is: it explains what the beat measures, in a
+ *  sentence, which is a serif job rather than an 11px monospace one.
+ *
+ *  NUMBERING IS OPTIONAL AND MEANS SEQUENCE. A numbered beat says "this is
+ *  step n of a walk the reader takes in order"; most pages are not that, so
+ *  `n` is passed only where the order carries information. */
 export function Beat({
   n,
   title,
@@ -52,9 +63,13 @@ export function Beat({
   return (
     <section className={major ? 'beat beat--major' : 'beat'}>
       <div className="beat-head">
-        {n !== undefined && <span className="kicker" style={{ color: 'var(--accent)' }}>{`0${n}`.slice(-2)}</span>}
-        <h2>{title}</h2>
-        {aside && <span className="mono text-[11px]" style={{ color: 'var(--muted)', marginLeft: 'auto' }}>{aside}</span>}
+        <div className="beat-title">
+          {n !== undefined && (
+            <span className="kicker" style={{ color: 'var(--accent)' }}>{`0${n}`.slice(-2)}</span>
+          )}
+          <h2>{title}</h2>
+        </div>
+        {aside && <p className="beat-aside">{aside}</p>}
       </div>
       {children}
     </section>
@@ -133,9 +148,9 @@ export function Chip({ label, tone }: { label: string; tone?: 'good' | 'bad' | '
   return <span className={cls}>{label}</span>
 }
 
-export function toneOf(label: string | undefined | null): 'good' | 'bad' | 'muted' {
-  if (!label) return 'muted'
-  if (label === 'cooperative' || label === 'friendly') return 'good'
-  if (label === 'strained' || label === 'hostile' || label === 'conflictual') return 'bad'
-  return 'muted'
-}
+// `toneOf` lived here: it turned the wire's mean-Goldstein `tone_label`
+// ("friendly", "strained") into a colour. Removed 2026-08-17 with its last
+// caller. That label ranks pairs by how much they TALK — it scored the United
+// States and China, a declared rivalry, as "friendly" — and core/games/
+// scenarios.py says in as many words that nothing user-facing may present it as
+// a characterisation. What a pair IS comes from its declared standing.

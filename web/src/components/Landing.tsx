@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
-import { getEvents, getForecast, getForecasts, getHealth, getPacks, getRegionMap, getStats } from '../api'
+import { getEvents, getHealth, getPacks, getRegionMap, getStats } from '../api'
 import type { GraphEvent, Health, RegionMap, Stats } from '../types'
-import { pct } from './charts/Kit'
+import { courseInWords, standingPhrase } from '../lib/story'
 
 /** The front door, cut to the bone (2026-08-15): masthead, headline, three
  *  live region tiles — one figure each, the frozen near-term call, and the
@@ -9,11 +9,27 @@ import { pct } from './charts/Kit'
  *  ticker, one line of archive figures, one door. No paragraphs. Every
  *  number is served and has a page behind it; a tile is the way in. */
 
+/** THE TILE LEADS WITH THE PAIR AND ITS COURSE, not with a probability.
+ *
+ *  It used to lead with the near-term escalation call — 99% for Asia — and the
+ *  platform's own calibration walk says that question's base rate since 2005 is
+ *  0.97: "does a focal pair escalate again within three years" is very nearly
+ *  "yes, always". A front door whose one number is a near-certainty advertises
+ *  a machine predicting what is already known. Beneath it sat `tone_label`,
+ *  which scored the United States and China — a declared rivalry — "friendly",
+ *  and which core/games/scenarios.py says in as many words must never
+ *  characterise a pair. Both are gone: the tile now carries the region's most
+ *  coercive pair, the course the game puts most mass on in that pair's own
+ *  words, and the count behind the ranking. */
 type Tile = {
   key: string
   label: string
-  escalation: number | null
-  lead: { name: string; p: number; label: string; tone: string } | null
+  lead: {
+    name: string
+    course: string | null
+    coercive: number | null
+    standing: string | null
+  } | null
 }
 
 export default function Landing({ onEnter }: { onEnter: (route: string) => void }) {
@@ -36,23 +52,18 @@ export default function Landing({ onEnter }: { onEnter: (route: string) => void 
       const labels = r?.labels ?? {}
       const built = await Promise.all(
         keys.map(async (key): Promise<Tile> => {
-          const [forecasts, map] = await Promise.all([getForecasts(key), getRegionMap(key)])
-          const near = forecasts?.rows.find((f) => f.mode === 'near_term')
-          let escalation: number | null = null
-          if (near) {
-            const detail = await getForecast(near.node_id)
-            const ls = (detail?.scenarios ?? [])
-              .filter((s) => s.scenario_name.startsWith('further_escalation') && s.likelihood != null)
-              .map((s) => s.likelihood as number)
-            escalation = ls.length ? ls.reduce((a, b) => a + b, 0) / ls.length : null
-          }
+          const map = await getRegionMap(key)
           const top: RegionMap['ranking'][number] | undefined = map?.ranking?.[0]
           return {
             key,
             label: labels[key] ?? key,
-            escalation,
             lead: top
-              ? { name: top.dyad_name, p: top.sharp_departure_probability, label: top.opening_label, tone: top.tone_label ?? 'unread' }
+              ? {
+                  name: top.dyad_name,
+                  course: courseInWords(top.top_scenario, top.family),
+                  coercive: top.coercive_events ?? null,
+                  standing: standingPhrase(top.standing),
+                }
               : null,
           }
         }),
@@ -98,23 +109,26 @@ export default function Landing({ onEnter }: { onEnter: (route: string) => void 
                 onClick={() => t.label && enter('/games', t.key)}
                 aria-label={t.label ? `Enter ${t.label}` : 'loading'}
               >
-                <span className="text-lg" style={{ fontVariantCaps: 'small-caps', letterSpacing: '0.12em' }}>{t.label || ' '}</span>
-                <span className="figure text-6xl leading-none" style={{ color: t.escalation != null && t.escalation >= 0.5 ? 'var(--alert)' : 'var(--text)' }}>
-                  {t.escalation != null ? pct(t.escalation, 0) : t.label ? '—' : ' '}
-                </span>
-                <span className="kicker">near-term escalation call</span>
+                <span className="text-lg" style={{ fontVariantCaps: 'small-caps', letterSpacing: '0.12em' }}>{t.label || ' '}</span>
                 {t.lead ? (
-                  <span className="mt-2 block">
-                    <span className="text-sm block truncate">{t.lead.name}</span>
-                    <span className="relative block h-1.5 mt-1" style={{ background: 'var(--panel)' }}>
-                      <span className="absolute inset-y-0 left-0" style={{ width: `${t.lead.p * 100}%`, background: t.lead.p >= 0.5 ? 'var(--alert)' : 'var(--accent)' }} />
+                  <>
+                    <span className="block text-3xl leading-tight" style={{ letterSpacing: '-0.015em' }}>
+                      {t.lead.name}
                     </span>
-                    <span className="mono text-[11px] block mt-1" style={{ color: 'var(--muted)' }}>
-                      solved game · {t.lead.tone} · {pct(t.lead.p, 0)} for sharper-than-usual friction
+                    {t.lead.standing && (
+                      <span className="block text-sm" style={{ color: 'var(--muted)' }}>{t.lead.standing}</span>
+                    )}
+                    <span className="block text-base">{t.lead.course ?? 'no course named yet'}</span>
+                    <span className="mono text-[11px] block mt-auto pt-3" style={{ color: 'var(--muted)' }}>
+                      {t.lead.coercive != null
+                        ? `${t.lead.coercive.toLocaleString('en-US')} COERCIVE ACTS IN THE LAST YEAR`
+                        : 'THE REGION’S MOST ACTIVE PAIR'}
                     </span>
-                  </span>
+                  </>
                 ) : (
-                  <span className="mt-2 block h-12" />
+                  <span className="block text-3xl leading-tight" style={{ color: 'var(--muted)' }}>
+                    {t.label ? 'solving…' : ' '}
+                  </span>
                 )}
               </button>
             ))}

@@ -445,6 +445,390 @@ export function PayoffMatrix({
   )
 }
 
+// ── the four figures the game and the market pages were missing ─────────────
+//
+// What the game had until 2026-08-17: a table of percentages in cells, a 12×4
+// table of expected bands to two decimals, a payoff matrix, and two line charts
+// that on the default view drew flat lines at 100% and 0%. What the market had:
+// bars of the median, all six within half a percent of each other, while the
+// payload's interquartile ranges ran −1.9% to +3.9%. Neither page had a picture
+// of the thing it is about. These four are that picture, and each replaces
+// something the pages were printing as a table.
+
+/** The band a distribution's `p`-th quantile falls in, treating band i as
+ *  spanning [i−0.5, i+0.5] so the ribbon is smooth rather than a staircase. */
+function bandQuantile(dist: number[], p: number): number {
+  let cumulative = 0
+  for (let i = 0; i < dist.length; i++) {
+    const mass = dist[i]
+    if (mass <= 0) continue
+    if (cumulative + mass >= p) return i - 0.5 + (p - cumulative) / mass
+    cumulative += mass
+  }
+  return dist.length - 1
+}
+
+/** THE FAN, AS A FAN — the forecast's own shape, replacing `BandHeat`'s grid of
+ *  percentages and the "expected band by quarter: 2.41 → 2.28 → 2.26 → 2.23"
+ *  line under it. A reader cannot see a trajectory in a table of cells; the
+ *  whole claim of the game is where a pair sits now, where the mass moves, and
+ *  how wide the uncertainty is around it.
+ *
+ *  The two shades are the middle 50% and 80% of the game's mass, the line is
+ *  the median course, the dot is where the pair opens, and the dashed rule is
+ *  the band the headline probability counts above — so the number in the call
+ *  and the picture are visibly the same claim. */
+export function FanRibbon({
+  marginal,
+  bandLabels,
+  openingBand,
+  typicalBand,
+  height = 250,
+  width = 820,
+}: {
+  marginal: number[][]
+  bandLabels: string[]
+  openingBand: number
+  typicalBand?: number
+  height?: number
+  width?: number
+}) {
+  if (!marginal.length || !bandLabels.length) return <EmptyNote note="no fan to draw" />
+  const gutter = 150
+  const pad = { top: 16, right: 18, bottom: 26 }
+  const plotW = width - gutter - pad.right
+  const plotH = height - pad.top - pad.bottom
+  const bands = bandLabels.length
+  // Band 0 at the bottom: up the page is more departure, which is the direction
+  // the alert hue means everywhere else on the surface.
+  const py = (band: number) =>
+    pad.top + plotH - ((band + 0.5) / bands) * plotH
+  const px = (i: number) => gutter + (i / marginal.length) * plotW
+
+  const quantiles = marginal.map((dist) => ({
+    p10: bandQuantile(dist, 0.1),
+    p25: bandQuantile(dist, 0.25),
+    p50: bandQuantile(dist, 0.5),
+    p75: bandQuantile(dist, 0.75),
+    p90: bandQuantile(dist, 0.9),
+  }))
+  // The ribbon starts AT the opening band — a fan that begins spread at period
+  // one implies uncertainty about where the pair is now, which is measured.
+  const ribbon = (lo: 'p10' | 'p25', hi: 'p90' | 'p75') =>
+    [
+      `M${px(0)},${py(openingBand)}`,
+      ...quantiles.map((q, i) => `L${px(i + 1)},${py(q[hi])}`),
+      ...[...quantiles].reverse().map((q, i) =>
+        `L${px(quantiles.length - i)},${py(q[lo])}`),
+      'Z',
+    ].join(' ')
+
+  return (
+    <svg viewBox={`0 0 ${width} ${height}`} width="100%" role="img"
+         aria-label="the fan: where this pair's departure from its own baseline is heading">
+      {bandLabels.map((label, i) => (
+        <g key={label + i}>
+          <line x1={gutter} x2={width - pad.right} y1={py(i)} y2={py(i)}
+                stroke="var(--line)" strokeWidth={1} strokeDasharray="2 4" />
+          <text x={gutter - 10} y={py(i) + 3.5} textAnchor="end" fontSize={11}
+                fill="var(--muted)" fontFamily="Georgia, serif">
+            {label}
+          </text>
+        </g>
+      ))}
+      {typicalBand !== undefined && typicalBand + 1 < bands && (
+        <line x1={gutter} x2={width - pad.right}
+              y1={py(typicalBand + 0.5)} y2={py(typicalBand + 0.5)}
+              stroke="var(--alert)" strokeWidth={1} strokeDasharray="5 4" />
+      )}
+      <path d={ribbon('p10', 'p90')} fill="var(--accent)" opacity={0.12} />
+      <path d={ribbon('p25', 'p75')} fill="var(--accent)" opacity={0.26} />
+      <path
+        d={[
+          `M${px(0)},${py(openingBand)}`,
+          ...quantiles.map((q, i) => `L${px(i + 1)},${py(q.p50)}`),
+        ].join(' ')}
+        fill="none" stroke="var(--accent)" strokeWidth={2.25} strokeLinejoin="round"
+      />
+      <circle cx={px(0)} cy={py(openingBand)} r={5} fill="var(--alert)"
+              stroke="var(--ground)" strokeWidth={2} />
+      <text x={px(0)} y={height - 8} textAnchor="middle" className="mono" fontSize={10}
+            fill="var(--muted)">now</text>
+      {quantiles.map((_, i) => (
+        <text key={i} x={px(i + 1)} y={height - 8} textAnchor="middle" className="mono"
+              fontSize={10} fill="var(--muted)">
+          +{i + 1}q
+        </text>
+      ))}
+    </svg>
+  )
+}
+
+/** ONE COURSE OF PLAY, AS TWO LANES — replacing the machine string the pages
+ *  printed twenty times ("130 courses, modal withhold/withhold →
+ *  withhold/withhold → withhold/withhold → withhold/withhold") and the mono
+ *  step table under each scenario.
+ *
+ *  Colour is the action's PLACE in the family's own action space, never a
+ *  hardcoded word: index 2 presses (escalate, or withhold) and takes the alert,
+ *  index 0 concedes (de-escalate, or commit) and takes the accent. The beliefs
+ *  row is the strip's second line rather than a separate chart, because what a
+ *  side believes is a property of the step it is taking. */
+const SHORT_ACTION: Record<string, string> = {
+  'de-escalate': 'step back',
+  escalate: 'escalate',
+  hold: 'hold',
+  commit: 'commit',
+  affirm: 'affirm',
+  withhold: 'withhold',
+  press: 'press',
+  ease: 'ease',
+}
+
+export function CourseStrip({
+  steps,
+  sides,
+  actions,
+  typeName,
+}: {
+  steps: Array<{
+    period: number
+    action_a: string
+    action_b: string
+    belief_a?: number
+    belief_b?: number
+  }>
+  sides: [string, string]
+  actions?: string[]
+  typeName?: string
+}) {
+  if (!steps.length) return <EmptyNote note="no course to draw" />
+  const order = actions ?? ['de-escalate', 'hold', 'escalate']
+  const tone = (action: string) => {
+    const i = order.indexOf(action)
+    return i === 2 ? 'var(--alert)' : i === 0 ? 'var(--accent)' : 'var(--muted)'
+  }
+  const hasBeliefs = steps.some((s) => s.belief_a !== undefined)
+  return (
+    <div className="scroll-x">
+      <table className="course-strip">
+        <thead>
+          <tr>
+            <th />
+            {steps.map((s) => (
+              <th key={s.period} className="kicker">+{s.period}q</th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {([0, 1] as const).map((side) => (
+            <tr key={side}>
+              <th scope="row">{sides[side]}</th>
+              {steps.map((s) => {
+                const action = side === 0 ? s.action_a : s.action_b
+                return (
+                  <td key={s.period}>
+                    <span className="course-cell" style={{ background: tone(action) }}>
+                      {SHORT_ACTION[action] ?? action}
+                    </span>
+                  </td>
+                )
+              })}
+            </tr>
+          ))}
+          {hasBeliefs && (
+            <tr className="course-beliefs">
+              <th scope="row">
+                each reads the other as {typeName ?? 'resolute'}
+              </th>
+              {steps.map((s) => (
+                <td key={s.period} className="mono">
+                  {s.belief_a !== undefined ? pct(s.belief_a, 0) : '—'}
+                </td>
+              ))}
+            </tr>
+          )}
+        </tbody>
+      </table>
+    </div>
+  )
+}
+
+/** THE MATCHUP — replacing four tiles that answered nothing ("capability band
+ *  0 · CINC ratio 0.13", "beliefs (resolute) 90% / 90%", "opening departure ·
+ *  latest 16.94 vs the pair's scale 10.54", "kernel · dynamics-mena@bd86fa…").
+ *
+ *  Every figure here is the SAME FIELD as the tile it replaces. The difference
+ *  is that a label is the reader's question and the value is its answer: a
+ *  capability ratio of 0.13 is "about an eighth", and a hash belongs in a title
+ *  attribute rather than on the page. */
+export function Matchup({
+  sides,
+  standing,
+  posture,
+  capability,
+  beliefs,
+  typeName,
+  opening,
+  kernel,
+}: {
+  sides: [string, string]
+  standing: string | null
+  posture: string | null
+  capability: { ratio?: number | null; source: string }
+  beliefs: { a: number; b: number; source: string; quarters_observed?: number }
+  typeName: string
+  opening: { label: string; latest: number; scale: number; band: number; typical: number }
+  kernel: { own: boolean; model?: string | null }
+}) {
+  const ratio = capability.ratio ?? null
+  // "About eight times" reads; "0.1324" is the same fact in the estimator's
+  // units. min/max, so the stronger side is always the multiple.
+  const multiple = ratio && ratio > 0 ? 1 / ratio : null
+  const strongerIsA = true
+  const share = ratio != null ? 1 / (1 + ratio) : 0.5
+  const swing = opening.scale > 0 ? opening.latest / opening.scale : null
+
+  return (
+    <div className="matchup">
+      <div className="matchup-side">{sides[0]}</div>
+      <div className="matchup-vs kicker">vs</div>
+      <div className="matchup-side matchup-side--right">{sides[1]}</div>
+
+      {(standing || posture) && (
+        <p className="matchup-span">
+          {[standing, posture].filter(Boolean).join(' · ')}
+        </p>
+      )}
+
+      {multiple !== null ? (
+        <>
+          <div className="matchup-figure">about {multiple.toFixed(0)}×</div>
+          <div className="matchup-label kicker">material capability</div>
+          <div className="matchup-figure matchup-figure--right">1×</div>
+          <div className="matchup-bar" aria-hidden="true">
+            <span style={{ width: `${(strongerIsA ? share : 1 - share) * 100}%` }} />
+            <span style={{ width: `${(strongerIsA ? 1 - share : share) * 100}%` }} />
+          </div>
+        </>
+      ) : (
+        <p className="matchup-span">
+          No capability estimate for either side, so the game opens them even.
+        </p>
+      )}
+
+      <div className="matchup-figure">{pct(beliefs.a, 0)}</div>
+      <div className="matchup-label kicker">reads the other as {typeName}</div>
+      <div className="matchup-figure matchup-figure--right">{pct(beliefs.b, 0)}</div>
+
+      <p className="matchup-span">
+        <strong>
+          {opening.band > opening.typical
+            ? 'Opens above its own usual level'
+            : 'Opens at its own usual level'}
+        </strong>
+        {swing ? ` — this quarter's departure is ${swing.toFixed(1)}× the pair's usual swing` : ''}
+        {beliefs.source === 'bayes_filter' && beliefs.quarters_observed
+          ? `. Beliefs filtered from ${beliefs.quarters_observed} observed quarters`
+          : ''}
+        {kernel.own ? '. Solved on this pair’s own transition table' : '. Solved on the region’s counted transition table'}
+        <span className="matchup-provenance" title={kernel.model ?? undefined}>.</span>
+      </p>
+    </div>
+  )
+}
+
+/** THE TRANSMISSION MAP, WITH ITS SPREAD — replacing bars of the median.
+ *
+ *  MENA's medians all sit within half a percent of zero; the middle half of
+ *  outcomes for the same cells runs −1.9% to +3.9% (2-year) and −1.4% to +7.0%
+ *  (Dubai). Bars of the median drew six near-identical stubs and hid both the
+ *  dispersion and the fact that the median is barely distinguishable from
+ *  nothing. Dot-and-whisker says all of it at once, and thin cells are drawn in
+ *  grey rather than dropped — an absent measurement is a fact too. */
+export function DotWhisker({
+  rows,
+  format = (v: number) => `${v >= 0 ? '+' : '−'}${Math.abs(v * 100).toFixed(2)}%`,
+  onPick,
+  height,
+}: {
+  rows: Array<{
+    key: string
+    label: string
+    median: number
+    p25: number
+    p75: number
+    n: number
+    thin?: boolean
+  }>
+  format?: (v: number) => string
+  onPick?: (key: string) => void
+  height?: number
+}) {
+  const [hover, setHover] = useState<string | null>(null)
+  if (!rows.length) return <EmptyNote note="nothing measured yet" />
+  const gutter = 170
+  const width = 760
+  const rowH = 27
+  const pad = { top: 22, bottom: 24, right: 62 }
+  const h = height ?? pad.top + rows.length * rowH + pad.bottom
+  const span = Math.max(
+    ...rows.map((r) => Math.max(Math.abs(r.p25), Math.abs(r.p75), Math.abs(r.median))),
+    0.005,
+  )
+  const plotW = width - gutter - pad.right
+  const x = (v: number) => gutter + ((v + span) / (2 * span)) * plotW
+  const y = (i: number) => pad.top + i * rowH + rowH / 2
+  const ticks = [-span, -span / 2, 0, span / 2, span]
+
+  return (
+    <div className="scroll-x">
+      <svg viewBox={`0 0 ${width} ${h}`} width="100%" role="img"
+           aria-label="measured market response by market: median and the middle half of outcomes">
+        {ticks.map((t) => (
+          <g key={t}>
+            <line x1={x(t)} x2={x(t)} y1={pad.top - 6} y2={h - pad.bottom}
+                  stroke={t === 0 ? 'var(--rule-strong)' : 'var(--line)'}
+                  strokeWidth={1} strokeDasharray={t === 0 ? undefined : '2 4'} />
+            <text x={x(t)} y={pad.top - 11} textAnchor="middle" className="mono"
+                  fontSize={10} fill="var(--muted)">
+              {t === 0 ? '0' : `${t > 0 ? '+' : '−'}${Math.abs(t * 100).toFixed(1)}%`}
+            </text>
+          </g>
+        ))}
+        {rows.map((r, i) => {
+          const ink = r.thin ? 'var(--muted)' : r.median >= 0 ? 'var(--accent)' : 'var(--alert)'
+          const band = r.thin ? 'var(--line)' : 'var(--accent)'
+          return (
+            <g key={r.key} onMouseEnter={() => setHover(r.key)} onMouseLeave={() => setHover(null)}
+               onClick={onPick ? () => onPick(r.key) : undefined}
+               style={{ cursor: onPick ? 'pointer' : 'default' }}>
+              <rect x={0} y={y(i) - rowH / 2} width={width} height={rowH}
+                    fill={hover === r.key ? 'var(--panel)' : 'transparent'} />
+              <text x={gutter - 12} y={y(i) + 4} textAnchor="end" fontSize={12.5}
+                    fill={r.thin ? 'var(--muted)' : 'var(--text)'} fontFamily="Georgia, serif">
+                {r.label}{r.thin ? ' (thin)' : ''}
+              </text>
+              <line x1={x(r.p25)} x2={x(r.p75)} y1={y(i)} y2={y(i)}
+                    stroke={band} strokeWidth={6} opacity={r.thin ? 0.5 : 0.32}
+                    strokeLinecap="butt" />
+              <circle cx={x(r.median)} cy={y(i)} r={4.5} fill={ink}
+                      stroke="var(--ground)" strokeWidth={1.5} />
+              <text x={width - pad.right + 8} y={y(i) + 4} className="mono" fontSize={10}
+                    fill="var(--muted)">
+                n {r.n}
+              </text>
+              <title>
+                {r.label}: median {format(r.median)}, middle half {format(r.p25)} to {format(r.p75)}, {r.n} events
+              </title>
+            </g>
+          )
+        })}
+      </svg>
+    </div>
+  )
+}
+
 /** A stat tile row: label over figure, tabular, no chart — the hero-number
  *  form for a handful of headline figures. */
 export function Tiles({ items }: { items: Array<{ label: string; value: string; tone?: 'gain' | 'loss' | 'plain'; sub?: string }> }) {

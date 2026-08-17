@@ -835,6 +835,10 @@ export interface Scenario {
   /** The family's own label for the kind — "free-riding" where an
    *  adversary's course would read "one-sided pressure". */
   kind_label?: string | null
+  /** And what that kind MEANS, in the family's own words ("both sides
+   *  escalate, then at least one steps back"). Carried since 2026-08-17 so a
+   *  reader surface never has to print the raw course string to say it. */
+  kind_sentence?: string | null
   tone_label?: string
   standing?: Standing | null
   posture?: Posture | null
@@ -941,6 +945,11 @@ export interface DyadSolution {
   bands: number
   band_labels: string[]
   band_semantics?: string
+  /** The band `sharp_departure_probability` counts ABOVE — the pair's own
+   *  typical band. Without it a page cannot choose between "breaks above its
+   *  norm" and "is still above it", which are different claims about the same
+   *  number: US–Iran opens above the line with a fan drifting down. */
+  typical_band?: number
   opening: {
     intensity_band: number
     intensity_label: string
@@ -1008,6 +1017,7 @@ export interface RegionRanking {
     scenario_name: string
     kind: string
     kind_label?: string | null
+    kind_sentence?: string | null
     likelihood: number
     course: string
     end_label: string
@@ -1028,6 +1038,8 @@ export interface RegionMap {
   horizon: number
   bands: number
   band_labels: string[]
+  /** See DyadSolution.typical_band. */
+  typical_band?: number
   primary_solver: 'lp' | 'qre'
   solvers: string[]
   concepts: Record<string, string>
@@ -1142,7 +1154,12 @@ export interface MarketStoryMarket {
 }
 
 export interface MarketsStory {
+  /** The pack KEY — what every `region=` parameter takes. */
   region: string
+  /** The pack's CAPTION, which is what a surface shows. `packs/china` is keyed
+   *  china and captioned ASIA; mena and eurasia gained captions on 2026-08-17
+   *  because the markets h1 was rendering the key ("…when mena escalates"). */
+  region_label?: string
   pending?: boolean
   note?: string
   as_of?: string | null

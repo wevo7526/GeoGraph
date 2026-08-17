@@ -138,6 +138,17 @@ def test_every_pack_has_a_label_even_when_it_declares_none(name):
     assert packs.load(name).label
 
 
+def test_a_key_is_never_shown_as_a_caption():
+    # The markets story renders the region into prose, and it rendered the KEY:
+    # "when mena's coded record shows a sharp escalation". `mena` is an
+    # internal acronym and `eurasia` is a lower-cased id; both now declare what
+    # a reader should be shown, and neither key moved (they are written into
+    # every record's region_pack and into the deployed volume).
+    mena, eurasia = packs.load("mena"), packs.load("eurasia")
+    assert (mena.name, mena.label) == ("mena", "the Middle East")
+    assert (eurasia.name, eurasia.label) == ("eurasia", "Eurasia")
+
+
 # ── externality is a property of the lens, not of the world ──────────────────
 
 

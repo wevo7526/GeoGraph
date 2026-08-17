@@ -1098,6 +1098,79 @@ def test_a_declared_rivalry_is_never_described_by_its_mean_tone():
     assert "no relation" in scenarios.describe_standing({"standing": {"relations": []}})
 
 
+def test_the_posture_clause_reads_as_a_sentence_for_every_label():
+    """"their record over the last 4 quarters is mixed record" — the label is
+    a noun phrase and the connective assumed a predicate.
+
+    The labels are `opening.POSTURE_EDGES`' and their grammar is mixed, so the
+    phrasing is per label; a new cut with no phrase would reintroduce the bug,
+    which is what the coverage assertion below is for.
+    """
+    from core.games import opening, scenarios
+
+    labels = [label for _, label in opening.POSTURE_EDGES] + [opening.posture_label(0.9)]
+    missing = [label for label in labels if label not in scenarios.POSTURE_PHRASES]
+    assert not missing, f"posture labels with no sentence phrasing: {missing}"
+
+    said = scenarios.describe_posture({"posture": {
+        "label": "mixed record", "share": 0.17, "events": 6961, "coercive": 1183,
+        "tone": 0.24, "quarters": 4, "thin": False,
+    }})
+    assert said == (
+        "their record over the last 4 quarters is a mixed record "
+        "(17% of 6961 coded interactions were coercive)"
+    )
+    # MEAN TONE IS OUT OF THE SENTENCE. It ranks pairs by how much they talk
+    # and called the United States and China friendly; it is a payload field,
+    # never a clause in a reader's sentence.
+    assert "tone" not in said
+
+    quiet = scenarios.describe_posture({"posture": {
+        "label": "mostly talk", "share": 0.053, "events": 1542, "coercive": 82,
+        "tone": 1.651, "quarters": 4, "thin": False,
+    }})
+    assert quiet.startswith("their record over the last 4 quarters is mostly talk (")
+    # A pair under the coverage bar still says so, and says it about coverage.
+    thin = scenarios.describe_posture({"posture": {
+        "label": "too little coverage to read", "share": None, "events": 6,
+        "coercive": 0, "tone": 4.76, "quarters": 1, "thin": True,
+    }})
+    assert thin.startswith("too thinly covered lately to read a posture (6 coded events")
+
+
+def test_the_region_sentence_names_each_stage_concept_once():
+    """It read "12 pairs solved under the QRE and the fitted QRE at their own
+    opening states": `primary_solver` is a KEY, upper-cased into a caption, and
+    the template then appended a second clause naming the same concept."""
+    from core.games import scenarios
+
+    aggregate = {
+        "ranking": [{
+            "dyad_id": "dyad:a--b", "dyad_name": "A–B", "opening_band": 1,
+            "opening_label": "a mild departure", "sharp_departure_probability": 0.2,
+            "coercive_events": 72, "standing": {"relations": []},
+            "posture": {"label": "mixed record", "share": 0.17, "events": 900,
+                        "quarters": 4, "tone": 1.0, "thin": False},
+            "top_scenario": None,
+        }],
+        "dyads_solved": 12, "dyads_cinc": 7, "dyads_tilted": 0,
+        "primary_solver": "qre", "solvers": ["qre", "lp"], "horizon": 4,
+        "scenarios_escalatory": [], "scenarios_calming": [],
+        "nash_gap": {"mean": 0.0, "max": 0.0},
+        "kernel": {"share_measured": 0.8, "observations": 1000},
+    }
+    lead = scenarios.explain_region(aggregate)[0]
+    assert lead.startswith(
+        "12 pairs solved at their own opening states under the fitted quantal response "
+        "and the LP correlated equilibrium (7 with CINC-measured capability, "
+    )
+    assert lead.count("quantal response") == 1 and "QRE and the" not in lead
+    # A payload frozen before `solvers` existed still names its own concept.
+    old = {**aggregate}
+    del old["solvers"]
+    assert "under the fitted quantal response (" in scenarios.explain_region(old)[0]
+
+
 def test_a_pact_between_rivals_does_not_outrank_the_rivalry(monkeypatch):
     # THE KOREAN PENINSULA. COW folds non-aggression pacts into `alliance`, so
     # the 1991 Basic Agreement and the 1948 rivalry are both in force for North
@@ -1277,6 +1350,19 @@ def test_the_game_family_comes_from_what_the_pair_is_and_how_it_behaves():
     assert "never odds of conflict" in family.describe(ally)
     assert "coercive turn" in family.describe(rival)
     assert "not odds of" not in family.describe(adversary)
+
+
+def test_every_family_gets_its_own_article():
+    """"This pair is read as a adversary pair" — the article was hardcoded for
+    `ally` and the families are data, so the second vowel-initial one broke it.
+    """
+    from core.games import family
+
+    for name in family.FAMILIES:
+        said = family.describe(family.SEMANTICS[name] | {"family": name, "why": "why"})
+        expected = "an" if name[0] in "aeiou" else "a"
+        assert said.startswith(f"This pair is read as {expected} {name} pair ("), said
+    assert family.article("ally") == "an" and family.article("rival") == "a"
 
 
 def test_an_ally_pair_is_solved_in_the_ally_space(monkeypatch):

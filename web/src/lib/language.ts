@@ -3,16 +3,24 @@
 // investor, not a quant — gets English. Everything user-facing routes through
 // here so terms never drift page to page.
 
-/** A relationship's current tension, as a word, from its intensity vs its own
- *  historical peak (relative, because what is routine for a rivalry is a
- *  rupture for a quiet pair). */
+/** A relationship's current tension AGAINST ITS OWN HISTORY, as a phrase.
+ *
+ *  THE WORDS ARE RELATIVE BECAUSE THE MEASUREMENT IS. This reads intensity
+ *  against the pair's own historical peak, which is the right comparison — what
+ *  is routine for a rivalry is a rupture for a quiet pair — but it used to
+ *  spend that relative number on absolute words: "severe", "elevated". The
+ *  United States and Israel then carried a standfirst reading "formal allies
+ *  since 1987 · Tension severe and easing", which is the same contradiction the
+ *  2026-08-15 band work removed from the game's own vocabulary and left alive
+ *  here. A phrase that says "near its own high" cannot contradict "allies",
+ *  because it is no longer making a claim about hostility. */
 export function tensionLevel(intensity: number, peak: number): string {
   if (peak <= 0 || intensity <= 0) return 'quiet'
   const share = intensity / peak
-  if (share >= 0.75) return 'severe'
-  if (share >= 0.5) return 'elevated'
-  if (share >= 0.25) return 'moderate'
-  return 'low'
+  if (share >= 0.75) return 'near its own high'
+  if (share >= 0.5) return 'well above its usual level'
+  if (share >= 0.25) return 'a little above its usual level'
+  return 'around its usual level'
 }
 
 export type Trend = 'rising' | 'easing' | 'steady'
@@ -62,40 +70,17 @@ export function tensionTrend(rows: Array<{ tone: number }>): Trend {
   return 'steady'
 }
 
-/** The one-sentence read at the top of a relationship. */
+/** The one-sentence read at the top of a relationship. The level is already a
+ *  phrase about the pair's own history, so this only adds the direction. */
 export function tensionSentence(level: string, trend: Trend): string {
   const move =
     trend === 'rising' ? 'and rising' : trend === 'easing' ? 'and easing' : 'and steady'
-  return `Tension ${level} ${move}`
-}
-
-/** A market move as a signed percent. AFFECTED abnormal returns are fractions
- *  (0.041 = +4.1%). */
-export function marketMove(car: number): string {
-  const pct = car * 100
-  return `${pct > 0 ? '+' : ''}${pct.toFixed(1)}%`
+  return `Friction is ${level}, ${move}`
 }
 
 /** A quarter code / ISO-ish date shown as a plain year. */
 export function yearOf(date: string): string {
   return String(date).slice(0, 4)
-}
-
-/** The four forecast modes, named for a human. Kept here so the surface never
- *  prints 'near_term' / 'long_horizon' / 'sequence'. */
-export function outlookLabel(mode: string): string {
-  switch (mode) {
-    case 'near_term':
-      return 'Near-term read'
-    case 'long_horizon':
-      return 'Long-range pressure'
-    case 'model':
-      return 'Model read'
-    case 'sequence':
-      return 'Most likely path'
-    default:
-      return 'Outlook'
-  }
 }
 
 /** A relationship's display name. The surface never shows a dyad id. */
@@ -123,11 +108,17 @@ export function relationshipName(name: string | undefined, fallback: string): st
  *  three vocabularies answering three different questions while looking like
  *  one. Pass the payload's `band_labels`; the fallback is the backend's own
  *  list, never a second ladder. */
+/** MIRRORS core/games/scenarios.py BAND_LABELS — the payload's own list is
+ *  preferred everywhere and this is only the fallback for a solution persisted
+ *  before the words changed. The words are comparatives ("well above") rather
+ *  than nouns ("notable departure") because they are read INSIDE sentences:
+ *  "a notable departure turn" is not English, and "a turn well above the pair's
+ *  norm" is the same fact in a form a reader can hold. */
 const DEPARTURE_LABELS = [
-  'at baseline',
-  'mild departure',
-  'notable departure',
-  'sharp departure',
+  'at its norm',
+  'a little above',
+  'well above',
+  'far above',
   'rupture',
   'extreme rupture',
 ]
@@ -141,11 +132,6 @@ export function bandLabel(band: number, bands: number, labels?: string[]): strin
   return DEPARTURE_LABELS[Math.max(0, Math.min(index, DEPARTURE_LABELS.length - 1))]
 }
 
-/** The expected band — a float — read on the same departure ladder, so the
- *  fan's right-hand summary is a phrase ("notable departure"), never "E 2.35". */
-export function expectedTension(expectedBand: number, bands: number, labels?: string[]): string {
-  return bandLabel(expectedBand, bands, labels)
-}
 
 /** WHAT THE PAIR IS — the graph's declared, dated, sourced relation. This is
  *  the only thing on the surface entitled to characterise a relationship; the
@@ -222,14 +208,6 @@ export function jointAction(a: string, b: string): string {
   return `${a} / ${b}`
 }
 
-/** How much comparable history stands behind a predicted market move — a plain
- *  confidence note in place of the raw `n=… thin loose` flags. */
-export function evidenceNote(n: number, thin: boolean, looseMatch: boolean): string {
-  const base = `${n} comparable move${n === 1 ? '' : 's'}`
-  if (thin) return `${base} · thin evidence`
-  if (looseMatch) return `${base} · loose match`
-  return base
-}
 
 /** WHICH GAME THE PAIR PLAYS — ally / rival / adversary — and the words the
  *  solved number may wear. The solver has one game (crisis bargaining) and it

@@ -201,12 +201,23 @@ def classify(
     }
 
 
+def article(word: str) -> str:
+    """"a" or "an" for the word that follows.
+
+    The families are DATA (`FAMILIES`), so an article hardcoded for one of them
+    is wrong the moment a second vowel-initial family exists — which it already
+    did: the special case named `ally` and the page read "this pair is read as
+    a adversary pair". The rule is the word's own first letter.
+    """
+    return "an" if word[:1].lower() in "aeiou" else "a"
+
+
 def describe(classification: dict[str, Any]) -> str:
     """One sentence naming the family, the evidence, and — when the solved
     game is not this family's own — what that costs the reading."""
     family = classification["family"]
     line = (
-        f"This pair is read as {'an' if family == 'ally' else 'a'} {family} "
+        f"This pair is read as {article(family)} {family} "
         f"pair ({classification['why']}), so the question worth asking of it "
         f"is {classification['question']}."
     )

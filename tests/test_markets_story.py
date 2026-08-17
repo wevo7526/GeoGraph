@@ -4,6 +4,7 @@ escalation coding, with its sample stated."""
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -79,13 +80,52 @@ def _seed(conn: Any) -> Pack:
         {"src": e["node_id"], "dst": "actor:b", "source_id": "source:test"} for e in events])
     kuzu_store.write_edges(conn, "AFFECTED", edges)
     return Pack(name="t", path=tmp_path_placeholder(), data={
-        "markets": {"markets": markets_}, "actors": {"actors": [], "relations": []},
+        "markets": {"markets": markets_},
+        "actors": {
+            # The roster IS the region filter for anything the page NAMES, so
+            # a fixture without one is not this pack.
+            "actors": [
+                {"id": "actor:a", "name": "Alpha", "actor_type": "state"},
+                {"id": "actor:b", "name": "Beta", "actor_type": "state"},
+            ],
+            "relations": [],
+            # The caption, as distinct from the key — `t` is an id.
+            "region_label": "Testland",
+        },
         "marquee_events": {"events": []},
     })
 
 
-def tmp_path_placeholder():
-    from pathlib import Path
+def _deep_tier_event(
+    conn: Any, *, event_id: str, name: str, initiator: str, target: str, ar: float
+) -> None:
+    """One event outside every pack's wire (`region_pack = ''`, the deep tier's
+    own value) that moved Brent hard, between the actors given."""
+    kuzu_store.merge_nodes(conn, "Actor", [
+        {"node_id": initiator, "name": initiator.split(":")[-1], "actor_type": "state"},
+        {"node_id": target, "name": target.split(":")[-1], "actor_type": "state"},
+    ])
+    kuzu_store.merge_nodes(conn, "Event", [{
+        "node_id": event_id, "name": name, "event_time": "2008-08-07",
+        "action_cameo_code": "190", "goldstein": -9.0, "quad_class": "material_conflict",
+        "fidelity_tier": "deep_past", "temporal_resolution": "day",
+        "source_scale": "cow", "region_pack": "",
+        "escalation_direction": "escalating", "escalation_magnitude": 6.0,
+        "escalation_baseline": -3.0,
+    }])
+    kuzu_store.merge_edges(conn, "INITIATED_BY", [
+        {"src": event_id, "dst": initiator, "source_id": "source:test"}])
+    kuzu_store.merge_edges(conn, "DIRECTED_AT", [
+        {"src": event_id, "dst": target, "source_id": "source:test"}])
+    kuzu_store.write_edges(conn, "AFFECTED", [{
+        "src": event_id, "dst": "market:brent", "window": "car_0_3", "resolution": "day",
+        "raw_return": ar, "expected_return": 0.0, "abnormal_return": ar,
+        "t_stat": 1.0, "p_value": 0.3, "first_mover": False, "overlapping": False,
+        "method": "test", "source_id": "source:test",
+    }])
+
+
+def tmp_path_placeholder() -> Path:
     return Path(".")
 
 
@@ -117,6 +157,39 @@ def test_the_story_is_quantiles_of_measured_effects_cut_by_the_coding(conn):
     assert "Brent" in text and "n=9" in text
     assert "Tadawul" in text and "Sunday" in text
     assert "still measuring" not in text
+    # THE CAPTION, NOT THE KEY: the page said "when mena's coded record shows
+    # a sharp escalation", rendering an internal pack key as a place.
+    assert payload["region"] == "t" and payload["region_label"] == "Testland"
+    assert "Testland's coded record" in text and "t's coded record" not in text
+
+
+def test_the_named_moves_are_this_regions_events(conn):
+    """A deep-tier event rides with every region for the QUANTILES and with
+    none of them for the NAMED list.
+
+    MENA's markets page listed "Militarized dispute: South Korea – China" and
+    "Russia – Ukraine (2008)" under "the events that moved US 2-Year Treasury
+    yield most" — deep-tier events (`region_pack = ''`) between actors no MENA
+    pack rosters. The measurement belongs in the median (same event class,
+    more sample); the NAME is a claim about who did what in this region.
+    """
+    pack = _seed(conn)
+    _deep_tier_event(conn, event_id="event:mid-off", name="Militarized dispute: X – Y",
+                     initiator="actor:x", target="actor:y", ar=0.9)
+    _deep_tier_event(conn, event_id="event:mid-on", name="Militarized dispute: Alpha – Beta",
+                     initiator="actor:a", target="actor:b", ar=0.5)
+    payload = markets.story(conn, pack, game_map=None, duration=None, flows=[],
+                            coverage=None, as_of="2026-08-16")
+    brent = {m["ticker"]: m for m in payload["markets"]}["BZ=F"]
+    named = [e["name"] for e in brent["biggest_moves"]]
+    # The off-roster event is the single largest move on the market and is not
+    # named; the deep-tier event between roster actors leads the list.
+    assert "Militarized dispute: X – Y" not in named
+    assert named[0] == "Militarized dispute: Alpha – Beta"
+    # …and both were still measured: the quantiles read the whole deep tier.
+    assert brent["measured"] == 36 * 2 + 2
+    # A pack with no roster names nothing rather than naming another region.
+    assert markets.biggest_moves(conn, "BZ=F", "t", roster=set()) == []
 
 
 def test_an_unmeasured_region_says_so(conn):
@@ -131,6 +204,33 @@ def test_an_unmeasured_region_says_so(conn):
                             coverage=None, as_of=None)
     assert payload["markets"][0]["headline"] is None
     assert "still measuring" in payload["explanation"][0]
+
+
+def test_a_duration_row_never_prints_its_dyad_id(conn):
+    """The duration table is keyed by dyads RECONSTRUCTED FROM ACTOR EDGES, so
+    it holds pairs the modelled panel never named — and the page printed
+    "dyad:cow-365--cow-372" where a pair of countries belongs."""
+    pack = _seed(conn)
+    duration = {
+        "events_with_a_curve_response": 12,
+        "tenors_measured": ["front", "long"],
+        "usable_dyads": 2,
+        "dyads": [
+            {"dyad_id": "dyad:a--b", "n": 9, "implied_persistence": 0.7,
+             "p25": 0.6, "p75": 0.8, "thin": False},
+            {"dyad_id": "dyad:cow-999--cow-998", "n": 6, "implied_persistence": 0.4,
+             "p25": 0.3, "p75": 0.5, "thin": False},
+        ],
+    }
+    payload = markets.story(conn, pack, game_map=None, duration=duration, flows=[],
+                            coverage=None, as_of="2026-08-16")
+    named = {d["dyad_id"]: d["dyad_name"] for d in payload["duration"]["dyads"]}
+    # Resolved off the actor edges the dyad id IS.
+    assert named["dyad:a--b"] == "Alpha–Beta"
+    # And where the graph holds no actor, the absence is said in words.
+    assert named["dyad:cow-999--cow-998"] == markets.UNNAMED_DYAD
+    text = " ".join(payload["explanation"])
+    assert "Alpha–Beta" in text and "dyad:" not in text
 
 
 def test_the_forward_map_pools_the_games_courses_by_likelihood():

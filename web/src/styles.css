@@ -348,16 +348,33 @@ input[type='range'].timeline:focus-visible {
   border-top: 1px solid var(--line);
 }
 .beat--major { border-top: 2px solid var(--rule-strong); }
+/* THE ASIDE IS A SUBHEAD, NOT A MARGIN NOTE (2026-08-17). It shared the
+   headline's row with `margin-left:auto`, and any aside longer than a few
+   words squeezed the h2 into two lines — on the game, markets and paper-book
+   beats, every time. A stacked head cannot collide with itself, and the aside
+   reads as the sentence it is. */
 .beat-head {
+  display: grid;
+  gap: 0.3rem;
+  margin-bottom: 1rem;
+}
+.beat-title {
   display: flex;
   align-items: baseline;
   gap: 0.75rem;
-  margin-bottom: 1rem;
 }
 .beat-head h2 {
   font-size: 1.35rem;
   letter-spacing: -0.01em;
   margin: 0;
+  text-wrap: balance;
+}
+.beat-aside {
+  margin: 0;
+  max-width: 68ch;
+  font-size: 0.95rem;
+  line-height: 1.45;
+  color: var(--muted);
 }
 
 /* THE CALL — the forecast hero. A ruled plate, tinted, that leads the page:
@@ -649,4 +666,201 @@ input[type='range'].timeline:focus-visible {
   font-variant-numeric: tabular-nums;
   font-size: clamp(2rem, 4vw, 2.6rem);
   line-height: 1;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   THE FIGURES THE GAME AND MARKET PAGES WERE MISSING (2026-08-17)
+
+   Two lanes for a course of play, a matchup card for a pair, and the register
+   separation the surface lacked: the 11px monospace was carrying labels,
+   explanations, units, caveats and timestamps at once, which is why a reader
+   could not tell a unit from a caveat. Mono caps are LABELS ONLY now; anything
+   that is a sentence is set in the serif.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* One course of play: two lanes of actions, beliefs beneath. Replaces the
+   "escalate/escalate → de-escalate/de-escalate → …" strings and the per-
+   scenario mono step tables. */
+.course-strip {
+  border-collapse: separate;
+  border-spacing: 3px;
+}
+.course-strip th {
+  font-weight: normal;
+  text-align: left;
+  color: var(--text);
+  font-size: 0.9rem;
+  white-space: nowrap;
+  padding-right: 0.6rem;
+}
+.course-strip thead th {
+  text-align: center;
+  color: var(--muted);
+}
+.course-cell {
+  display: block;
+  min-width: 6.5rem;
+  padding: 0.3rem 0.5rem;
+  text-align: center;
+  color: var(--ground);
+  font-family: ui-monospace, 'Cascadia Code', Consolas, monospace;
+  font-size: 11px;
+  letter-spacing: 0.04em;
+}
+.course-beliefs th {
+  color: var(--muted);
+  font-size: 0.8rem;
+  font-style: italic;
+}
+.course-beliefs td {
+  text-align: center;
+  font-size: 11px;
+  color: var(--muted);
+}
+
+/* The matchup: two names, the facts that separate them, one bar. A ruled
+   block in the paper language — no card, no elevation. */
+.matchup {
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  gap: 0.4rem 1rem;
+  align-items: baseline;
+  border-top: 2px solid var(--rule-strong);
+  border-bottom: 1px solid var(--line);
+  padding: 1rem 0 1.1rem;
+}
+.matchup-side {
+  font-size: 1.5rem;
+  line-height: 1.15;
+  letter-spacing: -0.01em;
+}
+.matchup-side--right { text-align: right; }
+.matchup-vs { align-self: center; }
+.matchup-label { text-align: center; align-self: center; }
+.matchup-figure {
+  font-variant-numeric: tabular-nums;
+  font-size: 1.15rem;
+}
+.matchup-figure--right { text-align: right; }
+.matchup-span {
+  grid-column: 1 / -1;
+  margin: 0;
+  max-width: none;
+  font-size: 0.95rem;
+  color: var(--muted);
+}
+.matchup-span strong { color: var(--text); }
+.matchup-bar {
+  grid-column: 1 / -1;
+  display: flex;
+  height: 8px;
+  background: var(--panel);
+}
+.matchup-bar span:first-child { background: var(--text); }
+.matchup-bar span:last-child { background: var(--alert); }
+.matchup-provenance { cursor: help; }
+
+/* The region ranking: a pair, what it IS, one measured bar, the course in
+   words. It used to carry two truncated chips ("RIVALRY '…", "OFTEN COE…",
+   "ADVERSA…"), a second percentage answering a different question, and a
+   private glyph for "tilted by the model" — five columns of vocabulary where
+   the reader wanted a name and a number. */
+.ranking-row {
+  display: grid;
+  grid-template-columns: minmax(9rem, 15rem) minmax(3rem, 1fr) 3.5rem minmax(0, 15rem);
+  align-items: center;
+  gap: 0.85rem;
+  width: 100%;
+  padding: 0.45rem 0.35rem;
+  background: none;
+  border: none;
+  border-bottom: 1px dotted var(--line);
+  text-align: left;
+  cursor: pointer;
+  color: var(--text);
+}
+.ranking-row:hover { background: var(--panel); }
+.ranking-row:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.ranking-name { display: flex; flex-direction: column; min-width: 0; }
+.ranking-pair {
+  font-size: 0.98rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.ranking-standing {
+  font-size: 0.78rem;
+  color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.ranking-bar {
+  position: relative;
+  display: block;
+  height: 0.75rem;
+  background: var(--panel);
+}
+.ranking-bar > span { position: absolute; inset: 0 auto 0 0; }
+.ranking-figure { text-align: right; font-size: 0.85rem; }
+.ranking-course {
+  font-size: 0.82rem;
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+@media (max-width: 720px) {
+  .ranking-row { grid-template-columns: 1fr 3.5rem; }
+  .ranking-bar, .ranking-course { grid-column: 1 / -1; }
+}
+
+/* THE PAGE'S OPENING FIGURE, beside the headline. The markets page buried its
+   most legible number — a paper book up 90.9% since 2007 — at beat six of
+   seven, under an aside apologising for being there. Measured-before-modelled
+   is a rule about what leads the ARGUMENT, not about what a reader is allowed
+   to see. */
+.head-figure {
+  margin: 0;
+  width: min(22rem, 100%);
+}
+.head-figure figcaption {
+  margin-top: 0.25rem;
+  font-size: 0.85rem;
+  color: var(--muted);
+  line-height: 1.35;
+}
+
+/* A figure and its caption. The caption is what the figure MEANS — a serif
+   sentence, not an 11px monospace fragment. */
+.figure-note {
+  margin: 0.6rem 0 0;
+  font-size: 0.9rem;
+  color: var(--muted);
+  max-width: 68ch;
+}
+
+/* The call plate's own hierarchy: one lede, one odds line, one course, one
+   market line. It used to hold seven registers in one box. */
+.call-odds {
+  font-size: 1.05rem;
+  margin: 0.5rem 0 0;
+}
+.call-note {
+  margin: 0.75rem 0 0;
+  font-size: 0.97rem;
+  max-width: 64ch;
+}
+
+/* THE FOOT OF A PAGE: one boundary statement, said once, in the serif. It
+   used to appear three times on the pair page alone — in the call's mono
+   line, in the explanation, and as an italic footer. */
+.page-boundary {
+  margin-top: 3.5rem;
+  padding-top: 1.25rem;
+  border-top: 1px solid var(--line);
+  font-size: 0.9rem;
+  font-style: italic;
+  color: var(--muted);
+  max-width: 72ch;
 }

@@ -117,7 +117,7 @@ function Trajectoryline({ trajectory }: { trajectory: Trajectory }) {
         ))}
       </svg>
       <figcaption className="text-xs mono mt-1" style={{ color: 'var(--muted)' }}>
-        solid: event score · dashed: the dyad's baseline · scale −10…+10
+        solid: each act's hostility · dashed: what is normal for this pair · −10 to +10
       </figcaption>
     </figure>
   )
@@ -235,13 +235,16 @@ function EventDetailPanel({ nodeId }: { nodeId: string }) {
           </dd>
         </div>
         <div className="flex justify-between gap-4">
-          <dt style={{ color: 'var(--muted)' }}>CAMEO · Goldstein</dt>
+          <dt style={{ color: 'var(--muted)' }}>How hostile</dt>
           <dd className="mono text-right">
-            {detail.cameo_code} · {num(detail.goldstein, 1)}
+            {num(detail.goldstein, 1)}{' '}
+            <span style={{ color: 'var(--muted)' }} title={`CAMEO ${detail.cameo_code}`}>
+              of −10…+10
+            </span>
           </dd>
         </div>
         <div className="flex justify-between gap-4">
-          <dt style={{ color: 'var(--muted)' }}>Escalation</dt>
+          <dt style={{ color: 'var(--muted)' }}>Against this pair’s norm</dt>
           <dd
             className="text-right"
             style={{ color: DIRECTION_COLOR[detail.escalation_direction ?? 'stable'] }}
@@ -256,9 +259,9 @@ function EventDetailPanel({ nodeId }: { nodeId: string }) {
           </dd>
         </div>
         <div className="flex justify-between gap-4">
-          <dt style={{ color: 'var(--muted)' }}>Resolution</dt>
-          <dd className="mono text-right text-xs">
-            {detail.fidelity_tier} · {detail.temporal_resolution}
+          <dt style={{ color: 'var(--muted)' }}>Known to the</dt>
+          <dd className="mono text-right text-xs" title={detail.fidelity_tier ?? undefined}>
+            {detail.temporal_resolution}
           </dd>
         </div>
       </dl>
@@ -1071,9 +1074,15 @@ export default function Explorer({
               </button>
             )}
           </div>
+          {/* THE SCALE, SAID ONCE. Every row carries a bare number — "Reject:
+              United States → Iran · −5.0" — which is the Goldstein score on a
+              −10…+10 cooperation-to-conflict scale, and nothing on the page
+              said so. A reader met a number with no units on the first screen
+              of the product. */}
           {listed.length > 0 && (
-            <p className="mono text-[10px] mt-1" style={{ color: 'var(--muted)', letterSpacing: '0.1em' }}>
-              {listed.length} EVENT{listed.length === 1 ? '' : 'S'} · NEWEST FIRST
+            <p className="text-xs mt-1" style={{ color: 'var(--muted)' }}>
+              {listed.length} event{listed.length === 1 ? '' : 's'}, newest first · the figure is
+              how hostile the act was, −10 to +10
             </p>
           )}
           {/* Truncation is DATA: a five-year window can hold more than the
@@ -1192,7 +1201,7 @@ export default function Explorer({
                 className="inline-block h-0.5 w-4"
                 style={{ background: RELATION_SWATCH.proxy }}
               />
-              proxy (flow: patron → client)
+              patron → client
             </span>
             <span className="inline-flex items-center gap-1.5">
               <span
@@ -1216,7 +1225,7 @@ export default function Explorer({
                 className="inline-block h-2 w-2"
                 style={{ background: MARKET_NODE }}
               />
-              market (cube)
+              market
             </span>
             <span className="inline-flex items-center gap-1.5">
               <span
@@ -1224,7 +1233,7 @@ export default function Explorer({
                 className="inline-block h-0.5 w-4"
                 style={{ background: FLOW_SWATCH }}
               />
-              SWF capital (13F)
+              sovereign-fund holdings
             </span>
           </div>
         </section>

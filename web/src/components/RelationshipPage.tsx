@@ -34,7 +34,6 @@ import {
   familyRead,
   postureNote,
   standingLabel,
-  jointAction,
   relationshipName,
   tensionLevel,
   tensionSentence,
@@ -58,6 +57,7 @@ import type {
   TimelineEvent,
   DyadSolution,
 } from '../types'
+import { dyadCall } from '../lib/story'
 import { BoxRow, Fan, LineBand } from './charts/Charts'
 import type { Point } from './charts/Charts'
 import { Bars, MultiLine, pct } from './charts/Kit'
@@ -221,7 +221,6 @@ export default function RelationshipPage({ region, onNavigate }: { region: strin
   const posture = postureNote(solution?.opening?.posture)
   const family = familyRead(solution?.opening?.family)
   const nextType = nextStep ? bandLabel(nextStep.intensity_band, bands, bandNames) : null
-  const nextMove = nextStep ? jointAction(nextStep.action_a, nextStep.action_b) : null
   // The badge tracks where the relationship is HEADING (the trajectory
   // endpoint), so it agrees with the lede rather than the immediate step —
   // a near-term escalation inside a medium-term easing read as a contradiction.
@@ -229,7 +228,17 @@ export default function RelationshipPage({ region, onNavigate }: { region: strin
   const moves = stepMoves(nextStep)
   const horizonQuarters = marginal.length
 
+  // THE CALL COMES FROM THE SOLVED GAME, the same source and the same composer
+  // the game-theory page leads with — so the two pages cannot disagree about
+  // the same pair, which they did until 2026-08-17 (one said "mutual escalation
+  // at 54%", the other "brinkmanship at 52%", for the same afternoon).
+  const solvedConcept = solution
+    ? solution.concepts[solution.primary_solver] ?? solution.concepts.qre
+    : null
+  const call = solution && solvedConcept ? dyadCall(solution, solvedConcept) : null
+
   const callLede = (() => {
+    if (call) return call.headline
     if (game === undefined) return null
     if (!game || !marginal.length) return null
     const dir =
@@ -262,9 +271,13 @@ export default function RelationshipPage({ region, onNavigate }: { region: strin
         standfirst={
           level ? (
             <span>
-              {standing ? <><strong>{standing}</strong> · </> : null}
+              {standing ? (
+                <>
+                  <strong>{standing.charAt(0).toUpperCase() + standing.slice(1)}.</strong>{' '}
+                </>
+              ) : null}
               {tensionSentence(level, trend)}
-              {series ? ` · ${yearOf(series.span[0])}–${yearOf(series.span[1])}` : ''}
+              {series ? `, over ${yearOf(series.span[0])}–${yearOf(series.span[1])}` : ''}.
             </span>
           ) : dyads === null ? (
             'Reading the archive…'
@@ -329,63 +342,53 @@ export default function RelationshipPage({ region, onNavigate }: { region: strin
               </p>
             )}
 
-            {nextMove && (
-              <p className="mt-3 text-base">
-                The most likely next move: <strong>{nextMove}</strong>
-                {nextType ? <> — a <strong>{nextType}</strong> turn.</> : '.'}
-              </p>
-            )}
+            {call && <p className="call-odds">{call.odds}</p>}
+            {call?.course && <p className="call-note">{call.course}</p>}
 
-            {/* THE FEATURE: the market movement ASSOCIATED with that move. */}
+            {/* WHAT THE ARCHIVE MEASURED, said as what it is. This block used
+                to be headed "If it plays out, markets have moved" — which reads
+                as a prediction for THIS pair, while the numbers are medians
+                over every comparable course the region has on record. Same
+                measurement, honest label. */}
             {moves.length > 0 ? (
               <div className="mt-4">
-                <div className="kicker mb-1">If it plays out, markets have moved</div>
+                <div className="kicker mb-1">After courses like this one, across the measured record</div>
                 {moves.map((m) => (
-                  <MoveRow key={m.name} name={m.name} pct={m.pct} sub={`${m.n} comparable`} />
+                  <MoveRow key={m.name} name={m.name} pct={m.pct} sub={`${m.n} events`} />
                 ))}
-                <p className="mt-2 text-xs" style={{ color: 'var(--muted)' }}>
-                  Median abnormal return across comparable past moves in this regime — measured, not modelled.
-                </p>
               </div>
             ) : game && marginal.length ? (
-              <p className="mt-4 text-sm" style={{ color: 'var(--muted)' }}>
-                No comparable market moves are measured for the predicted turn yet.
+              <p className="call-note" style={{ color: 'var(--muted)' }}>
+                No market has enough comparable measurements to price this course.
               </p>
             ) : null}
 
+            {family?.caveat && (
+              <p className="call-note" style={{ color: 'var(--muted)' }}>
+                <em>{family.caveat}</em>
+              </p>
+            )}
+
             {solution?.opening && (
-              <div className="mt-3 text-sm">
-                <p>
-                  {standing
-                    ? <>The archive declares this pair a <strong>{standing}</strong>.</>
-                    : <>The archive declares no standing relation for this pair.</>}
-                  {posture ? <> Its coded record lately: <strong>{posture}</strong>.</> : null}
-                  {family ? <> It is read as an <strong>{family.label}</strong> ({family.why}).</> : null}
-                  {' '}The solved game puts <strong>{pct(solution.concepts[solution.primary_solver]?.sharp_departure_probability ?? 0, 0)}</strong> on a
-                  sharper-than-usual departure from its own usual level of {family?.headline ?? 'friction'} within {solution.horizon} quarters
-                  {solution.concepts.lp && solution.primary_solver !== 'lp' ? ` (LP benchmark ${pct(solution.concepts.lp.sharp_departure_probability, 0)})` : ''}
-                  {solution.opening.tilt
-                    ? (solution.opening.tilt.features
-                        ? ', over a kernel conditioned on this pair’s own measured record rather than the region’s pooled table'
-                        : `, with the learned layer tilting the kernel by η ${(solution.opening.tilt.eta ?? 0) >= 0 ? '+' : ''}${(solution.opening.tilt.eta ?? 0).toFixed(3)}`)
-                    : ', over the region’s counted kernel'}.
-                  {family?.caveat ? <> <em>{family.caveat}</em></> : null}
-                </p>
-                <p className="mt-2">
-                  <button className="btn" onClick={() => onNavigate(`/games?dyad=${encodeURIComponent(selected)}&region=${encodeURIComponent(region)}`)}>
-                    Open the solved game →
-                  </button>
-                </p>
-              </div>
+              <p className="mt-4">
+                <button className="btn" onClick={() => onNavigate(`/games?dyad=${encodeURIComponent(selected)}&region=${encodeURIComponent(region)}`)}>
+                  Open the solved game →
+                </button>
+              </p>
             )}
 
             {/* Show me why — the trajectory fan behind the one-line call. */}
             {marginal.length > 1 && (
               <Disclosure label="show me the trajectory">
                 <TrajectoryStrip marginal={marginal} bands={bands} bandNames={bandNames} />
-                {game?.boundary_statement && (
-                  <p className="mono text-[10px] mt-3" style={{ color: 'var(--muted)' }}>
-                    {game.boundary_statement}
+                {solution && (
+                  <p className="text-sm mt-3" style={{ color: 'var(--muted)', maxWidth: '64ch' }}>
+                    {standing ? `${standing.charAt(0).toUpperCase()}${standing.slice(1)}. ` : ''}
+                    {posture ? `Its coded record lately: ${posture}. ` : ''}
+                    {family ? `It plays ${family.label === 'ally pair' ? 'an' : 'a'} ${family.label}'s game — ${family.why}. ` : ''}
+                    {solution.opening.tilt
+                      ? 'Solved on a transition table conditioned on this pair’s own measured record.'
+                      : 'Solved on the region’s counted transition table.'}
                   </p>
                 )}
               </Disclosure>
@@ -393,49 +396,46 @@ export default function RelationshipPage({ region, onNavigate }: { region: strin
           </section>
 
           {/* ── NOW — the tension trajectory ─────────────────────────────── */}
-          <Beat n={1} title="Where it stands" aria-label="now">
+          <Beat
+            title="Where it stands"
+            aside="Every quarter the archive holds for this pair, measured as a departure from its own running baseline — so the height of a spike is what was unusual FOR THEM, not an absolute level of hostility."
+          >
             {series === undefined ? (
               <Empty>reading the trajectory…</Empty>
             ) : series && rows.length ? (
               <>
                 <StatLine
                   items={[
-                    { label: 'Tension now', value: level ?? '—' },
-                    { label: 'Trend', value: <span style={{ textTransform: 'capitalize' }}>{trend}</span> },
-                    { label: 'Peak', value: (series.peak ?? 0).toFixed(1) },
-                    { label: 'Active quarters', value: series.active_quarters },
+                    { label: 'friction now', value: level ?? '—' },
+                    { label: 'direction', value: <span style={{ textTransform: 'capitalize' }}>{trend}</span> },
+                    { label: 'its worst quarter', value: (series.peak ?? 0).toFixed(1) },
+                    { label: 'quarters on record', value: series.active_quarters },
                   ]}
                 />
                 <div className="mt-4 scroll-x">
                   <LineBand points={linePoints} width={720} height={140} />
                 </div>
+                <p className="figure-note">
+                  The scale is this pair's own: {(series.peak ?? 0).toFixed(1)} at the top is the
+                  largest quarterly departure it has ever recorded.
+                </p>
                 {modelTrajectory && modelTrajectory.length > 0 && (
-                  <div className="mt-4">
-                    <div className="kicker mb-1">The learned layer's read — deviation from this pair's own baseline, next {modelTrajectory.length} quarters</div>
+                  <div className="mt-6">
+                    <div className="kicker mb-1">What the learned model expects next</div>
                     <MultiLine
                       xLabels={modelTrajectory.map((m) => m.q)}
                       yMax={Math.max(...modelTrajectory.map((m) => Math.abs(m.hi ?? m.deviation)), 1)}
                       format={(v) => v.toFixed(1)}
                       series={[
-                        { name: 'predicted deviation', values: modelTrajectory.map((m) => Math.max(0, m.deviation)), color: 'var(--alert)' },
+                        { name: 'expected departure', values: modelTrajectory.map((m) => Math.max(0, m.deviation)), color: 'var(--alert)' },
                         { name: 'upper band', values: modelTrajectory.map((m) => Math.max(0, m.hi ?? m.deviation)), color: 'var(--muted)', dash: '3 3' },
                       ]}
                     />
-                    <p className="mono text-[10px] mt-1" style={{ color: 'var(--muted)' }}>
-                      gated within-dyad ridge (models/intensity.json); the model's claim is magnitude, persistence keeps the ordering.
+                    <p className="figure-note">
+                      A model trained within each pair rather than across them, and held to that
+                      test: its claim is how large the next departures are, not which quarter comes
+                      first.
                     </p>
-                  </div>
-                )}
-                {solution?.concepts.lp && (
-                  <div className="mt-4">
-                    <div className="kicker mb-1">Escalation propensity by intensity band and type (LP, at the opening capability)</div>
-                    <MultiLine
-                      xLabels={solution.band_labels}
-                      series={[
-                        { name: 'resolute', values: solution.concepts.lp.escalation_propensity.resolute ?? [], color: 'var(--alert)' },
-                        { name: 'irresolute', values: solution.concepts.lp.escalation_propensity.irresolute ?? [], color: 'var(--accent)', dash: '4 3' },
-                      ]}
-                    />
                   </div>
                 )}
               </>
@@ -445,17 +445,28 @@ export default function RelationshipPage({ region, onNavigate }: { region: strin
           </Beat>
 
           {/* ── PRECEDENT — what such episodes did next, and to which markets ─ */}
-          <Beat n={2} title="What comparable episodes did next" aside={precedent ? `${precedent.episodes.length} episodes, regime-gated` : undefined}>
+          <Beat
+            title="What happened last time"
+            aside={
+              precedent
+                ? `The ${precedent.episodes.length} comparable episodes this pair has on record — comparable meaning inside the same era, which is the only comparison the archive permits.`
+                : undefined
+            }
+          >
             {precedent === undefined ? (
               <Empty>reading the precedent…</Empty>
             ) : precedent && (precedent.fan.length || precedent.markets.length) ? (
               <div className="grid md:grid-cols-2 gap-6">
                 <div>
-                  <div className="kicker mb-1">Intensity after an episode opens — median, p25–p75, min–max</div>
+                  <div className="kicker mb-1">How friction ran after an episode opened</div>
                   <Fan rows={precedent.fan} width={480} height={150} />
+                  <p className="figure-note">
+                    The line is the middle of those episodes; the shading holds the middle half and
+                    the full range.
+                  </p>
                 </div>
                 <div>
-                  <div className="kicker mb-1">Measured abnormal returns across this pair's episodes</div>
+                  <div className="kicker mb-1">What markets did across them</div>
                   {precedent.markets.length ? (
                     <div className="space-y-1">
                       {(() => {
@@ -476,19 +487,29 @@ export default function RelationshipPage({ region, onNavigate }: { region: strin
 
           {/* ── WHERE IT'S BEEN — the event timeline ─────────────────────── */}
           <Beat
-            n={3}
             title="Where it’s been"
-            aside={timeline && timeline.total ? `${timeline.total} market-moving events · click one for measured vs expected` : undefined}
+            aside={
+              timeline && timeline.total
+                ? `The ${timeline.total} events between these two that moved a market. Click one to see what the move was against what an event like it usually does.`
+                : undefined
+            }
           >
             {coverage && (() => {
               const c = coverage.dyads.find((d) => d.dyad_id === selected)
               return c ? (
-                <p className="mono text-[11px] mb-3" style={{ color: 'var(--muted)' }}>
-                  market-movement trace: {c.measured.toLocaleString('en-US')} of {c.events.toLocaleString('en-US')} graph events carry a measured effect ({pct(c.share_measured, 0)}) —
-                  {c.status === 'unmeasured' ? ' none measured yet; the transmission engine reaches them on a measuring boot.' : c.status === 'no_events' ? ' no graph events between these two.' : ' the rest await a measuring boot.'}
+                <p className="figure-note" style={{ marginTop: 0, marginBottom: '1rem' }}>
+                  {c.measured.toLocaleString('en-US')} of the {c.events.toLocaleString('en-US')} events
+                  recorded between them have been measured against markets ({pct(c.share_measured, 0)})
+                  {c.status === 'unmeasured'
+                    ? ' — none yet; they are in the queue.'
+                    : c.status === 'no_events'
+                      ? '.'
+                      : ' — the rest are in the queue.'}
                 </p>
               ) : (
-                <p className="mono text-[11px] mb-3" style={{ color: 'var(--muted)' }}>market-movement trace: this pair holds no graph events between roster actors.</p>
+                <p className="figure-note" style={{ marginTop: 0, marginBottom: '1rem' }}>
+                  No events between these two are recorded in the graph yet.
+                </p>
               )
             })()}
             {timeline === undefined ? (
@@ -513,7 +534,10 @@ export default function RelationshipPage({ region, onNavigate }: { region: strin
 
           {/* ── TRACK RECORD (region-wide) ───────────────────────────────── */}
           {(hasRetro || outlook?.brier_score != null || backtest?.summary || calibration?.brier != null) && (
-            <Beat n={4} title="Track record" aside={`${regionLabel} calls`}>
+            <Beat
+              title="How well this has called it before"
+              aside={`Scored across every ${regionLabel} call the archive can settle — the same estimator, re-run at each past cutoff whose horizon has since closed.`}
+            >
               {outlook?.scenarios?.some((sc) => sc.scenario_name.endsWith(selected)) && (
                 <div className="mb-3">
                   <div className="kicker mb-1">The frozen near-term call names this pair</div>
@@ -540,26 +564,45 @@ export default function RelationshipPage({ region, onNavigate }: { region: strin
                   the RECENT era leads because the whole-walk number is
                   dominated by a sparse deep past where near-zero calls were
                   easy to get right. */}
+              {/* THE FINDING, NOT THE CONFESSION. This measurement is the most
+                  useful thing the page knows — the near-term question is nearly
+                  vacuous in the modern era, so a good score means the question
+                  was easy, not that the estimator is good — and it used to be
+                  written as an apology ("no better than predicting the era's own
+                  base rate"). Said as a finding, it is a reason to trust the
+                  page rather than a reason to doubt it. */}
               {calibration?.brier != null && (
                 <div className="mt-4">
-                  <div className="kicker mb-1">
-                    Scored against history — the same estimator, {calibration.cutoffs} closed-horizon cutoffs
-                  </div>
                   {calibration.recent?.brier != null ? (
-                    <p className="text-sm">
-                      Over the last {calibration.recent.years} years it scores a Brier of{' '}
-                      <strong>{calibration.recent.brier.toFixed(3)}</strong> across {calibration.recent.calls} calls —{' '}
-                      {calibration.recent.skill != null && calibration.recent.skill > 0
-                        ? <>better than predicting the era's own base rate ({calibration.recent.base_rate_brier?.toFixed(3)}).</>
-                        : <><strong>no better than predicting the era's own base rate</strong> ({calibration.recent.base_rate_brier?.toFixed(3)}), which in this era is close to certain.</>}
-                      {' '}Over the whole archive it scores {calibration.brier.toFixed(3)}.
+                    <p className="text-sm" style={{ maxWidth: '64ch' }}>
+                      {calibration.recent.skill != null && calibration.recent.skill > 0 ? (
+                        <>
+                          Over the last {calibration.recent.years} years these calls have beaten the
+                          era's own base rate across {calibration.recent.calls} of them.
+                        </>
+                      ) : (
+                        <>
+                          <strong>
+                            Over the last {calibration.recent.years} years, the near-term question
+                            has been nearly vacuous
+                          </strong>{' '}
+                          — in this era a focal pair almost always escalates again within the
+                          horizon, so answering "yes, always" scores about as well as anything can,
+                          and this estimator does not beat it. Across the whole archive, where the
+                          answer actually varied, it does.
+                        </>
+                      )}
                     </p>
                   ) : (
                     <p className="text-sm">
-                      Brier <strong>{calibration.brier.toFixed(3)}</strong> across {calibration.calls} calls
-                      {calibration.base_rate_brier != null ? ` against ${calibration.base_rate_brier.toFixed(3)} for the base rate` : ''}.
+                      Scored across {calibration.calls} calls the archive can settle.
                     </p>
                   )}
+                  <p className="figure-note">
+                    Brier score {calibration.recent?.brier?.toFixed(3) ?? calibration.brier.toFixed(3)}{' '}
+                    against {(calibration.recent?.base_rate_brier ?? calibration.base_rate_brier)?.toFixed(3)}{' '}
+                    for the base rate, over {calibration.cutoffs} past cutoffs. Lower is better.
+                  </p>
                   {(calibration.recent?.reliability ?? calibration.reliability ?? []).length > 0 && (
                     <div className="mt-2 scroll-x">
                       <table className="text-xs mono">
@@ -582,8 +625,10 @@ export default function RelationshipPage({ region, onNavigate }: { region: strin
                           ))}
                         </tbody>
                       </table>
-                      <p className="mono text-[10px] mt-1" style={{ color: 'var(--muted)' }}>
-                        oxblood marks a band the estimator is under-confident in — it happened more often than it said.
+                      <p className="figure-note">
+                        Each row: what the estimator said, and how often it then happened. A row in
+                        oxblood happened more often than it was called — the estimator was too
+                        cautious there.
                       </p>
                     </div>
                   )}
@@ -595,11 +640,13 @@ export default function RelationshipPage({ region, onNavigate }: { region: strin
                   outcomes only — the boundary the whole platform holds to. */}
               {backtest?.summary && (
                 <div className="mt-4">
-                  <div className="kicker mb-1">Paper backtest · ${(backtest.summary.notional_usd / 1e6).toFixed(0)}M notional</div>
+                  <div className="kicker mb-1">
+                    And what ${(backtest.summary.notional_usd / 1e6).toFixed(0)}M traded on those calls did
+                  </div>
                   <StatLine
                     items={[
                       {
-                        label: 'Total return',
+                        label: 'total return',
                         value: (
                           <span style={{ color: backtest.summary.total_return >= 0 ? 'var(--accent)' : 'var(--alert)' }}>
                             {backtest.summary.total_return >= 0 ? '+' : ''}
@@ -607,15 +654,16 @@ export default function RelationshipPage({ region, onNavigate }: { region: strin
                           </span>
                         ),
                       },
-                      { label: 'Hit rate', value: `${Math.round(backtest.summary.hit_rate * 100)}%` },
-                      { label: 'Quarters', value: backtest.summary.quarters_traded },
-                      { label: 'Max drawdown', value: `${(backtest.summary.max_drawdown * 100).toFixed(1)}%` },
+                      { label: 'quarters called right', value: `${Math.round(backtest.summary.hit_rate * 100)}%` },
+                      { label: 'quarters traded', value: backtest.summary.quarters_traded },
+                      { label: 'worst fall from a peak', value: `${(backtest.summary.max_drawdown * 100).toFixed(1)}%` },
                     ]}
                   />
                   {backtest.computed_at && (
-                    <p className="mono text-[10px] mt-1" style={{ color: 'var(--muted)' }}>
-                      walk-forward, computed {backtest.computed_at.slice(0, 10)} ·{' '}
-                      <button className="article-link" onClick={() => onNavigate('/markets')}>the markets page →</button>
+                    <p className="figure-note">
+                      Walked forward quarter by quarter, every position entered after the call that
+                      implied it ·{' '}
+                      <button className="article-link" onClick={() => onNavigate('/markets')}>the full book →</button>
                     </p>
                   )}
                 </div>
