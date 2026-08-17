@@ -55,6 +55,7 @@ from core.api.routers import (
     events,
     forecasts,
     games,
+    globe,
     graph,
     impact,
     network,
@@ -447,7 +448,7 @@ def create_app() -> FastAPI:
     for router in (graph.router, events.router, case_studies.router, network.router,
                    forecasts.router, regimes.router, packs.router, trading.router,
                    reasoning.router, dyads.router, precedent.router,
-                   games.router, impact.router):
+                   games.router, impact.router, globe.router):
         app.include_router(router, prefix="/api")
 
     if _WEB_DIST.exists():
