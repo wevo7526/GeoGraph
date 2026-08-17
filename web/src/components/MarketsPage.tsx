@@ -21,7 +21,7 @@ import { getBacktest, getForward, getMarketsStory, lastFailureFor } from '../api
 import { useRegionLabel } from '../regions'
 import type { BacktestLedger, ForwardView, MarketStoryMarket, MarketsStory } from '../types'
 import { Beat, Chip, Disclosure, Empty, StoryHead } from '../ui'
-import { count, courseInWords, marketsLede, signedPct } from '../lib/story'
+import { count, courseSentence, marketsLede, signedPct } from '../lib/story'
 import { Bars, DotWhisker, Drawdown, EquityCurve, SeriesLine, Tiles, pct } from './charts/Kit'
 
 const money = (v: number) => `${v < 0 ? '−' : ''}$${Math.abs(v).toLocaleString('en-US', { maximumFractionDigits: 0 })}`
@@ -102,8 +102,10 @@ export default function MarketsPage({ region }: { region: string; onNavigate: (r
   // risk points", and until 2026-08-17 it was led by Syria–Lebanon and
   // Egypt–Israel withholding from each other — allied pairs whose game is
   // burden-sharing — priced to US natural gas on the Middle East page.
+  // The backend already drops allied courses from this beat (and says how
+  // many); this is the belt for a payload written before it did.
   const forwardCourses = (story.forward?.courses ?? []).filter(
-    (c) => (c as { family?: { family?: string } }).family?.family !== 'ally',
+    (c) => c.family?.family !== 'ally',
   )
 
   return (
@@ -274,7 +276,7 @@ export default function MarketsPage({ region }: { region: string; onNavigate: (r
               <ul className="mt-5 space-y-2 text-sm">
                 {forwardCourses.slice(0, 4).map((c, i) => (
                   <li key={i}>
-                    <b>{c.dyad_name}</b> — {courseInWords(c)?.split(': ')[1] ?? c.kind.replace(/_/g, ' ')} at {pct(c.likelihood, 0)}
+                    <b>{c.dyad_name}</b> — {courseSentence(c, c.family) ?? c.kind_label ?? c.kind.replace(/_/g, ' ')} at {pct(c.likelihood, 0)}
                     {c.market_implications.length
                       ? <span style={{ color: 'var(--muted)' }}> · historically moved {c.market_implications.slice(0, 3).map((m) => `${m.market_name} ${signedPct(m.median, 2)}`).join(', ')}</span>
                       : <span style={{ color: 'var(--muted)' }}> · no market has been priced to this course</span>}

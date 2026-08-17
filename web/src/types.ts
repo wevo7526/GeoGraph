@@ -1173,6 +1173,12 @@ export interface MarketsStory {
       dyad_name: string
       kind: string
       kind_label?: string | null
+      /** What the kind MEANS, in its family's own words. */
+      kind_sentence?: string | null
+      /** WHICH GAME the pair plays. Carried since 2026-08-17 so this beat can
+       *  keep an alliance's rift-course out of "where the risk points" — the
+       *  four highest MENA courses were all allied pairs withholding. */
+      family?: Family | null
       likelihood: number
       end_label: string
       market_implications: Array<{ market_id: string; market_name: string; median: number; n: number }>
@@ -1184,6 +1190,9 @@ export interface MarketsStory {
       measurements: number
       courses: number
     }>
+    /** How many allied pairs' friction courses this beat left out — reported,
+     *  never silently absorbed. */
+    allied_courses_excluded?: number
     note: string
   } | null
   duration: {

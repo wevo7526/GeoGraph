@@ -22,6 +22,7 @@ import type { ConceptSolution, DyadSolution, RegionMap, Scenario } from '../type
 import { Beat, Disclosure, Empty, StoryHead } from '../ui'
 import {
   courseInWords,
+  courseSentence,
   count,
   dyadCall,
   headlineWord,
@@ -325,7 +326,7 @@ function ScenarioList({ rows, onPick }: { rows: Scenario[]; onPick?: (dyad: stri
               }} />
             </div>
             <div className="ml-14 mt-1 text-xs" style={{ color: 'var(--muted)' }}>
-              {courseInWords(sc, sc.family)?.split(': ')[1] ?? sc.course}
+              {courseSentence(sc, sc.family) ?? kindName(sc)}
               {priced
                 ? ` · historically moved ${priced.market_name} ${signedPct(priced.median)} over ${count(priced.n)} events`
                 : ' · no market has been priced to this course'}
@@ -535,7 +536,7 @@ function DyadGame({
                     {pct(sc.likelihood, 0)}
                   </span>
                   <span>
-                    <b>{kindName(sc)}</b> — {courseInWords(sc, family)?.split(': ')[1] ?? sc.rationale}
+                    <b>{kindName(sc)}</b> — {courseSentence(sc, family) ?? sc.rationale}
                   </span>
                 </li>
               ))}

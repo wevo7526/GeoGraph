@@ -177,6 +177,17 @@ export function kindSentence(
   return table[sc.kind] ?? null
 }
 
+/** Just the sentence, for a surface that already shows the name. Callers used
+ *  to split `courseInWords` on ": ", which yields undefined for a kind with no
+ *  sentence and fell through to the raw course string — the exact machine
+ *  vocabulary the rewrite removed. */
+export function courseSentence(
+  sc: KindCarrier | null | undefined,
+  family?: Family | null,
+): string | null {
+  return kindSentence(sc, family)
+}
+
 /** "brinkmanship: both sides escalate, then at least one steps back" */
 export function courseInWords(
   sc: KindCarrier | null | undefined,
