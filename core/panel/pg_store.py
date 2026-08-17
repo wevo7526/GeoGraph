@@ -719,7 +719,7 @@ def storage_report(conn: Any) -> dict[str, Any]:
     with conn.cursor() as cur:
         cur.execute(
             """
-            SELECT relname,
+            SELECT c.relname AS table_name,
                    pg_total_relation_size(c.oid)  AS total_bytes,
                    pg_relation_size(c.oid)        AS table_bytes,
                    pg_indexes_size(c.oid)         AS index_bytes,
