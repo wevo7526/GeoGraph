@@ -134,13 +134,28 @@ def biggest_moves(
          # DISTINCT events available to collapse into.
          "roster": sorted(roster), "limit": limit * _DUPLICATE_HEADROOM},
     )
+    # DEDUPED TWICE, because the archive repeats an event in two ways. The
+    # pattern above multiplies one event by its actor edges (same id, several
+    # rows), and the WIRE ITSELF codes one happening several times — GDELT
+    # carries "Engage in negotiation: United States → Turkey" and "… Turkey →
+    # United States" for the same day as separate events, and a market's
+    # measured reaction to them is by construction identical. Both read to a
+    # human as the same line printed twice, which is what "the events that moved
+    # it most" showed on 2026-08-17: one negotiation, three rows, all -16.0%.
+    # A day and a measured move identify the happening; the id identifies the
+    # coding of it.
     out: list[dict[str, Any]] = []
     seen: set[str] = set()
+    happenings: set[tuple[str, float]] = set()
     for r in rows:
         event_id = str(r["event_id"])
         if event_id in seen:
             continue
         seen.add(event_id)
+        happening = (str(r["date"])[:10], round(float(r["ar"]), 4))
+        if happening in happenings:
+            continue
+        happenings.add(happening)
         out.append({
             "event_id": event_id, "name": r["name"], "date": r["date"],
             "kind": kind_of(r["direction"], r["magnitude"]),
@@ -275,8 +290,21 @@ def _forward_from_map(game_map: dict[str, Any] | None) -> dict[str, Any] | None:
     the most mass across the region's pairs, each with its priced markets."""
     if not game_map:
         return None
+    # ALLIED PAIRS ARE NOT WHERE THE RISK POINTS. `scenarios_escalatory` pools
+    # every family's pressing course, and an alliance's is one partner
+    # declining to carry the alliance — a rift, not a confrontation. On MENA the
+    # top four were all allied pairs withholding, so this beat, and the pooled
+    # direction computed from it, described alliance friction while the page
+    # presented it as the region's escalation risk (2026-08-17). The ally
+    # courses keep their own place on the game page; here they are dropped, and
+    # how many were is reported rather than silently absorbed.
+    ranked = [
+        sc for sc in (game_map.get("scenarios_escalatory") or [])
+        if ((sc.get("family") or {}).get("family")) != "ally"
+    ]
+    allies_dropped = len(game_map.get("scenarios_escalatory") or []) - len(ranked)
     courses = []
-    for sc in (game_map.get("scenarios_escalatory") or [])[:6]:
+    for sc in ranked[:6]:
         courses.append({
             "dyad_name": sc.get("dyad_name"),
             "kind": sc.get("kind"),
@@ -319,10 +347,17 @@ def _forward_from_map(game_map: dict[str, Any] | None) -> dict[str, Any] | None:
         "computed_at": game_map.get("computed_at"),
         "courses": courses,
         "direction": direction,
+        "allied_courses_excluded": allies_dropped,
         "note": (
             "likelihood-weighted medians of measured moves after comparable events, "
-            "over the region's escalatory courses with the most mass; a direction the "
-            "game points in, not a forecast of a price"
+            "over the pressing courses of the region's adversary and rival pairs; a "
+            "direction the game points in, not a forecast of a price"
+            + (
+                f". {allies_dropped} allied pairs' friction courses were left out — "
+                "a partner declining to carry an alliance is a rift, not a "
+                "confrontation, and pricing it as one is what this excludes"
+                if allies_dropped else ""
+            )
         ),
     }
 

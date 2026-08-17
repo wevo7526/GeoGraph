@@ -250,3 +250,64 @@ def test_the_forward_map_pools_the_games_courses_by_likelihood():
     assert lead["market_name"] == "Brent"
     assert lead["expected_abnormal_return"] == pytest.approx((0.6 * 0.02 + 0.2 * -0.01) / 0.8)
     assert lead["courses"] == 2 and lead["measurements"] == 50
+
+
+def test_one_happening_is_named_once(conn):
+    """THE WIRE CODES ONE HAPPENING SEVERAL WAYS, and the page printed each.
+
+    "The events that moved Tadawul most" opened with "Engage in negotiation:
+    United States → Turkey" at −16.0%, then the same line again, then "Turkey →
+    United States" at −16.0% — GDELT carries the directions and re-reports as
+    separate events, and a market's measured reaction to them is by
+    construction identical. A day and a measured move identify the happening.
+    """
+    pack = _seed(conn)
+    for i, (initiator, target) in enumerate(
+        [("actor:a", "actor:b"), ("actor:b", "actor:a"), ("actor:a", "actor:b")]
+    ):
+        _deep_tier_event(conn, event_id=f"event:same-{i}",
+                         name=f"Engage in negotiation ({i})",
+                         initiator=initiator, target=target, ar=0.42)
+    _deep_tier_event(conn, event_id="event:other", name="A different day",
+                     initiator="actor:a", target="actor:b", ar=0.31)
+
+    brent = {m["ticker"]: m for m in markets.story(
+        conn, pack, game_map=None, duration=None, flows=[], coverage=None,
+        as_of="2026-08-16")["markets"]}["BZ=F"]
+    named = brent["biggest_moves"]
+    at_42 = [e for e in named if abs(e["abnormal_return"] - 0.42) < 1e-9]
+    assert len(at_42) == 1, "one happening, named once"
+    # …and a genuinely different measurement on the same day still gets a line.
+    assert any(abs(e["abnormal_return"] - 0.31) < 1e-9 for e in named)
+
+
+def test_an_alliances_friction_is_not_where_the_risk_points(conn):
+    """`scenarios_escalatory` pools every family's pressing course, and an
+    alliance's is a partner declining to carry the alliance. MENA's four
+    highest were all allied pairs withholding, so "where the solved games point
+    next" — and the pooled direction computed from it — described alliance
+    friction while the page presented it as the region's escalation risk."""
+    pack = _seed(conn)
+    game_map = {
+        "as_of": "2026-08-16",
+        "scenarios_escalatory": [
+            {"dyad_name": "Ally A–Ally B", "kind": "mutual_escalation",
+             "kind_label": "mutual withholding", "likelihood": 0.95,
+             "end_label": "well above", "family": {"family": "ally"},
+             "market_implications": [{"market_id": "market:brent",
+                                      "market_name": "Brent", "median": -0.05, "n": 60}]},
+            {"dyad_name": "Rival A–Rival B", "kind": "mutual_escalation",
+             "kind_label": "mutual escalation", "likelihood": 0.30,
+             "end_label": "far above", "family": {"family": "adversary"},
+             "market_implications": [{"market_id": "market:brent",
+                                      "market_name": "Brent", "median": 0.03, "n": 90}]},
+        ],
+    }
+    forward = markets.story(conn, pack, game_map=game_map, duration=None, flows=[],
+                            coverage=None, as_of="2026-08-16")["forward"]
+    assert [c["dyad_name"] for c in forward["courses"]] == ["Rival A–Rival B"]
+    # The direction follows the courses it kept, not the one it dropped.
+    assert forward["direction"][0]["expected_abnormal_return"] > 0
+    # And the exclusion is REPORTED, never silent.
+    assert forward["allied_courses_excluded"] == 1
+    assert "allied pairs" in forward["note"]
