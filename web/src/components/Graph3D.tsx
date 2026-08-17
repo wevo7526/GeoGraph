@@ -334,36 +334,52 @@ export default function Graph3D({
 
   // LAYOUT. Charge alone lets a hub pull its neighbours into itself; the
   // collision force is the hard minimum separation, measured in the same
-  // units as the rendered radius. This is a ~20-node roster, so everything
-  // takes the sparse tuning.
+  // units as the rendered radius.
+  //
+  // RETUNED because the web read as a knot. The old numbers were set for "a
+  // ~20-node roster" and the roster is now three packs deep, so the same
+  // springs that once held twenty nodes in frame were compressing sixty into
+  // one ball — the edges were all drawn, and none of them were legible. Two
+  // things were doing the compressing and neither was the charge: the link
+  // distances (70/95) were shorter than the node radii at the hubs, and the
+  // per-axis springs pulled every node toward the origin at a strength that
+  // beat the repulsion pushing them apart.
+  //
+  // So: repulsion up and reaching further, links roughly half again as long,
+  // link springs LOOSER (a stiff spring overrides the distance it is given),
+  // collision radius up, and the centering forces cut to about two thirds.
+  // The containment property below is preserved deliberately — it is what
+  // keeps an unlinked node in frame — it is just no longer the dominant term.
   useEffect(() => {
     const graph = fg.current
     if (!graph) return
     const charge = graph.d3Force('charge') as unknown as
       | { strength?: (fn: (n: Sim) => number) => void; distanceMax?: (d: number) => void }
       | undefined
-    charge?.strength?.((n: Sim) => -(90 + 40 * n.val))
-    // Bounded, or the UNLINKED actors (a person, a quiet fund) get pushed to
-    // wherever repulsion peters out and zoomToFit frames a huge empty volume —
-    // every node then renders as dust. Same failure the 2D view had.
-    charge?.distanceMax?.(420)
+    charge?.strength?.((n: Sim) => -(170 + 70 * n.val))
+    // Still BOUNDED, or the UNLINKED actors (a person, a quiet fund) get
+    // pushed to wherever repulsion peters out and zoomToFit frames a huge
+    // empty volume — every node then renders as dust. Same failure the 2D
+    // view had. Raised with the rest so the bound does not become the thing
+    // that re-compresses the cloud.
+    charge?.distanceMax?.(620)
 
     const link = graph.d3Force('link') as unknown as
       | { distance?: (fn: (l: SimLink) => number) => void; strength?: (s: number) => void }
       | undefined
-    link?.distance?.((l: SimLink) => (l.kind === 'relation' ? 70 : 95))
-    link?.strength?.(0.16)
+    link?.distance?.((l: SimLink) => (l.kind === 'relation' ? 115 : 150))
+    link?.strength?.(0.11)
 
-    graph.d3Force('collide', forceCollide<Sim>((n) => Math.cbrt(n.val) * 7).strength(0.9))
-    graph.d3Force('center', forceCenter().strength(0.08))
+    graph.d3Force('collide', forceCollide<Sim>((n) => Math.cbrt(n.val) * 10).strength(0.9))
+    graph.d3Force('center', forceCenter().strength(0.05))
     // Positional containment: forceCenter only translates the centroid, so a
     // node with no links has NOTHING pulling it in. Weak per-axis springs give
     // every node a reason to stay near the middle without collapsing the
     // linked structure. Y slightly stronger: a flattened cloud reads better
     // on a landscape screen.
-    graph.d3Force('x', forceX(0).strength(0.045))
-    graph.d3Force('y', forceY(0).strength(0.07))
-    graph.d3Force('z', forceZ(0).strength(0.045))
+    graph.d3Force('x', forceX(0).strength(0.03))
+    graph.d3Force('y', forceY(0).strength(0.045))
+    graph.d3Force('z', forceZ(0).strength(0.03))
   }, [data])
 
   // Frame the graph ONCE per structure, when the simulation actually
@@ -519,7 +535,11 @@ export default function Graph3D({
           n.fz = n.z
         }}
         onEngineStop={handleEngineStop}
-        cooldownTicks={280}
+        // Raised with the layout: the retuned forces have to carry nodes
+        // roughly half again as far, and zoomToFit runs on engine STOP — so a
+        // cooldown that ends mid-expansion frames a cloud still on its way
+        // out, which reads as the knot the retune exists to remove.
+        cooldownTicks={420}
         warmupTicks={0}
       />
     </div>
