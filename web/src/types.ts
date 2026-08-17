@@ -1009,8 +1009,13 @@ export interface RegionRanking {
   sharp_departure_probability: number
   sharp_departure_probability_lp?: number | null
   escalation_probability_qre: number | null
-  /** The measured, cross-pair comparable quantity the ranking sorts by. */
+  /** Coercive acts measured between the pair over the last four quarters —
+   *  the number a reader can check against the events. */
   coercive_events?: number | null
+  /** P(this pair is in a militarised dispute), from the trained classifier
+   *  (core/models/hostility.py, fitted on COW's MID record). What the board is
+   *  ORDERED by since 2026-08-17 — the count alone put US–UK above US–Russia. */
+  hostility?: number | null
   coercive_share?: number | null
   expected_end_band: number | null
   top_scenario: {

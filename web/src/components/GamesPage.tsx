@@ -115,8 +115,12 @@ function RegionGames({ region, onPick }: { region: string; onPick: (dyad: string
   const bands = map.band_labels
   const ranking = map.ranking
   const lede = regionLede(map, label)
-  // The bar's scale: the region's own leader, so the lengths are comparable
-  // within a region and never pretend to be comparable across them.
+  // THE BAR DRAWS WHAT THE ORDER IS BY. When the board is sorted by the
+  // trained read and the bar draws something else, a reader sees rows out of
+  // order and trusts neither — the same defect that had a paragraph
+  // apologising for it on this page a few hours ago. Where no model ships the
+  // bar falls back to the measured count, which is then also the sort key.
+  const ranked = ranking.some((r) => typeof r.hostility === 'number')
   const topCoercive = Math.max(1, ...ranking.map((r) => r.coercive_events ?? 0))
 
   // COURSES SPLIT BY FAMILY, because an alliance's rift-course and a rivalry's
@@ -146,7 +150,11 @@ function RegionGames({ region, onPick }: { region: string; onPick: (dyad: string
       <Beat
         title="Who is pressing whom"
         major
-        aside="Ranked by coercive acts measured between each pair over the last four quarters — the one quantity here that is comparable across pairs. Click a pair for its solved game."
+        aside={
+          ranked
+            ? 'Ranked by how strongly each pair’s recent record reads as a militarised dispute — a model trained on the Correlates of War dispute archive, not a hand-set threshold. Click a pair for its solved game.'
+            : 'Ranked by coercive acts measured between each pair over the last four quarters. Click a pair for its solved game.'
+        }
       >
         <div className="space-y-2">
           {ranking.map((r) => {
@@ -160,6 +168,7 @@ function RegionGames({ region, onPick }: { region: string; onPick: (dyad: string
                 className="ranking-row"
                 onClick={() => onPick(r.dyad_id)}
                 title={
+                  (ranked ? `${count(acts)} coercive acts measured in the last four quarters · ` : '') +
                   `${pct(r.sharp_departure_probability, 0)} that this pair ends the horizon above its own usual band` +
                   (r.tilted ? ' · solved on this pair’s own transition table' : '')
                 }
@@ -171,12 +180,17 @@ function RegionGames({ region, onPick }: { region: string; onPick: (dyad: string
                 <span className="ranking-bar" aria-hidden="true">
                   <span
                     style={{
-                      width: `${Math.max(0, Math.min(1, acts / topCoercive)) * 100}%`,
-                      background: acts >= topCoercive / 2 ? 'var(--alert)' : 'var(--accent)',
+                      width: `${(ranked
+                        ? Math.max(0, Math.min(1, r.hostility ?? 0))
+                        : Math.max(0, Math.min(1, acts / topCoercive))) * 100}%`,
+                      background: (ranked ? (r.hostility ?? 0) >= 0.5 : acts >= topCoercive / 2)
+                        ? 'var(--alert)' : 'var(--accent)',
                     }}
                   />
                 </span>
-                <span className="ranking-figure mono">{count(acts)}</span>
+                <span className="ranking-figure mono">
+                  {ranked ? pct(r.hostility, 0) : count(acts)}
+                </span>
                 <span className="ranking-course" title={courseInWords(r.top_scenario, r.family) ?? undefined}>
                   {course || '—'}
                 </span>
@@ -185,9 +199,9 @@ function RegionGames({ region, onPick }: { region: string; onPick: (dyad: string
           })}
         </div>
         <p className="figure-note">
-          The bar is a measured count of coercive acts, not a forecast. A pair's own
-          odds of breaking above its usual band are a different question — one a quiet
-          ally can score high on — and they are on each pair's page.
+          {ranked
+            ? 'The bar is how strongly the pair’s record reads as a militarised dispute, which is a claim about what the relationship IS. A pair’s own odds of breaking above its usual band are a different question — one a quiet ally can score high on — and they are on each pair’s page. Hover a row for the measured count behind it.'
+            : 'The bar is a measured count of coercive acts, not a forecast.'}
         </p>
       </Beat>
 
