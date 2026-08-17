@@ -758,3 +758,111 @@ def storage_report(conn: Any) -> dict[str, Any]:
         "tables": tables,
         "event_study_runs_by_status": by_status,
     }
+
+
+def drift_after_impact(conn: Any, *, min_n: int = 200) -> list[dict[str, Any]]:
+    """Is there anything left to trade AFTER the market has reacted?
+
+    THE QUESTION THIS ANSWERS IS THE ONLY ONE THAT MATTERS FOR A STRATEGY.
+    `car_0_1` spans sessions 0 and 1, and session 0's return is
+    close(D)/close(D-1) — it CONTAINS the event's own impact move. To capture
+    it you had to be positioned before the event happened, and the archive
+    learns of the event from GDELT the following day. So the impact leg is not
+    tradeable at any speed; it is a measurement of what already happened.
+
+    What could be tradeable is the DRIFT: sessions 2 and 3, which is
+    `car_0_3 - car_0_1`. If a positive impact is followed on average by more
+    positive drift, the market under-reacts and momentum is the trade. If it is
+    followed by negative drift, the market over-reacts and the trade is the
+    fade. If the conditional means are indistinguishable from zero, there is no
+    trade here at all and the honest answer is to say so.
+
+    Reported per ticker, because a Gulf index and a crude future are different
+    instruments with different microstructure, and pooling them would average a
+    real effect in one against noise in the other.
+    """
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            SELECT a.market_ticker,
+                   count(*)                                       AS n,
+                   avg(a.abnormal_return)                         AS mean_impact,
+                   avg(b.abnormal_return - a.abnormal_return)     AS mean_drift,
+                   stddev_samp(b.abnormal_return - a.abnormal_return) AS sd_drift,
+                   corr(a.abnormal_return, b.abnormal_return - a.abnormal_return)
+                                                                  AS corr_impact_drift,
+                   avg(b.abnormal_return - a.abnormal_return)
+                       FILTER (WHERE a.abnormal_return > 0)       AS drift_after_up,
+                   avg(b.abnormal_return - a.abnormal_return)
+                       FILTER (WHERE a.abnormal_return < 0)       AS drift_after_down,
+                   count(*) FILTER (WHERE a.abnormal_return > 0)  AS n_up
+            FROM event_study_runs a
+            JOIN event_study_runs b
+              ON b.event_node_id = a.event_node_id
+             AND b.market_ticker = a.market_ticker
+             AND b.effect_window = 'car_0_3'
+             AND b.status IN ('computed', 'overlapping')
+             AND b.abnormal_return IS NOT NULL
+            WHERE a.effect_window = 'car_0_1'
+              AND a.status IN ('computed', 'overlapping')
+              AND a.abnormal_return IS NOT NULL
+            GROUP BY a.market_ticker
+            HAVING count(*) >= %(min_n)s
+            ORDER BY count(*) DESC
+            """,
+            {"min_n": min_n},
+        )
+        columns = [d[0] for d in cur.description]
+        return [dict(zip(columns, row, strict=True)) for row in cur.fetchall()]
+
+
+def cross_market_leadlag(
+    conn: Any, leader: str, follower: str, *, window: str = "car_0_1",
+) -> dict[str, Any]:
+    """Does one market's reaction predict another's, on the SAME event?
+
+    THE ONE PLACE THIS ARCHIVE HAS A STRUCTURAL EDGE, if it has one anywhere.
+    The Gulf exchanges trade Sunday-Thursday and New York Monday-Friday, so an
+    event landing Friday or Saturday reaches Tadawul on Sunday and New York on
+    Monday — `first_mover` on the effect records exactly this, and Abqaiq
+    (Saturday 2019-09-14) is the canonical case. If Tadawul's Sunday move
+    carries information about Monday's New York open, that is not a forecast:
+    it is a published price the follower has not yet responded to.
+
+    Returns the joint distribution over events both markets measured. A
+    correlation near zero says the leg does not exist; a strong one says it may,
+    and the next question is whether it survives costs and whether the sample is
+    the handful of weekend events rather than the thousands of weekday ones.
+    """
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            SELECT count(*)                                        AS n,
+                   corr(l.abnormal_return, f.abnormal_return)      AS correlation,
+                   avg(f.abnormal_return)                          AS mean_follower,
+                   avg(f.abnormal_return) FILTER (WHERE l.abnormal_return > 0)
+                                                                   AS follower_after_leader_up,
+                   avg(f.abnormal_return) FILTER (WHERE l.abnormal_return < 0)
+                                                                   AS follower_after_leader_down,
+                   avg(CASE WHEN sign(l.abnormal_return) = sign(f.abnormal_return)
+                            THEN 1.0 ELSE 0.0 END)                 AS same_sign_share,
+                   count(*) FILTER (WHERE l.first_mover)           AS n_leader_moved_first
+            FROM event_study_runs l
+            JOIN event_study_runs f
+              ON f.event_node_id = l.event_node_id
+             AND f.effect_window = l.effect_window
+             AND f.market_ticker = %(follower)s
+             AND f.status IN ('computed', 'overlapping')
+             AND f.abnormal_return IS NOT NULL
+            WHERE l.market_ticker = %(leader)s
+              AND l.effect_window = %(window)s
+              AND l.status IN ('computed', 'overlapping')
+              AND l.abnormal_return IS NOT NULL
+            """,
+            {"leader": leader, "follower": follower, "window": window},
+        )
+        columns = [d[0] for d in cur.description]
+        row = cur.fetchone()
+    out = dict(zip(columns, row, strict=True)) if row else {}
+    out.update({"leader": leader, "follower": follower, "window": window})
+    return out

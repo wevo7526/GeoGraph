@@ -320,3 +320,47 @@ def forward_view(request: Request, region: str = "mena") -> dict[str, Any]:
         "book_unavailable": book_unavailable,
         "pressure": pressure,
     }
+
+
+@router.get("/trading/edge")
+def tradeable_edge(
+    leader: str = "^TASI.SR", follower: str = "^GSPC",
+) -> dict[str, Any]:
+    """Is there anything in the measured transmission a book could actually
+    trade? Two tests, over the whole Postgres working set.
+
+    THE DISTINCTION THE PAPER BOOK NEVER DREW. `car_0_1` contains session 0,
+    whose return is close(D)/close(D-1) — the event's own impact move. Capturing
+    it required being positioned BEFORE the event, and this archive learns of
+    events from GDELT the following day, so the impact leg is not tradeable at
+    any speed. It is a measurement of what already happened, which is what the
+    transmission engine is for and is not the same thing as an edge.
+
+    So: `drift` asks whether sessions 2-3 (`car_0_3 - car_0_1`) are predictable
+    from the impact — under-reaction would make momentum the trade,
+    over-reaction the fade, and a conditional mean indistinguishable from zero
+    would mean there is no trade here, which is a finding and not a failure.
+
+    `leadlag` asks the structural question instead: the Gulf trades Sunday to
+    Thursday and New York Monday to Friday, so a Friday or Saturday event
+    reaches Tadawul a session before Wall Street. That is not a forecast; it is
+    a published price the follower has not responded to yet.
+    """
+    settings = settings_module.load()
+    try:
+        panel = pg_store.connect(settings)
+    except pg_store.PanelUnavailable as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    try:
+        return {
+            "drift": pg_store.drift_after_impact(panel),
+            "leadlag": pg_store.cross_market_leadlag(panel, leader, follower),
+            "method": (
+                "drift = car_0_3 - car_0_1 (sessions 2-3), the only part of the "
+                "measured window an actor learning of the event from GDELT could "
+                "still trade; leadlag joins two markets on the same event. "
+                "Abnormal returns are constant-mean residuals, not raw returns."
+            ),
+        }
+    finally:
+        panel.close()
