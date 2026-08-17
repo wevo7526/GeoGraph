@@ -134,39 +134,36 @@ def _is_state_actor(
     fields: list[str], code_at: int, name_at: int,
     type_at: int, geo_type_at: int, iso3: str,
 ) -> bool:
-    """Is this actor slot the STATE, rather than a place or body inside it?
+    """Is this actor slot the state, rather than a body inside it?
 
-    Three ways to qualify, in order of strength:
+    THE TYPE ONLY — and the two stronger gates that were tried and REJECTED
+    are the useful part of this docstring, because both looked obviously right.
 
-      1. the actor CODE is the bare country code, or the country code plus a
-         state role (USAGOV, RUSMIL) — GDELT's own statement that the actor is
-         the government, the military or the police;
-      2. the actor is geocoded at COUNTRY level (Geo_Type 1);
-      3. there is no geocode at all AND no non-state type — the ordinary case
-         for a wire sentence about "Russia" with no place attached.
+    1. The actor CODE. Rejected because it cannot see the problem: GDELT
+       resolves an actor to a country by string match and then writes that
+       country's code, so "POLE" arrives as Actor1Code POL, "ANTIOCH" as TUR,
+       "CANTON" as CHN and "BIRMINGHAM" as USA. Checking the code against the
+       roster's ISO3 accepts every one of them.
 
-    A named type that is not a state role disqualifies outright: a newspaper
-    with a nationality is not the nation.
+    2. The GEOCODE (Actor?Geo_Type == 1, country level). It does separate a
+       state from a place inside it — 762 of ANTIOCH's 836 slots geolocate in
+       California — but it also throws away the real archive, because a strike
+       is geocoded where it landed. Measured over eurasia before shipping:
+       76% of ALL rows dropped, and Russia-Ukraine's material conflict fell
+       from 19,902 to 2,229. That is the same failure as the home-soil rule in
+       `classifier.coercion`, caught the same way, and rejected for the same
+       reason: a filter that deletes the largest war in the archive is wrong
+       however sound its motivation.
+
+    What ships is the narrow, precise cut: an actor with a non-state TYPE is
+    not the state. Reuters, Pfizer, Boeing and AstraZeneca carry MED/BUS/MNC
+    and go; the homograph rows carry no type at all and stay, and they remain
+    a known defect — the instrument for them is a national-name allowlist
+    (country, demonym, capital) per roster member, which is a crosswalk this
+    repo does not have yet.
     """
-    code = (fields[code_at] if len(fields) > code_at else "").strip().upper()
     actor_type = (fields[type_at] if len(fields) > type_at else "").strip().upper()
-    geo_type = (fields[geo_type_at] if len(fields) > geo_type_at else "").strip()
-
-    if actor_type and actor_type not in _STATE_ROLES:
-        return False
-    if code == iso3:
-        return True
-    if code.startswith(iso3):
-        suffix = code[len(iso3):]
-        if not suffix or suffix in _STATE_ROLES:
-            return True
-        # A compound role (USAGOVELI) counts when its FIRST role is a state
-        # organ; anything else is a person or body wearing the flag.
-        return suffix[:3] in _STATE_ROLES
-    # The code did not name this country at all — GDELT matched the actor to
-    # the roster by something other than its code, which is exactly the
-    # homograph case. Require a country-level geocode to believe it.
-    return geo_type == "1"
+    return not (actor_type and actor_type not in _STATE_ROLES)
 
 
 def _int_or_none(value: str) -> int | None:
