@@ -30,7 +30,7 @@ from typing import Any
 from core import packs
 from core.classifier import coercion as coercion_module
 from core.classifier import escalation
-from core.ingestion import gdelt
+from core.ingestion import gdelt, harvest
 
 _DEFAULT_DERIVED = Path(__file__).resolve().parent.parent.parent / "data" / "derived"
 
@@ -59,8 +59,25 @@ _ENCODING = "latin-1"
 
 
 def artifacts_for(pack_name: str) -> list[Path]:
-    """Every shipped artifact for one lens, oldest first."""
-    return sorted(derived_dir().glob(f"gdelt-{pack_name}-*.tsv.gz"))
+    """Every artifact for one lens: the SHIPPED ones, then any HARVESTED ones.
+
+    Two directories, because they have different lifetimes. `data/derived` is
+    in git and ships inside the image, so a container's copy is replaced on
+    every deploy; days fetched by the `harvest` job therefore go to a separate
+    directory on the volume (`GEOGRAPH_HARVEST_DIR`) that a deploy does not
+    touch. Appending to the committed artifacts instead would silently discard
+    every harvested day the next time you shipped a commit — the file would
+    still be there and still parse.
+
+    Order does not carry meaning here even though the harvested days are the
+    newest: `score()` sorts by `(event_time, node_id)` before folding Head B,
+    which it must, because a dyad's first event is its baseline.
+    """
+    shipped = sorted(derived_dir().glob(f"gdelt-{pack_name}-*.tsv.gz"))
+    out = harvest.harvest_dir()
+    if out is None:
+        return shipped
+    return shipped + sorted(out.glob(f"gdelt-{pack_name}-*.harvest.tsv.gz"))
 
 
 def _roster(pack: Any) -> dict[str, dict[str, Any]]:
@@ -216,12 +233,26 @@ def forecast_rows(pack_names: list[str] | None = None) -> list[dict[str, Any]]:
 @functools.lru_cache(maxsize=1)
 def _loaded(pack_name: str, scored: bool, derived: str) -> tuple[dict[str, Any], ...]:
     # `derived` is in the key so a test that repoints the directory cannot be
-    # served rows parsed from the previous one.
+    # served rows parsed from the previous one. It carries the harvest
+    # directory too, for the same reason.
     pack = packs.load(pack_name)
     rows: list[dict[str, Any]] = []
+    seen: set[str] = set()
     for artifact in artifacts_for(pack_name):
         parsed, _result = parse_artifact(pack, artifact)
-        rows.extend(parsed)
+        for row in parsed:
+            # DEDUPE BY EVENT ID, because the harvest overlay can legitimately
+            # overlap the committed artifacts: `days_to_harvest` starts after
+            # whatever the image already covers, but the image is rebuilt from
+            # a fresh backfill now and then, and it may then include days the
+            # volume harvested first. A duplicated event is worse than a
+            # missing one here — Head B folds per dyad in time order, so the
+            # same event twice moves that dyad's baseline twice.
+            node_id = str(row["node_id"])
+            if node_id in seen:
+                continue
+            seen.add(node_id)
+            rows.append(row)
     if scored:
         score(rows)
     return tuple(rows)
@@ -240,7 +271,7 @@ def load(pack_name: str, *, scored: bool = True) -> list[dict[str, Any]]:
     pack. The returned LIST is fresh per call — callers sort and extend it —
     but the row dicts are shared: read them, never mutate them.
     """
-    return list(_loaded(pack_name, scored, str(derived_dir())))
+    return list(_loaded(pack_name, scored, f"{derived_dir()}|{harvest.harvest_dir()}"))
 
 
 def _as_panel_row(row: dict[str, Any]) -> dict[str, Any]:

@@ -21,6 +21,8 @@ Order of value, which is also the order they were written:
 from __future__ import annotations
 
 import contextlib
+import datetime as _dt
+import functools
 import os
 import sys
 import time
@@ -29,7 +31,9 @@ from typing import Any
 
 from core import packs
 from core import settings as settings_module
+from core.ingestion import harvest as harvest_module
 from core.transmission import event_study, runner
+from core.wire import corpus
 
 
 def _panel() -> Any | None:
@@ -1156,6 +1160,145 @@ def markets(conn: Any, deadline: float) -> dict[str, Any]:
 
 
 # ── the counts behind /api/stats ───────────────────────────────────────────
+
+
+#: Days fetched per tick. One day is a ~9 MB download that yields ~130 rows
+#: across the three lenses, so the steady state needs ONE — this bound is for
+#: the cold start, where a volume that has been off for a month has thirty to
+#: fetch and should not spend a whole slice doing it.
+HARVEST_DAYS_PER_TICK = int(os.getenv("GEOGRAPH_HARVEST_DAYS", "6"))
+
+
+@functools.lru_cache(maxsize=1)
+def _committed_through(pack_names: tuple[str, ...]) -> _dt.date | None:
+    """The last day the SHIPPED artifacts actually cover.
+
+    READ FROM THE CONTENTS, not the filenames, and that distinction is the
+    whole function. The obvious version takes the newest artifact's year and
+    calls it complete through 31 December — which for the CURRENT year claims
+    coverage the file does not have. Clamped to yesterday it then reports
+    "committed through yesterday" every single day, `days_to_harvest` returns
+    nothing every single day, and the harvest job is a permanent no-op that
+    looks like it is working.
+
+    So the newest year's artifact is scanned for its real maximum date. That
+    is one ~1 MB gzip of ~20k rows per lens, memoised for the process, against
+    a job that runs hourly.
+    """
+    latest: _dt.date | None = None
+    for name in pack_names:
+        newest: Path | None = None
+        newest_year = -1
+        for artifact in corpus.artifacts_for(name):
+            if ".harvest." in artifact.name:
+                continue
+            year_text = artifact.name.replace(".tsv.gz", "").rsplit("-", 1)[-1]
+            if year_text.isdigit() and int(year_text) > newest_year:
+                newest_year, newest = int(year_text), artifact
+        if newest is None:
+            continue
+        seen = _max_date_in(newest)
+        if seen and (latest is None or seen > latest):
+            latest = seen
+    return latest
+
+
+def _max_date_in(artifact: Path) -> _dt.date | None:
+    """The largest SQLDATE in one artifact, or None."""
+    import gzip
+
+    best: _dt.date | None = None
+    try:
+        with gzip.open(artifact, "rt", encoding="latin-1") as handle:
+            for line in handle:
+                fields = line.split("\t", 2)
+                if len(fields) < 2:
+                    continue
+                stamp = fields[1].strip()
+                if len(stamp) != 8 or not stamp.isdigit():
+                    continue
+                try:
+                    day = _dt.date(int(stamp[:4]), int(stamp[4:6]), int(stamp[6:]))
+                except ValueError:
+                    continue
+                if best is None or day > best:
+                    best = day
+    except OSError:
+        return None
+    return best
+
+
+def harvest(conn: Any, deadline: float) -> dict[str, Any]:
+    """Fetch GDELT's new daily exports into the volume's overlay artifacts.
+
+    THE JOB THE LOOP WAS MISSING. Twelve jobs kept the platform current and not
+    one of them could learn a new EVENT: `wire` projects artifacts that ship
+    inside the image, so the archive was frozen at whatever was last committed
+    and every other job re-derived from that snapshot. This is the only job
+    that reaches the network for new facts.
+
+    It takes NO graph lock and writes no graph — it only downloads, screens and
+    appends files, so it cannot block a reader or damage the volume's database.
+    The `wire` job picks the new rows up on the next process start, when the
+    corpus re-parses.
+
+    Bounded by days rather than by time, because the unit of work here is one
+    archive and a partially-written day must not be marked done. The marker
+    advances only over days actually fetched, so an interrupted tick costs the
+    day it was in.
+    """
+    del conn  # deliberately no graph access
+    out = harvest_module.harvest_dir()
+    if out is None:
+        return {"skipped": "GEOGRAPH_HARVEST_DIR is not set — harvesting is off"}
+
+    names = _pack_names()
+    if not names:
+        return {"skipped": "no packs"}
+
+    today = _dt.date.today()
+    days = harvest_module.days_to_harvest(
+        through=harvest_module.harvested_through(out),
+        committed_through=_committed_through(tuple(names)),
+        today=today,
+        limit=HARVEST_DAYS_PER_TICK,
+    )
+    if not days:
+        return {"note": "the archive is current", "through": str(
+            harvest_module.harvested_through(out) or _committed_through(tuple(names)))}
+
+    lenses = []
+    for name in names:
+        pack = packs.load(name)
+        roster = {
+            a["iso3"]: {"node_id": a["id"], "name": a["name"]}
+            for a in pack.actors if a.get("iso3")
+        }
+        if roster:
+            lenses.append((pack, roster))
+    if not lenses:
+        return {"skipped": "no iso3-coded actors in any pack"}
+
+    kept: dict[str, int] = {name: 0 for name, _ in ((p.name, r) for p, r in lenses)}
+    fetched = 0
+    for day in days:
+        written = harvest_module.append_day(day, lenses=lenses, out_dir=out)
+        for pack_name, count in written.items():
+            kept[pack_name] = kept.get(pack_name, 0) + count
+        # Marked per DAY, so an exception on day three does not re-fetch days
+        # one and two, and a day GDELT has not published yet is never marked.
+        harvest_module.mark_harvested(out, day)
+        fetched += 1
+        if time.monotonic() >= deadline:
+            break
+    return {
+        "days": fetched,
+        "through": str(days[fetched - 1]) if fetched else None,
+        "rows": kept,
+        "remaining_to_yesterday": max(
+            0, (today - _dt.timedelta(days=1) - days[fetched - 1]).days
+        ) if fetched else None,
+    }
 
 
 def counts(conn: Any, deadline: float) -> dict[str, Any]:

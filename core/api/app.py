@@ -144,6 +144,18 @@ def _start_jobs(app: FastAPI, settings: Any) -> None:
                 enabled=jobs_module._enabled("counts"),
                 slice_seconds=120.0,
             ),
+            # THE ONLY JOB THAT LEARNS A NEW FACT. Every other job re-derives
+            # from artifacts baked into the image, so without this one the
+            # archive is frozen at the last commit and the whole convergence
+            # loop converges on a snapshot. It takes no graph lock and writes
+            # no graph — it downloads, screens and appends files — so it is
+            # placed above the writers rather than behind them. Off unless
+            # GEOGRAPH_HARVEST_DIR names a directory on the volume.
+            jobs_module.Job(
+                name="harvest", every=3600.0, run=work.harvest,
+                enabled=jobs_module._enabled("harvest"),
+                slice_seconds=240.0,
+            ),
             # THE WIRE RIGHT AFTER THE COUNTS, because everything below it
             # reads what it writes: after a reset the lean copy is what the
             # study measures, the refill projects onto and the games price. Last
