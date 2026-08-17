@@ -3,6 +3,7 @@ made executable. If one fails, the YAML and the build spec have diverged."""
 
 from __future__ import annotations
 
+from core.ingestion import gdelt
 from core.ontology import kuzu_schema as ontology
 
 SPEC_NODE_TABLES = {
@@ -106,3 +107,21 @@ def test_validate_edge_refuses_unknown_rel():
 
     with pytest.raises(ontology.OntologyError):
         ontology.validate_edge("MADE_UP", {"source_id": "source:x"})
+
+
+def test_fips_crosswalk_keys_survive_yaml():
+    """Every FIPS key is a two-letter STRING — the Norway problem.
+
+    YAML 1.1 reads a bare `NO` as the boolean false, so `NO: NOR` loaded as
+    {False: "NOR"}: the lookup missed, and every event geolocated in Norway
+    came out of the parser with an empty `action_geo` — which is what the
+    co-participation rule reads to decide whose soil an action happened on.
+    It is silent, it is one key in a hundred and twenty-two, and the same
+    coercion waits for any future ON/OFF/Y/N key, so the shape is asserted
+    rather than the single entry.
+    """
+    table = gdelt.fips_to_iso3()
+    coerced = [k for k in table if not isinstance(k, str)]
+    assert not coerced, f"YAML coerced these FIPS keys — quote them: {coerced}"
+    assert table.get("NO") == "NOR"
+    assert all(len(k) == 2 and k.isupper() for k in table), "FIPS keys are two upper-case letters"

@@ -67,7 +67,10 @@ fips_to_iso3:
   LH: LTU
   FI: FIN
   SW: SWE
-  NO: NOR
+  # QUOTED, and it must stay quoted: YAML 1.1 reads a bare NO as the boolean
+  # false, so this entry loaded as {False: "NOR"} and every Norway-located
+  # event resolved to an empty action_geo. See the guard in test_ontology.py.
+  "NO": NOR
   AU: AUT
   AF: AFG
   TI: TJK

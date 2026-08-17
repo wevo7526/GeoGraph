@@ -172,16 +172,38 @@ def _is_state_actor(
     not the state. Reuters, Pfizer, Boeing and AstraZeneca carry MED/BUS/MNC
     and go; the homograph rows carry no type at all and stay.
 
-    THE REMAINING DEFECT AND ITS ONLY INSTRUMENT. Since no column separates
-    them, the discriminator has to be the NAME, and that means a curated
-    allowlist per roster member — the country's name, its common variants, its
-    demonym and its capital ("UNITED STATES", "THE US", "AMERICAN",
-    "WASHINGTON"), against which anything else resolving to that country is
-    refused. It belongs beside `fips_iso3.yaml` as a crosswalk, it is roughly
-    sixty countries of curation, and it is deterministic and testable once
-    written. It is not something to derive from the archive it is meant to
-    clean, which is what the two rejected attempts above were both trying to
-    do.
+    3. The actor's OWN geocode country against its assigned country, as a
+       per-NAME rate — "when this name appears, is it usually located in the
+       country GDELT assigned it to?". This one SEPARATES, which is why it is
+       worth writing down that it still cannot ship. Measured over all 66
+       artifacts, legitimate national actors sit at 73-85% self-located
+       (UNITED STATES 77%, RUSSIA 77%, UKRAINE 79%, ISRAEL 82%) while the
+       known homographs sit at 0-13% (ANTIOCH 0%, HASSAN 0%, POLE 7%,
+       MANCHESTER 12%). A clean gap — and a deny-list built on it deletes the
+       archive's own subjects, because three unrelated things live below the
+       bar:
+
+           NORWAY          3,903 slots   0%   <- the country itself
+           SLOVAKIA        3,306        7%   <- events geocoded in neighbours
+           THE US         50,418       11%   <- the country itself
+           OBAMA          25,467       16%   <- the head of state IS the state
+           DPRK            3,983       13%   <- a legitimate variant
+           OSLO              567        0%   <- a capital
+           HASSAN          5,619        0%   <- an actual homograph
+
+       A leader, a capital, a demonym and an abbreviation are all metonyms for
+       the state and all score like homographs, because the statistic measures
+       where the EVENT was, not what the actor is. Slovakia scores 7% for the
+       honest reason that its events happen in Hungary, Poland and Czechia.
+
+    So: the type gate is what ships, and the remaining discriminator has to be
+    the NAME — a curated allowlist per roster member (the country's name, its
+    variants, its demonym, its capital, its heads of state), against which
+    anything else resolving to that country is refused. It belongs beside
+    `fips_iso3.yaml`, it is roughly sixty countries of curation, and it is
+    deterministic and testable once written. It is NOT derivable from the
+    archive it is meant to clean — which is what all three rejected attempts
+    above were trying to do, and is the reason each of them failed differently.
     """
     actor_type = (fields[type_at] if len(fields) > type_at else "").strip().upper()
     return not (actor_type and actor_type not in _STATE_ROLES)
