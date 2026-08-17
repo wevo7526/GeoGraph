@@ -397,6 +397,49 @@ def create_app() -> FastAPI:
             ),
         }
 
+    @app.get("/api/storage")
+    def storage() -> dict[str, Any]:
+        """WHERE THE BYTES ACTUALLY ARE — both volumes, table by table.
+
+        Every storage decision on this project so far was made against a guess,
+        and two of them were wrong in ways that cost real time: an isolated
+        probe put an AFFECTED edge at 52 bytes when production was spending
+        ~2 KB, and the plan to move measurements into Postgres was authorised
+        on the belief that Postgres had room, when it sits under the same 5 GB
+        volume cap as the graph. Ten gigabytes across two volumes is only
+        "plenty" if you know what is in them.
+
+        Reads only counts and catalogue sizes; touches no data and takes no
+        write lock.
+        """
+        from core.graph import kuzu_store as store
+        from core.panel import pg_store
+
+        settings = settings_module.load()
+        out: dict[str, Any] = {
+            "graph_volume": store.disk_usage(settings.kuzu_db_path),
+        }
+        conn = getattr(app.state, "graph", None)
+        if conn is not None:
+            from core.api.routers import graph as graph_router
+
+            try:
+                out["graph_tables"] = graph_router.count_tables(conn)
+            except Exception as exc:  # noqa: BLE001 - a report must not 500
+                out["graph_tables_error"] = str(exc)
+        try:
+            panel = pg_store.connect(settings)
+        except pg_store.PanelUnavailable as exc:
+            out["postgres_error"] = str(exc)
+            return out
+        try:
+            out["postgres"] = pg_store.storage_report(panel)
+        except Exception as exc:  # noqa: BLE001 - same
+            out["postgres_error"] = str(exc)
+        finally:
+            panel.close()
+        return out
+
     @app.get("/api/jobs")
     def jobs_status() -> dict[str, Any]:
         """What the convergence loop has done and what is left.

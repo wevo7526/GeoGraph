@@ -700,3 +700,61 @@ def unsourced_effects(conn: Any) -> int:
         )
         row = cur.fetchone()
     return int(row[0]) if row else 0
+
+
+def storage_report(conn: Any) -> dict[str, Any]:
+    """What Postgres is actually holding, table by table.
+
+    TAKING STOCK RATHER THAN ESTIMATING. Every storage decision on this project
+    so far has been made against a guess — an isolated probe said an AFFECTED
+    edge cost 52 bytes when production was spending ~2 KB, and the plan to move
+    measurements here was authorised on the belief that Postgres had unlimited
+    room when it is on the same 5 GB cap. A number a page can serve is the only
+    kind that stays honest.
+
+    `pg_total_relation_size` includes indexes and TOAST, which is the figure
+    that fills a volume — a bare table size would understate the row count that
+    matters here by roughly the size of its unique index.
+    """
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            SELECT relname,
+                   pg_total_relation_size(c.oid)  AS total_bytes,
+                   pg_relation_size(c.oid)        AS table_bytes,
+                   pg_indexes_size(c.oid)         AS index_bytes,
+                   COALESCE(s.n_live_tup, 0)      AS live_rows
+            FROM pg_class c
+            JOIN pg_namespace n ON n.oid = c.relnamespace
+            LEFT JOIN pg_stat_user_tables s ON s.relid = c.oid
+            WHERE c.relkind = 'r' AND n.nspname = 'public'
+            ORDER BY pg_total_relation_size(c.oid) DESC
+            """
+        )
+        tables = [
+            {
+                "table": row[0],
+                "total_mb": round(row[1] / 1e6, 1),
+                "table_mb": round(row[2] / 1e6, 1),
+                "index_mb": round(row[3] / 1e6, 1),
+                "rows": int(row[4]),
+            }
+            for row in cur.fetchall()
+        ]
+        cur.execute("SELECT pg_database_size(current_database())")
+        row = cur.fetchone()
+        database_mb = round((row[0] if row else 0) / 1e6, 1)
+        # The measured/skipped split decides what the study still owes and how
+        # much of the table is recorded ABSENCE rather than measurement — a
+        # skip is deliberately a row here ("we looked and there was no market"
+        # is a different claim from "we never looked"), so it is not waste, but
+        # it is most of the rows and the number should be visible.
+        cur.execute(
+            "SELECT status, count(*) FROM event_study_runs GROUP BY status ORDER BY 2 DESC"
+        )
+        by_status = {str(r[0]): int(r[1]) for r in cur.fetchall()}
+    return {
+        "database_mb": database_mb,
+        "tables": tables,
+        "event_study_runs_by_status": by_status,
+    }
