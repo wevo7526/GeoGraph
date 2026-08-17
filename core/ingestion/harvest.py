@@ -62,10 +62,24 @@ _A2_COUNTRY = gdelt._A2_COUNTRY
 #: writing them as UTF-8 corrupts the archive.
 ENCODING = "latin-1"
 
-#: Matches `corpus.MIN_MENTIONS` and `backfill_gdelt.py --min-mentions`, so a
-#: harvested day and a committed artifact keep the same bar. A day admitted
-#: here on a looser bar would be a discontinuity in the archive, not extra data.
-MIN_MENTIONS = 10
+#: THE BAR THE MODERN ERA WAS HARVESTED AT, and it is NOT `corpus.MIN_MENTIONS`.
+#:
+#: Those two constants answer different questions and conflating them is a data
+#: bug, which is how this shipped wrong the first time. `corpus.MIN_MENTIONS`
+#: (10) is the floor the PARSER applies when re-reading an artifact; the
+#: artifacts were already filtered when they were written, so it keeps
+#: everything and never binds. This is the bar that decides what a NEW day
+#: contains, and it has to match the era it extends —
+#: `backfill_gdelt.py --min-mentions 50` built every artifact from 2006 on.
+#:
+#: Measured, after harvesting four days at 10 by mistake: every committed
+#: artifact from 2015 and 2026 has a minimum NumMentions of exactly 50, and
+#: the loose days ran ~3x denser than the ones before them (mena 247 rows/day
+#: against a committed average of 79). UNEVEN DENSITY IS THIS ARCHIVE'S
+#: DEFINING HAZARD — it has silently wrecked two estimators — and a step change
+#: on the day the harvest switched on is exactly the shape that does it. More
+#: rows is not more data when the rows are not comparable.
+MIN_MENTIONS = int(os.getenv("GEOGRAPH_HARVEST_MIN_MENTIONS", "50"))
 
 _MARKER = "harvested-through.txt"
 

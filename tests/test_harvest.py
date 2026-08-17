@@ -141,6 +141,23 @@ def test_appending_writes_a_second_gzip_member_that_reads_back(tmp_path):
 # ── the job ──────────────────────────────────────────────────────────────────
 
 
+def test_the_harvest_bar_matches_the_era_it_extends():
+    """50, not `corpus.MIN_MENTIONS`. The two answer different questions.
+
+    `corpus.MIN_MENTIONS` (10) is the floor the PARSER applies when re-reading
+    an artifact that was already filtered when written, so it never binds.
+    This is the bar that decides what a NEW day contains, and every committed
+    artifact from 2006 on was built with `--min-mentions 50` — verified: the
+    minimum NumMentions in the 2015 and 2026 artifacts is exactly 50.
+
+    Shipped wrong once, at 10, which ran new days ~3x denser than the ones
+    before them. Uneven density is this archive's defining hazard; a step
+    change on the day the harvest switched on is precisely its shape.
+    """
+    assert harvest.MIN_MENTIONS == 50
+    assert harvest.MIN_MENTIONS > corpus.MIN_MENTIONS
+
+
 def test_the_job_is_off_unless_a_directory_is_named(monkeypatch):
     from core.api import work
 
