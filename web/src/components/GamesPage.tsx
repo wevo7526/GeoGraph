@@ -151,7 +151,7 @@ function RegionGames({ region, onPick }: { region: string; onPick: (dyad: string
           {ranking.map((r) => {
             const standing = standingPhrase(r.standing)
             const acts = r.coercive_events ?? 0
-            const course = courseInWords(r.top_scenario, r.family)
+            const course = kindName(r.top_scenario)
             return (
               <button
                 key={r.dyad_id}
@@ -176,7 +176,9 @@ function RegionGames({ region, onPick }: { region: string; onPick: (dyad: string
                   />
                 </span>
                 <span className="ranking-figure mono">{count(acts)}</span>
-                <span className="ranking-course">{course ?? '—'}</span>
+                <span className="ranking-course" title={courseInWords(r.top_scenario, r.family) ?? undefined}>
+                  {course || '—'}
+                </span>
               </button>
             )
           })}

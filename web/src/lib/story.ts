@@ -68,6 +68,12 @@ export function signedPct(v: number, digits = 1): string {
   return `${v >= 0 ? '+' : '−'}${Math.abs(v * 100).toFixed(digits)}%`
 }
 
+/** First letter up. Every composed sentence goes through it, because the
+ *  fields it is built from are lower-case fragments by design. */
+export function capitalise(text: string): string {
+  return text ? text.charAt(0).toUpperCase() + text.slice(1) : text
+}
+
 /** A count with a thousands separator, or an em dash. */
 export function count(n: number | null | undefined): string {
   return typeof n === 'number' ? n.toLocaleString('en-US') : '—'
@@ -271,9 +277,12 @@ export function dyadCall(sol: DyadSolution, concept: ConceptSolution): Call {
       ? `${a} and ${b} open at their usual level of ${word}, and the game expects it to build.`
       : `${a} and ${b} open at their usual level of ${word}, and the game expects it to stay there.`
 
-  const oddsSentence = opensAbove
-    ? `${odds(p)} that they are still above it ${quarters === 4 ? 'a year' : `${quarters} quarters`} out.`
-    : `${odds(p)} that ${word} breaks above that usual level within ${quarters === 4 ? 'a year' : `${quarters} quarters`}.`
+  const horizonWords = quarters === 4 ? 'a year' : `${quarters} quarters`
+  const oddsSentence = capitalise(
+    opensAbove
+      ? `${odds(p)} that they are still above it ${horizonWords} out.`
+      : `${odds(p)} that ${word} breaks above that usual level within ${horizonWords}.`,
+  )
 
   const top: Scenario | undefined = concept.scenarios?.[0]
   const course = top
