@@ -139,8 +139,9 @@ def test_every_roster_actor_has_a_coordinate():
     Coordinates are CENTROIDS, not capitals, and they are a drawing instruction
     rather than evidence — nothing downstream may measure with them.
     """
-    import yaml
     from pathlib import Path
+
+    import yaml
 
     from core import packs
 
@@ -156,8 +157,10 @@ def test_every_roster_actor_has_a_coordinate():
         for actor in packs.load(name).actors
         if actor.get("iso3")
     }
-    assert not (roster - set(table)), f"roster members with no coordinate: {sorted(roster - set(table))}"
-    assert not (set(table) - roster), f"coordinates for non-roster actors: {sorted(set(table) - roster)}"
+    unplaced = sorted(roster - set(table))
+    stale = sorted(set(table) - roster)
+    assert not unplaced, f"roster members with no coordinate: {unplaced}"
+    assert not stale, f"coordinates for non-roster actors: {stale}"
 
     for iso3, pair in table.items():
         lat, lng = pair
