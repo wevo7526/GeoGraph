@@ -1560,3 +1560,32 @@ def test_the_rival_game_fears_pressing_at_high_friction_not_backing_down():
     assert transition.action_from_quads({"material_conflict": 3, "verbal_conflict": 2},
                                         family.RIVAL) == "press"
     assert transition.action_from_quads({"verbal_cooperation": 9}, family.RIVAL) == "ease"
+
+
+def test_the_family_sentence_never_reports_the_bar_as_a_measurement() -> None:
+    """THE LIFT IS A DECISION, NOT A MEASUREMENT.
+
+    `classify` lifts a pair's coercive share to `ADVERSARY_SHARE` when its
+    coercive COUNT clears the bar — deliberate, because 1,213 coercive acts in
+    a year is not argument whatever the denominator. Every branch then printed
+    that lifted value as if the archive had measured it: US–Iran's `why` read
+    "a declared rivalry whose record is 25% coercive" while `opening.posture`
+    on the same page said 17% of 6,961 events. Two numbers for one fact, and
+    the one in the sentence was the constant.
+    """
+    from core.games import family as family_module
+
+    read = family_module.classify(
+        {"relations": [{"relation_type": "rivalry", "since": "1980-04-07"}]},
+        {"share": 0.1743, "events": 6961, "coercive": 1213, "thin": False},
+    )
+    assert read["family"] == "adversary", "the count still decides the family"
+    assert "1,213 coercive acts" in read["why"], "it says what actually decided it"
+    assert "25%" not in read["why"], "and never quotes the bar as the record"
+
+    # A pair whose SHARE clears the bar still reports the share it measured.
+    by_share = family_module.classify(
+        {"relations": [{"relation_type": "rivalry", "since": "1980"}]},
+        {"share": 0.42, "events": 500, "coercive": 210, "thin": False},
+    )
+    assert "42%" in by_share["why"]

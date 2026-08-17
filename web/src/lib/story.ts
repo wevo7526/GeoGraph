@@ -320,8 +320,11 @@ export function marketsLede(
   const noisy = Math.abs(cell.median) < windowSpread(lead) / 6
   const sinceYear = (lead.inception_date ?? '').slice(0, 4)
 
+  // THE CAPTION IS A NOUN PHRASE AND MAY CARRY ITS OWN ARTICLE ("the Middle
+  // East"), so it goes AFTER the noun. Slotted in front, it produced "A sharp
+  // the Middle East escalation barely moves the median price" (2026-08-17).
   const headline = noisy
-    ? `A sharp ${label} escalation barely moves the median price. The story is in the spread.`
+    ? `A sharp escalation in ${label} barely moves the median price. The story is in the spread.`
     : `${lead.name} moves ${signedPct(cell.median, 1)} when ${label} escalates sharply.`
 
   const parts = headlined.slice(0, 2).map((m) => {

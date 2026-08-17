@@ -142,8 +142,24 @@ def classify(
     coercive = float(share) if share is not None else None
     count = int((posture or {}).get("coercive") or 0)
     # Coercion above the count bar reads as the top share bar would.
-    if count >= ADVERSARY_COUNT and (coercive is None or coercive < ADVERSARY_SHARE):
+    #
+    # AND THE SENTENCE MUST NOT REPORT THE LIFT AS A MEASUREMENT. The lift is
+    # deliberate — 1,213 coercive acts in a year is not argument whatever the
+    # denominator — but it moves `coercive` to the BAR, and every branch below
+    # then printed that bar as though the archive had measured it: US–Iran's
+    # `why` read "a declared rivalry whose record is 25% coercive" beside a
+    # posture of 17% over 6,961 events, two numbers for one fact on one page
+    # (2026-08-17). When the count is what decided it, the count is what the
+    # sentence says.
+    by_count = count >= ADVERSARY_COUNT and (coercive is None or coercive < ADVERSARY_SHARE)
+    if by_count:
         coercive = max(coercive or 0.0, ADVERSARY_SHARE)
+
+    def _evidence() -> str:
+        """The measured fact that carried the classification, in its own terms."""
+        if by_count:
+            return f"{count:,} coercive acts on its recent record"
+        return f"a record {coercive:.0%} coercive" if coercive is not None else "no coercive record"
 
     # ANTAGONISM FIRST, matching `opening._STANDING_PRIORITY`: a pact between
     # rivals is evidence of the rivalry, not a replacement for it, so a pair
@@ -151,7 +167,7 @@ def classify(
     if "rivalry" in kinds:
         if coercive is not None and coercive >= ADVERSARY_SHARE:
             family, why = "adversary", (
-                f"a declared rivalry whose record is {coercive:.0%} coercive"
+                f"a declared rivalry with {_evidence()}"
             )
         elif coercive is not None and coercive < RIVAL_CEILING:
             family, why = "rival", (
@@ -165,15 +181,14 @@ def classify(
         # the sense that matters here, and the archive has such pairs.
         if coercive is not None and coercive >= ADVERSARY_SHARE:
             family, why = "adversary", (
-                f"declared allies whose record is {coercive:.0%} coercive — "
+                f"declared allies with {_evidence()} — "
                 "the behaviour outweighs the declaration"
             )
         else:
             family, why = "ally", "a declared alliance"
     elif coercive is not None and coercive >= ADVERSARY_SHARE:
         family, why = "adversary", (
-            f"no declared relation, and {coercive:.0%} of its coded events "
-            "are coercive"
+            f"no declared relation, and {_evidence()}"
         )
     elif thin:
         family, why = "rival", (

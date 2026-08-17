@@ -85,6 +85,12 @@ def market_rows(conn: Any, ticker: str, region_pack: str) -> list[dict[str, Any]
     )
 
 
+#: How many bindings one event can produce in the pattern above. Six is
+#: generous against the duplicates seen in production (four per event) and
+#: costs one query's rows, not a second query.
+_DUPLICATE_HEADROOM = 6
+
+
 def biggest_moves(
     conn: Any, ticker: str, region_pack: str, *, roster: set[str], limit: int = 8
 ) -> list[dict[str, Any]]:
@@ -118,19 +124,34 @@ def biggest_moves(
         "a.first_mover AS first_mover "
         "ORDER BY abs(a.abnormal_return) DESC LIMIT $limit",
         {"ticker": ticker, "pack": region_pack, "window": HEADLINE_WINDOW,
-         "roster": sorted(roster), "limit": limit},
+         # OVER-FETCHED BECAUSE THE PATTERN MULTIPLIES. The MATCH binds one row
+         # per (initiator edge x target edge x AFFECTED edge), and the wire's
+         # events are written with CREATE rather than MERGE, so an event that
+         # picked up a second actor edge returns the same measurement several
+         # times. Gold's "events that moved it most" was one agreement printed
+         # four times and then a second printed four times (2026-08-17). The
+         # duplicates are collapsed below; the over-fetch is what keeps eight
+         # DISTINCT events available to collapse into.
+         "roster": sorted(roster), "limit": limit * _DUPLICATE_HEADROOM},
     )
-    return [
-        {
-            "event_id": r["event_id"], "name": r["name"], "date": r["date"],
+    out: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for r in rows:
+        event_id = str(r["event_id"])
+        if event_id in seen:
+            continue
+        seen.add(event_id)
+        out.append({
+            "event_id": event_id, "name": r["name"], "date": r["date"],
             "kind": kind_of(r["direction"], r["magnitude"]),
             "pair": (f"{r['initiator']} → {r['target']}"
                      if r.get("initiator") and r.get("target") else None),
             "abnormal_return": round(float(r["ar"]), 6),
             "first_mover": bool(r["first_mover"]),
-        }
-        for r in rows
-    ]
+        })
+        if len(out) == limit:
+            break
+    return out
 
 
 def market_response(rows: list[dict[str, Any]]) -> dict[str, Any]:
@@ -260,6 +281,14 @@ def _forward_from_map(game_map: dict[str, Any] | None) -> dict[str, Any] | None:
             "dyad_name": sc.get("dyad_name"),
             "kind": sc.get("kind"),
             "kind_label": sc.get("kind_label"),
+            "kind_sentence": sc.get("kind_sentence"),
+            # WHICH GAME THE PAIR PLAYS, carried so a reader surface can tell an
+            # alliance's rift-course from a rivalry's escalation. Without it the
+            # markets page listed Syria-Lebanon (formal allies since 1945) under
+            # "where the games point next" and, having only the kind KEY to work
+            # from, rendered it as "both sides escalate at 95%" beside a label
+            # reading "mutual withholding" (2026-08-17).
+            "family": sc.get("family"),
             "likelihood": sc.get("likelihood"),
             "end_label": sc.get("end_label"),
             "market_implications": (sc.get("market_implications") or [])[:4],

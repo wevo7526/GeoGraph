@@ -767,8 +767,16 @@ export function DotWhisker({
 }) {
   const [hover, setHover] = useState<string | null>(null)
   if (!rows.length) return <EmptyNote note="nothing measured yet" />
-  const gutter = 170
-  const width = 760
+  // WIDE ENOUGH FOR THE LONGEST NAME. At 170 the market names were clipped by
+  // the viewBox — "Tadawul All Share Index (Saudi Arabia)" rendered as "l Share
+  // Index (Saudi Arabia)", which reads as a broken chart rather than a long
+  // label (2026-08-17). Measured off the rows rather than fixed, so a pack with
+  // shorter names does not pay for one with longer.
+  const gutter = Math.min(
+    340,
+    Math.max(170, ...rows.map((r) => r.label.length * 6.6 + (r.thin ? 46 : 14))),
+  )
+  const width = 620 + gutter
   const rowH = 27
   const pad = { top: 22, bottom: 24, right: 62 }
   const h = height ?? pad.top + rows.length * rowH + pad.bottom

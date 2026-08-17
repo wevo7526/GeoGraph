@@ -151,7 +151,7 @@ export default function MarketsPage({ region }: { region: string; onNavigate: (r
       <Beat
         title="What a sharp escalation does to prices"
         major
-        aside={`Each market's measured response over the four sessions after ${name}'s coded record shows a sharp escalation. The dot is the typical move; the bar holds the middle half of what actually happened.`}
+        aside={`Each market's measured response over the four sessions after a sharp escalation in ${name}. The dot is the typical move; the bar holds the middle half of what actually happened.`}
       >
         {headlined.length ? (
           <>

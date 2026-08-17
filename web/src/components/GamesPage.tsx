@@ -406,9 +406,13 @@ function DyadGame({
         kicker={`Solved game · ${label.toUpperCase()}`}
         title={sol.dyad_name}
         standfirst={
+          // STANDING, THEN RECORD, THEN THE QUESTION — three facts from three
+          // sources, said once each. `family.why` is deliberately not here: it
+          // restates the standing and the record in the classifier's terms,
+          // and the reader has just read both.
           <>
             {[standing, posture].filter(Boolean).join(' · ')}
-            {family ? `. ${family.why.charAt(0).toUpperCase()}${family.why.slice(1)}, so the question worth asking is ${family.question}.` : ''}
+            {family ? `. The question worth asking of this pair is ${family.question}.` : ''}
           </>
         }
         action={
