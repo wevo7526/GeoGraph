@@ -131,6 +131,12 @@ export interface WireFeed {
 /** The globe board: three layers that answer three different questions.
  *  WHO EXISTS (`nodes` + `unplaced`), WHAT IS DECLARED (`links`), and WHAT
  *  JUST HAPPENED (`pulses`, the only layer that moves). */
+export interface GlobeStanding {
+  with: string
+  relation_type: string
+  since: string
+}
+
 export interface GlobeNode {
   id: string
   name: string
@@ -138,6 +144,15 @@ export interface GlobeNode {
   lat: number
   lng: number
   packs: string[]
+  /** The pack CAPTIONS this actor appears under — `region_label`, never the
+   *  pack key: `china` is captioned ASIA because the lens reaches Japan,
+   *  Korea and Taiwan. */
+  regions: string[]
+  /** Declared, dated standings — the only field entitled to characterise a
+   *  relationship. Capped at four; the pair page carries the rest. */
+  standings: GlobeStanding[]
+  /** How many of the board's recent departures this actor is party to. */
+  departures: number
 }
 
 export interface GlobeUnplaced {

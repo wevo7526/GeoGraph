@@ -865,10 +865,10 @@ input[type='range'].timeline:focus-visible {
 }
 
 /* THE FRONT DOOR AND ITS MAP (2026-08-17) -----------------------------------
-   Four things, centred: the hero line, the globe, one door, one hairline. The
-   page is a single column with the map as its subject, so everything is
-   centred on the same axis — the globe is a circle, and a circle off-axis in a
-   left-aligned column reads as a mistake.
+   Masthead, then hero-left / globe-right, then one centred door, then a
+   hairline. The wordmark and its double rule are the same masthead motif every
+   working page wears, so the front door reads as the same publication rather
+   than a separate splash.
 
    The globe wore a dark plate for one afternoon; the override is withdrawn.
    The white-ground decision is dated twice in this file and tells the next
@@ -883,23 +883,55 @@ input[type='range'].timeline:focus-visible {
   flex-direction: column;
 }
 
+.landing-masthead {
+  border-bottom: 4px double var(--rule-strong);
+  margin: 0 1.5rem;
+  padding: 1.1rem 0 0.6rem;
+}
+
+.landing-wordmark {
+  font-size: 1.5rem;
+  letter-spacing: 0.18em;
+  font-variant-caps: small-caps;
+}
+
 .landing-main {
   flex: 1;
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 1.75rem;
-  padding: 3rem 1.5rem 2.5rem;
-  text-align: center;
+  gap: 2rem;
+  padding: 2.5rem 1.5rem;
+  width: 100%;
+  max-width: 78rem;
+  margin: 0 auto;
+}
+
+/* Hero and globe share the row; the copy holds the left edge and the globe
+   takes what it needs on the right. Below 900px they stack, copy first —
+   a sentence still reads before its illustration. */
+.landing-split {
+  width: 100%;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  align-items: center;
+  gap: clamp(1.5rem, 4vw, 3.5rem);
+}
+
+@media (max-width: 900px) {
+  .landing-split { grid-template-columns: minmax(0, 1fr); }
 }
 
 .landing-hero {
-  font-size: clamp(2.1rem, 5.2vw, 4.1rem);
-  line-height: 1.04;
-  letter-spacing: -0.015em;
+  /* Smaller than the old display size but still the largest thing on the page
+     — the brief was "smaller, but not tiny". */
+  font-size: clamp(1.9rem, 3.4vw, 3rem);
+  line-height: 1.08;
+  letter-spacing: -0.012em;
   text-wrap: balance;
-  max-width: 20ch;
+  text-align: left;
+  max-width: 17ch;
   margin: 0;
 }
 
@@ -914,7 +946,7 @@ input[type='range'].timeline:focus-visible {
 .plate { margin: 0; width: 100%; display: flex; justify-content: center; }
 
 .plate--waiting {
-  min-height: 300px;
+  min-height: 280px;
   display: grid;
   place-items: center;
   color: var(--muted);
@@ -922,29 +954,54 @@ input[type='range'].timeline:focus-visible {
 
 .globe-box {
   position: relative;
-  width: min(62vh, 100%, 620px);
+  width: min(52vh, 100%, 520px);
   aspect-ratio: 1 / 1;
   /* GRAB, not pointer: the globe is a thing you turn, and the cursor is the
-     only affordance saying so on a page with no instructions left. */
+     only affordance saying so on a page with no instructions on it. */
   cursor: grab;
   touch-action: none;
 }
 .globe-box:active { cursor: grabbing; }
 .globe-box canvas { display: block; width: 100%; height: 100%; }
 
-/* The tooltip is the only text the map carries, and it appears only where the
-   reader points. Positioned at the node and lifted clear of it; it never
-   intercepts the pointer, or hovering a node would flicker as the tip covered
-   the very point that summoned it. */
+/* THE HOVER MODAL. Not a label — what the platform SAYS about that state: the
+   lenses it appears under, its declared and dated standings, and whether it
+   has left a usual band lately. Never intercepts the pointer, or hovering a
+   node would flicker as the modal covered the point that summoned it. */
 .globe-tip {
   position: absolute;
-  transform: translate(-50%, calc(-100% - 12px));
+  transform: translate(-50%, calc(-100% - 14px));
   pointer-events: none;
-  white-space: nowrap;
   background: var(--ground);
   border: 1px solid var(--rule-strong);
-  padding: 0.18rem 0.5rem;
-  font-size: 0.82rem;
-  line-height: 1.2;
-  z-index: 2;
+  padding: 0.4rem 0.6rem;
+  font-size: 0.8rem;
+  line-height: 1.35;
+  max-width: 22rem;
+  min-width: 11rem;
+  z-index: 3;
+  display: flex;
+  flex-direction: column;
+  gap: 0.12rem;
+  text-align: left;
 }
+
+.globe-tip-name {
+  font-size: 0.95rem;
+  font-weight: 600;
+  line-height: 1.2;
+}
+
+.globe-tip-line {
+  color: var(--muted);
+  font-size: 0.75rem;
+}
+
+.globe-tip-standings {
+  list-style: none;
+  margin: 0.2rem 0;
+  padding: 0;
+  border-top: 1px dotted var(--line);
+  padding-top: 0.25rem;
+}
+.globe-tip-standings li { white-space: nowrap; }

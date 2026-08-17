@@ -44,7 +44,7 @@ import {
   ringIsVisible,
   visibleRuns,
 } from '../lib/project'
-import type { GlobeBoard } from '../types'
+import type { GlobeBoard, GlobeNode } from '../types'
 
 /** The globe's inks. Local constants because a 2D canvas cannot read CSS
  *  custom properties — but they are the STYLESHEET's values, so the map and
@@ -85,7 +85,9 @@ export default function OrthoGlobe({ board }: { board: GlobeBoard }) {
   // The tooltip is React; the globe is not. It is set only when the node under
   // the pointer CHANGES, so a sixty-per-second loop never re-renders the page
   // — which is the whole reason the loop owns pixels directly.
-  const [hover, setHover] = useState<{ name: string; sx: number; sy: number } | null>(null)
+  const [hover, setHover] = useState<
+    { node: GlobeNode; sx: number; sy: number } | null
+  >(null)
   const hoverId = useRef<string | null>(null)
 
   const state = useRef({
@@ -259,7 +261,7 @@ export default function OrthoGlobe({ board }: { board: GlobeBoard }) {
       hoverId.current = id
       const node = id ? byId.get(id) : null
       const at = id ? s.screen.get(id) : null
-      setHover(node && at ? { name: node.name, sx: at.sx, sy: at.sy } : null)
+      setHover(node && at ? { node, sx: at.sx, sy: at.sy } : null)
     }
 
     let raf = 0
@@ -311,12 +313,22 @@ export default function OrthoGlobe({ board }: { board: GlobeBoard }) {
         const dy = e.clientY - s.lastY
         s.lastX = e.clientX
         s.lastY = e.clientY
-        // Direct, not eased: a dragged globe must track the pointer exactly or
-        // it feels broken. Velocity is recorded for the release.
-        s.lam0 += dx * DRAG_LAM
-        s.phi0 = Math.max(-75, Math.min(75, s.phi0 - dy * DRAG_PHI))
-        s.vLam = dx * DRAG_LAM * 60
-        s.vPhi = -dy * DRAG_PHI * 60
+        // BOTH AXES ARE NEGATED, and that is the fix rather than a taste.
+        // Worked from the projection: `toVector` puts a point at
+        // sin(lng - lam0), so RAISING lam0 sweeps points LEFT — a globe dragged
+        // right must therefore have lam0 DECREASE to follow the pointer. The
+        // tilt is the same story through the cos(phi0)/sin(phi0) rotation:
+        // raising phi0 moves the centre point DOWN the screen. Shipped with
+        // both signs the wrong way round, which is precisely why it felt
+        // inverted and unusable.
+        //
+        // Direct, not eased: a dragged globe must track the pointer exactly.
+        // The velocity is recorded in the same sense, so a release carries on
+        // the way the hand was going.
+        s.lam0 -= dx * DRAG_LAM
+        s.phi0 = Math.max(-75, Math.min(75, s.phi0 + dy * DRAG_PHI))
+        s.vLam = -dx * DRAG_LAM * 60
+        s.vPhi = dy * DRAG_PHI * 60
         return
       }
       const rect = box.getBoundingClientRect()
@@ -384,7 +396,25 @@ export default function OrthoGlobe({ board }: { board: GlobeBoard }) {
           role="status"
           style={{ left: `${hover.sx}px`, top: `${hover.sy}px` }}
         >
-          {hover.name}
+          <span className="globe-tip-name">{hover.node.name}</span>
+          {hover.node.regions?.length > 0 && (
+            <span className="globe-tip-line">{hover.node.regions.join(' · ')}</span>
+          )}
+          {hover.node.standings?.length > 0 && (
+            <ul className="globe-tip-standings">
+              {hover.node.standings.map((st) => (
+                <li key={`${st.relation_type}-${st.with}`}>
+                  {st.relation_type} with {st.with}
+                  {st.since ? ` since ${st.since}` : ''}
+                </li>
+              ))}
+            </ul>
+          )}
+          <span className="globe-tip-line">
+            {hover.node.departures > 0
+              ? `${hover.node.departures} recent departure${hover.node.departures === 1 ? '' : 's'} from a usual band`
+              : 'nothing lately outside a usual band'}
+          </span>
         </div>
       )}
     </div>

@@ -214,6 +214,32 @@ def globe(
         )
         pulse_rows = pulse_rows[:pulses]
 
+    # WHAT THE PLATFORM SAYS ABOUT EACH STATE, attached to the node so the
+    # hover can be a reading rather than a label. All of it is already in hand:
+    # the standings come from the pack relations walked above, and the
+    # departures from the pulse scan. No extra read, no graph.
+    standings: dict[str, list[dict[str, str]]] = {}
+    for link in links:
+        a, b = link["source"], link["target"]
+        for side, other in ((a, b), (b, a)):
+            if side in nodes and other in nodes:
+                standings.setdefault(side, []).append({
+                    "with": nodes[other]["name"],
+                    "relation_type": link["relation_type"],
+                    "since": str(link["valid_from"])[:4],
+                })
+    departures: dict[str, int] = {}
+    for pulse in pulse_rows:
+        for side in (pulse["source"], pulse["target"]):
+            departures[side] = departures.get(side, 0) + 1
+    labels = {name: packs.load(name).label for name in names}
+    for node in nodes.values():
+        node["standings"] = sorted(
+            standings.get(node["id"], []), key=lambda r: (r["relation_type"], r["with"])
+        )[:4]
+        node["departures"] = departures.get(node["id"], 0)
+        node["regions"] = [labels.get(p, p) for p in node["packs"]]
+
     placed = [n for n in nodes.values() if any(p in names for p in n["packs"])]
     off_globe = sorted(unplaced.values(), key=lambda a: (a["actor_type"], a["name"]))
     for actor in off_globe:

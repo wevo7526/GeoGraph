@@ -43,13 +43,30 @@ export default function Landing({ onEnter }: { onEnter: (route: string) => void 
 
   return (
     <div className="landing">
+      {/* THE MASTHEAD IS BACK (2026-08-17). It went with the rest of the
+          subtext in the cut and took the wordmark and its double rule with
+          it, which left the page anonymous — a headline and a globe belonging
+          to nobody. The rule is the same masthead motif every working page
+          wears, so the front door reads as the same publication. */}
+      <header className="landing-masthead">
+        <span className="landing-wordmark">GeoGraph</span>
+      </header>
+
       <main className="landing-main">
-        <h1 className="landing-hero">
-          A hundred and twenty years of geopolitics, priced.
-        </h1>
+        {/* HERO LEFT, GLOBE RIGHT. The headline is a sentence and sentences
+            are read from a left edge; centring it made the eye hunt for the
+            start of each line. The globe takes the right half because it is
+            the object, not an illustration of the copy. */}
+        <div className="landing-split">
+          <h1 className="landing-hero">
+            A hundred and twenty years of geopolitics, priced.
+          </h1>
+          <SituationPlate />
+        </div>
 
-        <SituationPlate />
-
+        {/* The door stays centred: it is the page's one action, and an action
+            belongs on the axis of the whole page rather than under one column
+            of it. */}
         <button type="button" className="ink-button text-lg" onClick={() => onEnter('/explore')}>
           Enter
         </button>
