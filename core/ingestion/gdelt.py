@@ -72,9 +72,20 @@ _ACTION_GEO_COUNTRY = 51
 #: corroborated event from one article. Both ride on the corpus row (like
 #: `action_geo`) for `classifier.coercion` to read; neither is a graph
 #: property.
+_A1_CODE = 5
+_A2_CODE = 15
 _A1_TYPE1 = 12
 _A2_TYPE1 = 22
+#: Actor?Geo_Type: 1 = COUNTRY. Anything else (2 US state, 3 US city, 4 world
+#: city, 5 world state) is a PLACE INSIDE a country, which is how Birmingham
+#: and Alabama came to commit interstate material conflict.
+_A1_GEO_TYPE = 35
+_A2_GEO_TYPE = 42
 _SOURCES = 32
+
+#: CAMEO role suffixes that mean the actor IS the state acting. A bare country
+#: code (no suffix) is the state itself.
+_STATE_ROLES = frozenset({"GOV", "MIL", "COP", "JUD", "LEG", "SPY"})
 
 _FIPS_CROSSWALK = (
     Path(__file__).resolve().parent.parent / "ontology" / "crosswalks" / "fips_iso3.yaml"
@@ -105,6 +116,57 @@ _QUAD_CLASS = {
 #: (`external_powers`), because externality is a property of the lens — the
 #: USA–RUS dyad is noise to MENA and the spine of Eurasia.
 EXTERNAL_POWERS = frozenset({"USA", "RUS"})
+
+
+#: GDELT 1.0 begins in 1979 by construction; anything earlier is a coding
+#: artefact wearing a date.
+GDELT_FIRST_YEAR = 1979
+
+
+def _latest_plausible_year() -> int:
+    """Next year, so a row filed just over a new year is not thrown away."""
+    import datetime as _dt
+
+    return _dt.date.today().year + 1
+
+
+def _is_state_actor(
+    fields: list[str], code_at: int, name_at: int,
+    type_at: int, geo_type_at: int, iso3: str,
+) -> bool:
+    """Is this actor slot the STATE, rather than a place or body inside it?
+
+    Three ways to qualify, in order of strength:
+
+      1. the actor CODE is the bare country code, or the country code plus a
+         state role (USAGOV, RUSMIL) — GDELT's own statement that the actor is
+         the government, the military or the police;
+      2. the actor is geocoded at COUNTRY level (Geo_Type 1);
+      3. there is no geocode at all AND no non-state type — the ordinary case
+         for a wire sentence about "Russia" with no place attached.
+
+    A named type that is not a state role disqualifies outright: a newspaper
+    with a nationality is not the nation.
+    """
+    code = (fields[code_at] if len(fields) > code_at else "").strip().upper()
+    actor_type = (fields[type_at] if len(fields) > type_at else "").strip().upper()
+    geo_type = (fields[geo_type_at] if len(fields) > geo_type_at else "").strip()
+
+    if actor_type and actor_type not in _STATE_ROLES:
+        return False
+    if code == iso3:
+        return True
+    if code.startswith(iso3):
+        suffix = code[len(iso3):]
+        if not suffix or suffix in _STATE_ROLES:
+            return True
+        # A compound role (USAGOVELI) counts when its FIRST role is a state
+        # organ; anything else is a person or body wearing the flag.
+        return suffix[:3] in _STATE_ROLES
+    # The code did not name this country at all — GDELT matched the actor to
+    # the roster by something other than its code, which is exactly the
+    # homograph case. Require a country-level geocode to believe it.
+    return geo_type == "1"
 
 
 def _int_or_none(value: str) -> int | None:
@@ -150,6 +212,26 @@ def parse_lines(
         if a1 not in actors_by_iso3 or a2 not in actors_by_iso3 or a1 == a2:
             result.drop("actors outside the pack roster")
             continue
+        # AND BOTH SIDES MUST ACTUALLY BE THE STATE. A country code is filled
+        # in for anyone with a nationality, and GDELT resolves an actor's name
+        # by string match, so the roster's flags get pinned to towns, firms and
+        # given names: "POLE" arrives as Poland (1,739 actor slots), "ANTIOCH"
+        # as Turkey (836 slots, 762 of them geolocated in California),
+        # "CANTON" as China (477, 290 in Ohio), "HASSAN" as Jordan (5,619).
+        # Reuters, Pfizer, Boeing, Birmingham and Alabama arrive as the United
+        # States or the United Kingdom. Only 40.7% of the US–UK
+        # material-conflict rows had BOTH actors named at national level.
+        #
+        # That is where "use of military force between the United States and
+        # Poland, 2011" came from, and no filter on the TYPE columns can reach
+        # it — three quarters of these rows carry no type at all. The GEO TYPE
+        # is what separates a state from a place inside it.
+        if not _is_state_actor(fields, _A1_CODE, _A1_NAME, _A1_TYPE1, _A1_GEO_TYPE, a1):
+            result.drop("initiator is not the state itself")
+            continue
+        if not _is_state_actor(fields, _A2_CODE, _A2_NAME, _A2_TYPE1, _A2_GEO_TYPE, a2):
+            result.drop("target is not the state itself")
+            continue
         if a1 in external_powers and a2 in external_powers:
             result.drop("external-power pair — not a regional event")
             continue
@@ -161,6 +243,19 @@ def parse_lines(
             event_time = f"{stamp[:4]}-{stamp[4:6]}-{stamp[6:8]}"
         except (ValueError, IndexError):
             result.drop("malformed line")
+            continue
+        # A BAD DATE NEVER RAISED, so it was never dropped: the slice above
+        # cannot fail on nonsense, only `float(goldstein)` can. 1,488 rows
+        # across the shipped artifacts carry SQLDATE 19200101 — 1,158 of them
+        # in mena-2020, and their content is unmistakably the January 2020
+        # Soleimani week. That matters more than the count suggests, because
+        # `corpus.score` folds Head B in time order and A DYAD'S FIRST EVENT IS
+        # ITS BASELINE: the United States–Iran pair opened on 428 mis-dated
+        # strike events, so every magnitude, band and feature on the region's
+        # defining pair was computed against a corrupted zero.
+        if not (stamp.isdigit() and len(stamp) == 8 and
+                GDELT_FIRST_YEAR <= int(stamp[:4]) <= _latest_plausible_year()):
+            result.drop("event date outside the archive's window")
             continue
         if quad is None:
             result.drop("unknown quad class")

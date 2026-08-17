@@ -567,6 +567,11 @@ _RAW_DIR = Path(
 )
 _COW_ALLIANCES = "alliance_v4.1_by_directed.csv"
 
+#: The last year COW's alliance v4.1 file knows about — kept as documentation
+#: of what a right-censored row actually claims. Windows are NOT closed here
+#: (see `ally_windows`): doing so retired NATO in 2013.
+COW_ALLIANCE_COVERAGE_END = 2012
+
 
 def _year_of(value: Any, default: int) -> int:
     text = str(value or "").strip()
@@ -587,6 +592,27 @@ def ally_windows(pack: Any) -> tuple[dict[str, list[tuple[int, int]]], list[str]
     """
     from core.classifier import escalation
 
+    # A DECLARED RIVALRY ENDS AN ALLY WINDOW, and this is the fix for the
+    # worst regression this file ever shipped. COW records an alliance with no
+    # end year as RIGHT-CENSORED — "still in force when the data was
+    # collected", which for alliance v4.1 means 2012 — and `_year_of` mapped
+    # the blank to 9999. Russia and Ukraine signed a defence pact in 1995, so
+    # the archive believed they were allies in 2026, and the allied-fight rule
+    # in `classifier.coercion` then read every Russian strike on Ukrainian
+    # soil as a partner's presence: 20,011 material-conflict rows fell to
+    # 4,237, and the largest interstate war in the archive was 79% erased from
+    # every counter downstream (2026-08-17, caught by audit before a reader
+    # saw it — the unit test passed `allied` by hand and could not).
+    #
+    # The packs' curated relations are the modern truth and they say this
+    # plainly: eurasia declares Russia–Ukraine a rivalry from 2014-02-27.
+    # Antagonism outranks a lapsed treaty, exactly as `_STANDING_PRIORITY`
+    # already has it for the standing a reader is shown.
+    rivalries = {
+        escalation.dyad_id(str(r["a"]), str(r["b"]))
+        for r in pack.relations
+        if str(r.get("relation_type")) == "rivalry"
+    }
     roster = {str(a["id"]) for a in pack.actors}
     ccode_to_id = {
         int(a["cow_ccode"]): str(a["id"]) for a in pack.actors if a.get("cow_ccode")
@@ -600,6 +626,8 @@ def ally_windows(pack: Any) -> tuple[dict[str, list[tuple[int, int]]], list[str]
         # the United Nations co-participants.
         if relation.get("relation_type") == "alliance":
             dyad = escalation.dyad_id(str(relation["a"]), str(relation["b"]))
+            if dyad in rivalries:
+                continue
             windows.setdefault(dyad, []).append(
                 (_year_of(relation.get("valid_from"), 1905),
                  _year_of(relation.get("valid_to"), 9999))
@@ -625,7 +653,19 @@ def ally_windows(pack: Any) -> tuple[dict[str, list[tuple[int, int]]], list[str]
                 # graph side and for what reading them all as "alliance" did.
                 if str(row.get("defense", "")).strip() != "1":
                     continue
+                if escalation.dyad_id(a, b) in rivalries:
+                    continue
                 start = _year_of(row.get("dyad_st_year"), 1905)
+                # A RIGHT-CENSORED WINDOW STAYS OPEN, and the rivalry check
+                # above is what makes that safe. 60.7% of the file's
+                # defence-pact rows carry no end year, which COW means as
+                # "still in force when we stopped looking" (2012) — and
+                # closing them there was measured to be worse: NATO went with
+                # them, so the United States and the United Kingdom stopped
+                # being allies in 2013 and their joint operations began
+                # counting as coercion between them again. An alliance ends
+                # when something says it ended; for the pairs where that
+                # matters, the packs say so as a dated rivalry.
                 end = _year_of(row.get("dyad_end_year"), 9999)
                 if end < 1905:
                     continue

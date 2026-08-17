@@ -1586,6 +1586,70 @@ def _reset_graph_if_asked() -> dict[str, Any] | None:
 #: Which GEOGRAPH_DROP_AFFECTED value has already been acted on.
 _DROP_AFFECTED_LEDGER = ".affected-drop-honoured"
 
+#: Free bytes below which the boot reclaims what it can from the volume before
+#: touching the database. Kuzu needs somewhere to put a WAL record to do
+#: ANYTHING — including DROP.
+_EMERGENCY_FLOOR_BYTES = 64 << 20
+
+
+def _free_reclaimable_files() -> dict[str, Any] | None:
+    """Delete what the volume holds that is not data, when it is FULL.
+
+    THE DEADLOCK THIS BREAKS. On 2026-08-17 the volume reached 0 bytes free
+    with the graph at 4.77 GB of 4.84 GB, and the container entered a crash
+    loop in which nothing could get it out: every boot step died with
+
+        IO exception: Cannot write to file. path: /data/geograph.kuzu.wal
+        numBytesToWrite: 12 … No space left on device
+
+    — and that included the DROP that exists to free space. A database with no
+    room to write a twelve-byte log record cannot delete anything either.
+
+    So the way out has to come from OUTSIDE the database. What the volume
+    holds beside the graph is evidence, not data: quarantined write-ahead logs
+    (`*.wal.broken-*`, ~20 MB each) left by `kuzu_store.connect` after a
+    crashed open, and the raw deep-tier files, which ship in the image and are
+    re-fetchable. Deleting the quarantined tails buys the few tens of
+    megabytes Kuzu needs to open, drop, and check point — after which the
+    dropped table's pages are reusable INSIDE the file, which is what actually
+    ends the crash loop.
+    """
+    from core import settings as settings_module
+    from core.graph import kuzu_store
+
+    db_path = settings_module.load().kuzu_db_path
+    usage = kuzu_store.disk_usage(db_path)
+    if usage is None or usage["free"] > _EMERGENCY_FLOOR_BYTES:
+        return None
+
+    _log("=" * 68)
+    _log(f"volume has {usage['free'] / 2**20:.0f} MB free — reclaiming what is "
+         "not data before touching the graph")
+    _log("=" * 68)
+    freed = 0
+    removed: list[str] = []
+    # Quarantined tails first: they are the largest thing here that is purely
+    # evidence, and `connect` writes a new one only when an open crashes.
+    for stale in sorted(db_path.parent.glob(f"{db_path.name}.wal.broken-*")):
+        with contextlib.suppress(OSError):
+            size = stale.stat().st_size
+            stale.unlink()
+            freed += size
+            removed.append(stale.name)
+    for stale in sorted(db_path.parent.glob("*.tmp")):
+        with contextlib.suppress(OSError):
+            size = stale.stat().st_size
+            stale.unlink()
+            freed += size
+            removed.append(stale.name)
+    after = kuzu_store.disk_usage(db_path)
+    _log(f"reclaimed {freed / 2**20:.0f} MB from {len(removed)} file(s): "
+         f"{', '.join(removed) or 'nothing to remove'}")
+    if after:
+        _log(f"volume now: {after['free'] / 2**20:.0f} MB free")
+    return {"ok": True, "freed_bytes": freed, "removed": removed,
+            "free_after": (after or {}).get("free")}
+
 
 def _drop_affected_if_asked() -> dict[str, Any] | None:
     """Free the volume by dropping AFFECTED — ONCE per value of the variable.
@@ -1799,13 +1863,18 @@ def _boot_status() -> dict[str, Any]:
     # connection.
     reset = _reset_graph_if_asked()
     # BEFORE THE REPAIR AND BEFORE THE SEEDS: every step after this one needs
-    # somewhere to write, and on a full volume there is nowhere.
+    # somewhere to write, and on a full volume there is nowhere. The file
+    # sweep comes first because on a FULL volume even the drop cannot run —
+    # Kuzu needs room for a WAL record to delete anything.
+    reclaimed = _free_reclaimable_files()
     freed = _drop_affected_if_asked()
     repaired = _rebuild_affected_if_asked()
 
     status: dict[str, Any] = {
         "seeded": True, "packs": [], "panel": None, "prices": None, "study": None,
     }
+    if reclaimed is not None:
+        status["reclaimed_files"] = reclaimed
     if freed is not None:
         status["dropped_affected"] = freed
     if reset is not None:
