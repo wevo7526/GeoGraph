@@ -63,6 +63,18 @@ _MENTIONS = 31
 #: that can say two allies coded in material conflict with each other were in
 #: fact fighting side by side on a third country's soil (see `parse_lines`).
 _ACTION_GEO_COUNTRY = 51
+#: THE QUALITY COLUMNS, read since 2026-08-17. GDELT fills an actor's COUNTRY
+#: code for anyone with a nationality, so a newspaper, a company or a dissident
+#: arrives wearing its country's name — "THE ASSOCIATED PRESS" (USAMED) is the
+#: United States, "LECH WALESA" (POLELI) is Poland, and a story about either
+#: became a material conflict between two states. The TYPE columns are what
+#: separate the state from its nationals, and NumSources is what separates a
+#: corroborated event from one article. Both ride on the corpus row (like
+#: `action_geo`) for `classifier.coercion` to read; neither is a graph
+#: property.
+_A1_TYPE1 = 12
+_A2_TYPE1 = 22
+_SOURCES = 32
 
 _FIPS_CROSSWALK = (
     Path(__file__).resolve().parent.parent / "ontology" / "crosswalks" / "fips_iso3.yaml"
@@ -93,6 +105,13 @@ _QUAD_CLASS = {
 #: (`external_powers`), because externality is a property of the lens — the
 #: USA–RUS dyad is noise to MENA and the spine of Eurasia.
 EXTERNAL_POWERS = frozenset({"USA", "RUS"})
+
+
+def _int_or_none(value: str) -> int | None:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
 
 
 def parse_lines(
@@ -175,6 +194,13 @@ def parse_lines(
             "action_geo": fips_to_iso3().get(geo, "") if geo else "",
             "initiator_iso3": a1,
             "target_iso3": a2,
+            # Corpus-only, like action_geo: what KIND of actor each side is,
+            # and how many distinct sources saw it. `classifier.coercion` reads
+            # them to decide whether a material-conflict row is one state
+            # coercing another or a country's own police blotter.
+            "actor1_type": fields[_A1_TYPE1].strip() if len(fields) > _A1_TYPE1 else "",
+            "actor2_type": fields[_A2_TYPE1].strip() if len(fields) > _A2_TYPE1 else "",
+            "num_sources": _int_or_none(fields[_SOURCES]) if len(fields) > _SOURCES else None,
         })
         edges.append({"kind": "INITIATED_BY", "src": event_id,
                       "dst": initiator["node_id"], "source_id": SOURCE_GDELT})

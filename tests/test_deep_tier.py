@@ -653,3 +653,70 @@ def test_the_prune_removes_off_roster_actors_and_everything_hanging_off_them(con
     assert kuzu_store.check_provenance(conn) == []
     # Idempotent.
     assert cow.prune_off_roster_actors(conn, roster) == {"Actor": 0}
+
+
+def test_cow_alliance_obligations_are_read_not_flattened(tmp_path):
+    """COW FILES FOUR OBLIGATIONS UNDER ONE NAME, and the loader read none.
+
+    `alliance_v4.1_by_directed.csv` carries `defense`, `neutrality`,
+    `nonaggression` and `entente` as separate booleans. Every row became
+    `relation_type: "alliance"`, so a non-aggression treaty arrived
+    indistinguishable from a defence pact — and the game layer, which asks "are
+    these two allies?" to decide whether it is solving a burden-sharing problem
+    or a contest, believed it. On 2026-08-17 France–Russia (a 1992 entente) and
+    Germany–Russia (a 1990 non-aggression treaty) were solved as ALLIES on the
+    eurasia board and captioned "formal allies" on the surface.
+
+    The strongest obligation in the row decides, because a row can carry
+    several: a defence pact that also pledges non-aggression is a defence pact.
+    """
+    from core.ingestion.cow import alliance_relation
+
+    assert alliance_relation({"defense": "1"}) == "alliance"
+    assert alliance_relation(
+        {"defense": "1", "nonaggression": "1", "entente": "1"}
+    ) == "alliance", "the strongest obligation wins"
+    assert alliance_relation({"defense": "0", "nonaggression": "1"}) == "non_aggression"
+    assert alliance_relation({"defense": "0", "neutrality": "1"}) == "non_aggression"
+    assert alliance_relation({"defense": "0", "entente": "1"}) == "entente"
+    assert alliance_relation({"defense": "0"}) is None, "no obligation is not a relation"
+
+    # The rows that actually caused it, from the shipped file.
+    from pathlib import Path
+    raw = Path(__file__).resolve().parents[1] / "data" / "raw" / "alliance_v4.1_by_directed.csv"
+    if not raw.exists():
+        return
+    import csv
+    seen: dict[tuple[int, int], set[str | None]] = {}
+    with open(raw, encoding="utf-8", errors="replace") as fh:
+        for row in csv.DictReader(fh):
+            try:
+                a, b = int(row["ccode1"]), int(row["ccode2"])
+            except (KeyError, ValueError):
+                continue
+            if a >= b or int(row.get("dyad_st_year") or 0) < 1985:
+                continue
+            seen.setdefault((a, b), set()).add(alliance_relation(row))
+    # 220 France, 365 Russia, 255 Germany, 2 United States, 290 Poland.
+    assert "alliance" not in seen.get((220, 365), set()), "France–Russia is not a defence pact"
+    assert "alliance" not in seen.get((255, 365), set()), "Germany–Russia is not a defence pact"
+    assert "alliance" in seen.get((2, 290), set()), "US–Poland (NATO, 1999) is one"
+
+
+def test_shared_membership_does_not_make_two_states_allies():
+    """`family.classify` read `kinds & {"alliance", "membership"}` as ally,
+    which says "both are in the same IGO" means "these two would fight for
+    each other" — the United Nations would make every pair on earth allies."""
+    from core.games import family as family_module
+
+    membership_only = family_module.classify(
+        {"relations": [{"relation_type": "membership", "since": "1945-10-24"}]},
+        {"share": 0.05, "events": 400, "coercive": 20, "thin": False},
+    )
+    assert membership_only["family"] != "ally"
+
+    pact = family_module.classify(
+        {"relations": [{"relation_type": "alliance", "since": "1949-04-04"}]},
+        {"share": 0.05, "events": 400, "coercive": 20, "thin": False},
+    )
+    assert pact["family"] == "ally", "a defence pact still does"

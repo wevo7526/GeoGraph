@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import bisect
 import threading
+from collections.abc import Iterator
 from typing import Any
 
 from core.models import panel as panel_module
@@ -56,14 +57,26 @@ _SLIM_FIELDS = (
     "escalation_direction", "escalation_magnitude", "escalation_baseline",
     "fidelity_tier", "temporal_resolution", "source_scale", "region_pack",
     "initiator_id", "target_id", "dyad_id", "source_id",
+    # THE COERCION VERDICT RIDES ALONG, because a model served features
+    # rebuilt from a different source than it was trained on is a model
+    # measuring something else. `models.hostility` is fitted on corpus rows;
+    # the region context serves it from this view, and the first wiring of it
+    # rebuilt the features from the quarterly panel instead — where the
+    # severity and fight shares do not exist. US-Russia scored 0.41 served
+    # against 0.82 trained, which is the whole difference between "rival" and
+    # "adversary" (2026-08-17).
+    "coercion",
 )
 _FLOAT_FIELDS = {"goldstein", "escalation_magnitude", "escalation_baseline"}
+_BOOL_FIELDS = {"coercion"}
 
 
 def _slim(row: dict[str, Any]) -> str:
     parts = []
     for field in _SLIM_FIELDS:
         value = row.get("action_cameo_code" if field == "cameo_code" else field)
+        if field in _BOOL_FIELDS:
+            value = "1" if value else ""
         parts.append("" if value is None else str(value))
     return "\t".join(parts)
 
@@ -198,17 +211,30 @@ def joint_actions(
     return cached
 
 
-def rows_of(pack: str) -> list[dict[str, Any]]:
-    """Every scored row of one lens, from the retained slim view — the wire's
-    events with Head B's coding, in (event_time, node_id) order, at ~1/5 the
-    memory of the parsed rows. `dyad_id`, `initiator_id`, `target_id`,
-    `escalation_*` and `goldstein` all ride on it, which is everything the
-    graph's lean copy of the wire needs (see `core.api.work.wire`)."""
+def iter_rows_of(pack: str) -> Iterator[dict[str, Any]]:
+    """Every scored row of one lens, ONE AT A TIME, from the retained slim view
+    — the wire's events with Head B's coding, in (event_time, node_id) order.
+    `dyad_id`, `initiator_id`, `target_id`, `escalation_*` and `goldstein` all
+    ride on it, which is everything the graph's lean copy of the wire needs
+    (see `core.api.work.wire`).
+
+    AN ITERATOR, BECAUSE THE LIST WAS A THREE-GIGABYTE SPIKE. This module's own
+    docstring is the promise it broke: "what is kept is the small derived
+    shape, not the rows … parsing 1.33M events yields hundreds of megabytes of
+    dicts". `rows_of` handed exactly those dicts back — every row of a lens
+    materialised at once, and its one caller then built a filtered list beside
+    it. On 2026-08-17 that took the container from ~4 GB to the 8 GB ceiling
+    within four seconds of "job: wire starting", four container lives in a
+    row, with the deploy CRASHED at the end of it.
+
+    The slim strings stay; only the caller's window of them becomes objects.
+    """
     if not available():
-        return []
+        return
     if not _WARMED:
         warm()
-    return [_unslim(line) for line in _EVENTS.get(pack, [])]
+    for line in _EVENTS.get(pack, []):
+        yield _unslim(line)
 
 
 # ── the explorer view: window queries over the wire ─────────────────────────

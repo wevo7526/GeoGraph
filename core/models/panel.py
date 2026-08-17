@@ -163,11 +163,25 @@ def build(
         cell["n"] += 1
         if row["goldstein"] is not None:
             cell["goldstein"].append(float(row["goldstein"]))
-        # A co-participation event (two allies coded against each other on
-        # third-country soil — `family.is_co_participation`) is not coercion
-        # BETWEEN the pair, whatever its quad class says; the posture, the
-        # coercive count and the ranking read `conflict`, so it stops here.
-        if row["quad_class"] == "material_conflict" and not row.get("co_participation"):
+        # WHAT COUNTS AS COERCION BETWEEN THE TWO STATES is decided once, in
+        # `classifier.coercion`, and read here — the posture, the family, the
+        # region ranking and the kernel are all downstream of this line, and
+        # each used to re-derive its own answer from the quad class alone. The
+        # quad class is a coding of a sentence: it put "British police
+        # arrested somebody" and "America sanctioned Russia" in the same
+        # bucket, and so made US–UK (194) a more coercive pair than US–Russia
+        # (188) over the last four quarters.
+        #
+        # `coercion` absent means a row from a store that predates the flag
+        # (the graph's lean copy, an old artifact); those fall back to the old
+        # reading rather than silently counting nothing.
+        coercive = row.get("coercion")
+        if coercive is None:
+            coercive = (
+                row["quad_class"] == "material_conflict"
+                and not row.get("co_participation")
+            )
+        if coercive:
             cell["conflict"] += 1
         # Intensity is the quarter's LARGEST departure, not its mean: a
         # rupture inside a noisy quarter is the event being forecast, and an

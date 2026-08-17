@@ -121,9 +121,32 @@ SEMANTICS: dict[str, dict[str, str]] = {
 }
 
 
+#: The trained classifier's bar for reading a pair as an ADVERSARY. 0.5 is the
+#: point where the model's precision and recall cross on the held-out decade;
+#: moving it is a decision about which error you would rather make, not a
+#: tuning knob.
+HOSTILITY_BAR = float(os.getenv("GEOGRAPH_HOSTILITY_BAR", "0.5"))
+
+#: AND THE BAR FOR OVERTURNING A DECLARED DEFENCE PACT, which is higher on
+#: purpose. A treaty is a sourced, dated fact; a model score is an inference,
+#: and the model's largest feature is VOLUME, so the busiest alliances drift
+#: upward on attention alone. The United States and the United Kingdom score
+#: 0.508 — over the ordinary bar by eight thousandths, and a coin-toss away
+#: from having their alliance overruled by a rounding error. The archive does
+#: hold allies whose behaviour outruns their declaration, and this still finds
+#: them; it just asks them to be obvious.
+ALLY_OVERRIDE_BAR = float(os.getenv("GEOGRAPH_ALLY_OVERRIDE_BAR", "0.85"))
+
+
+def _pct_words(value: float | None) -> str:
+    return f"{(value or 0.0):.0%} confidence"
+
+
 def classify(
     standing: dict[str, Any] | None,
     posture: dict[str, Any] | None,
+    *,
+    hostility: float | None = None,
 ) -> dict[str, Any]:
     """Which family this pair belongs to, and the evidence that decided it.
 
@@ -132,6 +155,15 @@ def classify(
     cannot classify is `rival` — the weakest of the three claims — rather than
     `adversary`, because calling two states adversaries is a strong statement
     and absence of evidence must never make it.
+
+    `hostility` is `models.hostility`'s probability that this pair is in a
+    militarised dispute — a TRAINED read, on COW's own dispute record, of the
+    question the thresholds below were guessing at. Where it is present it
+    decides adversary; the thresholds remain for a pair the model cannot see
+    and for the case where no model ships. They deserved replacing: on the
+    held-out decade the shipped rule scored 0.533 AUC against the model's
+    0.847 — a coin flip against a usable classifier — and the SHARE it keyed
+    on carries a fitted weight of -0.01, which is no information at all.
     """
     kinds = {
         str(r.get("relation_type"))
@@ -164,8 +196,19 @@ def classify(
     # ANTAGONISM FIRST, matching `opening._STANDING_PRIORITY`: a pact between
     # rivals is evidence of the rivalry, not a replacement for it, so a pair
     # that is declared both is read as the rivalry it is.
+    # THE TRAINED READ FIRST, where there is one. A declared rivalry whose
+    # record the model reads as a militarised dispute is an adversary whatever
+    # the share says — that is how the United States and Russia came out
+    # "a declared rivalry conducted in argument" on a 9.5% coercive share, and
+    # Russia and Ukraine the same in the third year of an invasion.
+    hostile = hostility is not None and hostility >= HOSTILITY_BAR
     if "rivalry" in kinds:
-        if coercive is not None and coercive >= ADVERSARY_SHARE:
+        if hostile:
+            family, why = "adversary", (
+                f"a declared rivalry the dispute model reads as militarised "
+                f"({_pct_words(hostility)})"
+            )
+        elif coercive is not None and coercive >= ADVERSARY_SHARE:
             family, why = "adversary", (
                 f"a declared rivalry with {_evidence()}"
             )
@@ -176,16 +219,37 @@ def classify(
             )
         else:
             family, why = "rival", "a declared rivalry"
-    elif kinds & {"alliance", "membership"}:
+    # ONLY A DEFENCE PACT MAKES A PAIR ALLIES. `membership` used to sit in
+    # this set, which reads "both are in the same IGO" as "these two would
+    # fight for each other" — the United Nations would make every pair on
+    # earth allies. And until the COW loader learned to read its own
+    # obligation columns, `alliance` itself covered non-aggression pacts and
+    # ententes, which is how France–Russia (a 1992 entente) and Germany–Russia
+    # (a 1990 non-aggression treaty) were solved as burden-sharing partners on
+    # the eurasia board. A pledge not to attack is evidence about a
+    # relationship; it is not evidence of alignment, and rivals sign them
+    # precisely because they are rivals.
+    elif "alliance" in kinds:
         # A declared ally whose record is genuinely violent is not an ally in
-        # the sense that matters here, and the archive has such pairs.
-        if coercive is not None and coercive >= ADVERSARY_SHARE:
+        # the sense that matters here, and the archive has such pairs — but a
+        # treaty is overturned by evidence, not by a marginal score.
+        if hostility is not None and hostility >= ALLY_OVERRIDE_BAR:
+            family, why = "adversary", (
+                f"declared allies the dispute model reads as militarised "
+                f"({_pct_words(hostility)}) — the behaviour outweighs the declaration"
+            )
+        elif coercive is not None and coercive >= ADVERSARY_SHARE:
             family, why = "adversary", (
                 f"declared allies with {_evidence()} — "
                 "the behaviour outweighs the declaration"
             )
         else:
             family, why = "ally", "a declared alliance"
+    elif hostile:
+        family, why = "adversary", (
+            f"no declared relation, and the dispute model reads this pair's "
+            f"record as militarised ({_pct_words(hostility)})"
+        )
     elif coercive is not None and coercive >= ADVERSARY_SHARE:
         family, why = "adversary", (
             f"no declared relation, and {_evidence()}"
@@ -202,6 +266,9 @@ def classify(
     return {
         "family": family,
         "why": why,
+        # The trained read that decided it, carried so the ranking can order
+        # on the same number the sentence quotes. None when no model ships.
+        "hostility": round(hostility, 4) if hostility is not None else None,
         # NATIVE means the solver plays THIS family's own game. The adversary
         # game has always existed; the ally game (Olson-Zeckhauser burden
         # sharing — `ALLY` below and `solve.stage_payoff`) landed 2026-08-16.
@@ -527,7 +594,11 @@ def ally_windows(pack: Any) -> tuple[dict[str, list[tuple[int, int]]], list[str]
     windows: dict[str, list[tuple[int, int]]] = {}
     sources: list[str] = []
     for relation in pack.relations:
-        if relation.get("relation_type") in ("alliance", "membership"):
+        # A DEFENCE PACT, not any treaty. These windows decide when two states
+        # coded against each other are read as partners rather than opponents,
+        # so admitting shared IGO membership here would have made every pair in
+        # the United Nations co-participants.
+        if relation.get("relation_type") == "alliance":
             dyad = escalation.dyad_id(str(relation["a"]), str(relation["b"]))
             windows.setdefault(dyad, []).append(
                 (_year_of(relation.get("valid_from"), 1905),
@@ -547,6 +618,12 @@ def ally_windows(pack: Any) -> tuple[dict[str, list[tuple[int, int]]], list[str]
                 except (TypeError, ValueError):
                     continue
                 if not a or not b or a == b or a not in roster or b not in roster:
+                    continue
+                # COW files four obligations under one file, and only the
+                # defence pact means what this window is used for. See
+                # `ingestion.cow.alliance_relation` for the same rule on the
+                # graph side and for what reading them all as "alliance" did.
+                if str(row.get("defense", "")).strip() != "1":
                     continue
                 start = _year_of(row.get("dyad_st_year"), 1905)
                 end = _year_of(row.get("dyad_end_year"), 9999)

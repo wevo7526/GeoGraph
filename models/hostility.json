@@ -1,0 +1,79 @@
+{
+  "name": "hostility",
+  "trained_at_label_span": [
+    1979,
+    2014
+  ],
+  "fit_last_year": 2004,
+  "features": [
+    "log_events",
+    "coercion_share",
+    "log_coercion",
+    "severe_share",
+    "max_departure",
+    "mean_goldstein",
+    "fight_share",
+    "declared_rivalry"
+  ],
+  "theta": [
+    -3.313218972484751,
+    0.5684102726273359,
+    -0.012737637566298858,
+    0.12231061784807022,
+    0.05767288889977229,
+    0.12263142553379172,
+    -0.4793948837925735,
+    0.0515806640595967,
+    0.3534916565652364
+  ],
+  "standardise": {
+    "mean": [
+      2.3186253277498867,
+      0.01146666247392794,
+      0.18559394270360904,
+      0.043052812782797455,
+      5.623380350008524,
+      2.260285880440586,
+      0.046770206605675956,
+      0.03082446150037138
+    ],
+    "scale": [
+      1.3279584564578109,
+      0.05846095983467865,
+      0.5563725350197993,
+      0.1313786932561897,
+      4.828477015617108,
+      2.6619265156361545,
+      0.1956269043161908,
+      0.17284187592589184
+    ]
+  },
+  "held_out_auc": 0.8469,
+  "baselines": {
+    "shipped_rule": 0.5331,
+    "declared_rivalry": 0.6715,
+    "coercion_count": 0.7973
+  },
+  "beats_baselines_by": {
+    "shipped_rule": 0.3137,
+    "declared_rivalry": 0.1753,
+    "coercion_count": 0.0495
+  },
+  "gate": "fitted on dyad-years to 2004 and scored on 2005-2014; must beat the shipped threshold rule, the declared standing alone and the raw coercion count by at least 0.01 AUC",
+  "gate_passed": true,
+  "label": "COW MIDB 5.0: a dyad-year is positive when both states were in the same militarised dispute on OPPOSITE sides",
+  "caveat": "MID 5.0 ends in 2014 and the wire runs to 2026, so the recent era is an extrapolation. The label is dispute PARTICIPATION, a floor on adversariality rather than a full ordering of it.",
+  "packs": [
+    "china",
+    "eurasia",
+    "mena"
+  ],
+  "dyad_years": 10926,
+  "positives": 689,
+  "positive_rate": 0.0631,
+  "distinct_pairs": 658,
+  "label_span": [
+    1979,
+    2014
+  ]
+}

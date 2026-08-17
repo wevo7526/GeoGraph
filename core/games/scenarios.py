@@ -62,13 +62,20 @@ REGION_DYADS = 12
 #: the fitted QRE") and the posture clause read "is mixed record" while quoting
 #: a mean tone the archive has shown cannot characterise a pair.
 #:
-#: `2026-08-17.1` is the surface rewrite: BAND_LABELS became comparatives that
+#: `2026-08-17.2` is the classification rebuild: the ranking is ordered by a
+#: TRAINED read of whether a pair is in a militarised dispute
+#: (`models.hostility`, fitted on COW's own dispute record, 0.847 AUC on a
+#: held-out decade against 0.533 for the thresholds it replaces), and every row
+#: carries the `hostility` it was ordered by. What counts as coercion changed
+#: underneath it too (`classifier.coercion`), so every persisted number moved.
+#:
+#: `2026-08-17.1` was the surface rewrite: BAND_LABELS became comparatives that
 #: survive being read inside a sentence, and two fields the reader's own words
 #: needed started travelling — `typical_band` (the line the headline
 #: probability counts above, without which a page cannot tell "breaks above"
 #: from "is still above") and `kind_sentence` (what a course kind MEANS, which
 #: `family.kind_words` had always carried and only the label ever left with).
-PAYLOAD_VERSION = "2026-08-17.1"
+PAYLOAD_VERSION = "2026-08-17.2"
 
 #: A step's market row needs this many measurements before the scenario
 #: names it as an implication (the pricing module's own thinness bar).
@@ -531,7 +538,12 @@ def solve_dyad(
     # WHICH GAME, before any number. The family is read from what the pair IS
     # and how its record READS; the space it names decides the reading of the
     # record the beliefs are filtered from, the kernel, the payoff, the words.
-    classification = family_module.classify(standing_now, read)
+    classification = family_module.classify(
+        standing_now, read,
+        # THE TRAINED READ, where one ships. See `models.hostility`: the
+        # thresholds this overrides scored a coin flip on the held-out decade.
+        hostility=(context.get("hostility") or {}).get(dyad_id),
+    )
     space = family_module.space_for(classification["family"])
     if space.family == "ally":
         payoffs = ally_payoffs or solve_module.Payoffs(
@@ -1035,6 +1047,9 @@ def region_map(
             # surface can name the number it ordered on rather than implying
             # the departure probability did the ordering.
             "coercive_events": (s["opening"].get("posture") or {}).get("coercive"),
+            # P(militarised dispute) — what the board is ordered by, carried so
+            # the surface can say so rather than implying the count did it.
+            "hostility": (s["opening"].get("family") or {}).get("hostility"),
             "coercive_share": (s["opening"].get("posture") or {}).get("share"),
             "tilted": s["opening"]["tilt"] is not None,
             "capability_source": s["opening"]["capability"].get("source"),
@@ -1076,7 +1091,18 @@ def region_map(
     #
     # The departure probability stays in the payload beside it. The two answer
     # different questions and the surface says which is which.
+    # RANKED BY THE TRAINED READ, then by the measured count. The count alone
+    # put the United States and the United Kingdom at the top of the eurasia
+    # board with 145 "coercive events" — most of them British police arresting
+    # somebody in a story that mentioned America — above the United States and
+    # Russia. `classifier.coercion` fixed what is counted; this decides what
+    # the board is ordered BY, and the model that answers it is scored against
+    # COW's dispute record rather than set by hand (0.847 AUC on the held-out
+    # decade, against 0.533 for the thresholds it replaces). The count stays
+    # as the tiebreak and stays on the surface, because it is the number a
+    # reader can check against the events.
     ranking.sort(key=lambda r: (
+        -(r.get("hostility") or 0.0),
         -((r.get("posture") or {}).get("coercive") or 0),
         -(r["sharp_departure_probability"] or 0),
         r["dyad_id"],

@@ -82,8 +82,16 @@ def capability_state(conn: Any | None, dyad_id: str) -> dict[str, Any]:
 #: Which standing characterises a pair when several are in force. Not a
 #: judgement about importance in general — a claim about what a reader needs
 #: first when the same two states are simultaneously bound and opposed.
+#: WHICH DECLARED RELATION CHARACTERISES THE PAIR when several are live.
+#: Antagonism first (a pact between rivals is evidence of the rivalry, not a
+#: replacement for it), then the obligations that imply alignment, then the
+#: ones that imply only contact. `non_aggression` and `entente` sit BELOW
+#: membership deliberately: they are the weakest claims COW records and the
+#: least entitled to lead a sentence that begins "the archive declares this
+#: pair…".
 _STANDING_PRIORITY = {
     "rivalry": 0, "proxy": 1, "alliance": 2, "membership": 3, "trade": 4,
+    "non_aggression": 5, "entente": 6,
 }
 
 

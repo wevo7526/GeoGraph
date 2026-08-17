@@ -171,13 +171,20 @@ def test_the_panel_view_matches_what_the_panel_reads(real_corpus):
     pack = packs.load(name)
     rows, _ = corpus.parse_artifact(pack, corpus.artifacts_for(name)[0])
     view = corpus._as_panel_row(corpus.score(rows)[0])
-    assert set(view) == {
+    # THE CORPUS KNOWS THINGS THE GRAPH CANNOT, and the contract is a
+    # SUPERSET rather than an equality because of it. The graph's lean copy of
+    # the wire holds no actor types and no source counts (they are corpus-only
+    # projections, like `action_geo`), so the two flags derived from them ride
+    # here and the graph reader `.get`s them — `models.panel.build` falls back
+    # to the quad class when `coercion` is absent, which is what keeps an old
+    # store readable instead of silently counting nothing.
+    required = {
         "dyad_id", "dyad_name", "event_time", "direction",
         "magnitude", "goldstein", "quad_class", "region_pack",
-        # The co-participation flag rides on the panel view (2026-08-16); the
-        # graph reader (`dyad_event_rows`) has no such column and `.get`s it.
-        "co_participation",
     }
+    derived = {"co_participation", "coercion"}
+    assert required <= set(view), "the shared contract every source must meet"
+    assert set(view) == required | derived
 
 
 def test_the_game_view_carries_both_sides_and_the_initiator(real_corpus):
@@ -189,7 +196,9 @@ def test_the_game_view_carries_both_sides_and_the_initiator(real_corpus):
     view = corpus._as_game_row(rows[0])
     assert set(view) == {
         "dyad_id", "actor_a", "actor_b", "initiator",
-        "event_time", "quad_class", "region_pack", "co_participation",
+        "event_time", "quad_class", "region_pack",
+        # See the panel view above: derived from corpus-only columns.
+        "co_participation", "coercion",
     }
     assert view["actor_a"] < view["actor_b"], "the pair is stored sorted"
     assert view["initiator"] in {view["actor_a"], view["actor_b"]}
@@ -229,3 +238,115 @@ def test_pooled_reads_dedupe_shared_roster_events(real_corpus):
     assert pooled == len(per_pack_ids), "all_panel_rows did not dedupe to distinct ids"
     if naive != len(per_pack_ids):
         assert pooled < naive, "shared ids exist but the pool did not shrink"
+
+
+def test_the_corpus_rows_are_handed_over_one_at_a_time(monkeypatch):
+    """THE READER IS AN ITERATOR, AND THAT IS THE WHOLE POINT.
+
+    `serving`'s own docstring is the promise this keeps: "what is kept is the
+    small derived shape, not the rows … parsing 1.33M events yields hundreds of
+    megabytes of dicts". `rows_of` handed exactly those dicts back — a whole
+    lens materialised at once — and its one caller then built a filtered list
+    beside it. On 2026-08-17 that took the container from ~4 GB to its 8 GB
+    ceiling within four seconds of "job: wire starting", four container lives
+    in a row, ending in a CRASHED deployment and a site that was down until a
+    human noticed.
+
+    A list would pass every behavioural test this file has; only the type says
+    the memory is bounded.
+    """
+    import types
+
+    from core.wire import serving
+
+    monkeypatch.setattr(serving, "_WARMED", True)
+    monkeypatch.setattr(serving, "available", lambda: True)
+    monkeypatch.setattr(serving, "_EVENTS", {
+        "t": [serving._slim({
+            "event_time": f"2020-01-0{i}", "node_id": f"event:gdelt-{i}",
+            "name": "x", "action_cameo_code": "190", "quad_class": "material_conflict",
+            "goldstein": -9.0, "escalation_direction": "escalating",
+            "escalation_magnitude": 5.0, "escalation_baseline": -3.0,
+            "fidelity_tier": "modern_coded", "temporal_resolution": "day",
+            "source_scale": "goldstein", "region_pack": "t",
+            "initiator_id": "actor:a", "target_id": "actor:b",
+            "dyad_id": "dyad:a--b", "source_id": "source:gdelt",
+        }) for i in range(1, 6)
+    ]})
+
+    stream = serving.iter_rows_of("t")
+    assert isinstance(stream, types.GeneratorType), (
+        "a list here is a whole lens in memory at once"
+    )
+    first = next(stream)
+    assert first["node_id"] == "event:gdelt-1"
+    assert first["goldstein"] == -9.0
+    assert len(list(stream)) == 4, "and the rest arrive on demand"
+
+
+def _row(**kw: object) -> dict[str, object]:
+    base: dict[str, object] = {
+        "quad_class": "material_conflict", "action_cameo_code": "190",
+        "num_sources": 9, "actor1_type": "", "actor2_type": "",
+        "action_geo": "UKR", "initiator_iso3": "RUS", "target_iso3": "UKR",
+    }
+    base.update(kw)
+    return base
+
+
+def test_coercion_between_states_is_not_the_quad_class():
+    """WHAT MADE US-UK A MORE COERCIVE PAIR THAN US-RUSSIA.
+
+    Measured over the shipped artifacts, last four quarters: US–UK 194
+    material-conflict rows against US–Russia's 188. The composition says
+    everything the count hides — US–UK's single largest contributor was CAMEO
+    173, "arrest, detain or charge", 73 of the 194, on British or American
+    soil; US–Russia's was 163, "impose embargo, boycott or sanctions", 41 of
+    188, on Russian soil. British police arresting somebody is not the United
+    Kingdom coercing the United States.
+    """
+    from core.classifier import coercion
+
+    assert coercion.counts_as_coercion(_row(action_cameo_code="163"))
+    assert coercion.counts_as_coercion(_row(action_cameo_code="190"))
+    # Coercion applied to PERSONS — a country's own police blotter.
+    assert not coercion.counts_as_coercion(_row(action_cameo_code="173"))
+    assert not coercion.counts_as_coercion(_row(action_cameo_code="1741"))
+    # One article is not corroboration; it is where "Poland vs the Associated
+    # Press" came from.
+    assert not coercion.counts_as_coercion(_row(num_sources=1))
+    # An actor's country code is filled in for anyone with a nationality, so a
+    # newspaper arrives wearing its country's name.
+    assert not coercion.counts_as_coercion(_row(actor2_type="MED"))
+    assert not coercion.counts_as_coercion(_row(actor1_type="BUS"))
+    assert coercion.counts_as_coercion(_row(actor1_type="GOV", actor2_type="MIL"))
+    # A row from a store that predates the quality columns degrades to the old
+    # reading rather than to silence.
+    old = _row()
+    del old["num_sources"]
+    assert coercion.counts_as_coercion(old)
+
+
+def test_a_declared_ally_fighting_on_its_own_soil_is_presence_not_war():
+    """The rule that had to be scoped, and the measurement that scoped it.
+
+    Dropping every root-19 event on a pair's own soil flattered the ranking
+    and deleted the war: Russia–Ukraine fell from 1,707 to 342, because that
+    war is fought on Ukrainian soil. It survives only where a DECLARED DEFENCE
+    PACT makes the reading safe.
+    """
+    from core.classifier import coercion
+
+    war = _row(action_cameo_code="190", action_geo="UKR",
+               initiator_iso3="RUS", target_iso3="UKR")
+    assert coercion.counts_as_coercion(war, allied=False), "the war is real"
+    assert coercion.counts_as_coercion(war, allied=True) is False
+
+    partners = _row(action_cameo_code="190", action_geo="GBR",
+                    initiator_iso3="USA", target_iso3="GBR")
+    assert not coercion.counts_as_coercion(partners, allied=True)
+    # Sanctions between allies are still coercion — only "fight" is read as
+    # presence, and only on a partner's own ground.
+    assert coercion.counts_as_coercion(
+        _row(action_cameo_code="163", action_geo="GBR",
+             initiator_iso3="USA", target_iso3="GBR"), allied=True)

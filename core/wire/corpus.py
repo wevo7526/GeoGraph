@@ -28,6 +28,7 @@ from pathlib import Path
 from typing import Any
 
 from core import packs
+from core.classifier import coercion as coercion_module
 from core.classifier import escalation
 from core.ingestion import gdelt
 
@@ -126,6 +127,16 @@ def parse_artifact(pack: Any, artifact: Path) -> tuple[list[dict[str, Any]], Any
         # co-participants (fighting together there), not adversaries. The raw
         # code stays; the flag rides beside it for the readers that count.
         row["co_participation"] = family_module.is_co_participation(row, windows)
+        # AND WHETHER IT IS COERCION BETWEEN THE TWO STATES AT ALL. The quad
+        # class is a coding of a sentence; this is the claim about states, and
+        # every counter reads it rather than re-deriving one of its own.
+        row["coercion"] = coercion_module.counts_as_coercion(
+            row,
+            allied=family_module.allied_in(
+                windows.get(str(row.get("dyad_id"))),
+                family_module._year_of(row.get("event_time"), 0),
+            ),
+        )
         rows.append(row)
     return rows, result
 
@@ -244,6 +255,7 @@ def _as_panel_row(row: dict[str, Any]) -> dict[str, Any]:
         "quad_class": row["quad_class"],
         "region_pack": row["region_pack"],
         "co_participation": bool(row.get("co_participation", False)),
+        "coercion": bool(row.get("coercion", False)),
     }
 
 
@@ -264,6 +276,7 @@ def _as_game_row(row: dict[str, Any]) -> dict[str, Any]:
         "quad_class": row["quad_class"],
         "region_pack": row["region_pack"],
         "co_participation": bool(row.get("co_participation", False)),
+        "coercion": bool(row.get("coercion", False)),
     }
 
 

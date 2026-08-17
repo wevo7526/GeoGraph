@@ -1583,6 +1583,76 @@ def _reset_graph_if_asked() -> dict[str, Any] | None:
             "token": requested}
 
 
+#: Which GEOGRAPH_DROP_AFFECTED value has already been acted on.
+_DROP_AFFECTED_LEDGER = ".affected-drop-honoured"
+
+
+def _drop_affected_if_asked() -> dict[str, Any] | None:
+    """Free the volume by dropping AFFECTED — ONCE per value of the variable.
+
+    THE FAILURE THIS ANSWERS. On 2026-08-17 the study job filled a 5 GB
+    Railway volume: 271,886 events and 1,515,105 AFFECTED edges, and
+    `disk_free_gb` reached 0.0. A full volume is the uncatchable kill — Kuzu
+    aborts on a failed checkpoint, the API dies, the container restart-loops —
+    and the Hobby plan's volume ceiling IS 5 GB, so there is no more disk to
+    buy without a plan change.
+
+    AFFECTED is the one large table that costs nothing to lose: it is a
+    PROJECTION of the panel's `event_study_runs`, which holds every computed
+    effect's numbers in Postgres. Dropping it frees the space now; the
+    `refill` job puts it back, in slices, with the site up.
+
+    Distinct from GEOGRAPH_REBUILD_AFFECTED, which probes first and drops only
+    a table that cannot be WRITTEN. This one drops a table that is perfectly
+    healthy and simply too large for the disk it sits on, so it asks no
+    questions — and it runs FIRST in the boot, because every step after it
+    needs somewhere to write.
+    """
+    requested = os.getenv("GEOGRAPH_DROP_AFFECTED", "").strip()
+    if not requested or requested.lower() in {"0", "false", "no", "off"}:
+        return None
+
+    from core import settings as settings_module
+
+    path = settings_module.load().kuzu_db_path
+    ledger = path.with_name(_DROP_AFFECTED_LEDGER)
+    try:
+        honoured = ledger.read_text(encoding="utf-8").strip()
+    except OSError:
+        honoured = ""
+    if not path.exists():
+        return {"ok": True, "skipped": "no graph", "token": requested}
+    if honoured == requested:
+        _log(f"GEOGRAPH_DROP_AFFECTED={requested} already honoured — skipped")
+        return {"ok": True, "skipped": "already honoured", "token": requested}
+
+    _log("=" * 68)
+    _log("GEOGRAPH_DROP_AFFECTED is set — dropping the AFFECTED table to free "
+         "the volume. The panel keeps every measurement; the refill job "
+         "projects them back once there is room.")
+    _log("=" * 68)
+    # `--budget-seconds 0` drops and recreates, then stops the refill at its
+    # first chunk boundary: the point is the free space, and refilling here
+    # would hand it straight back.
+    dropped = _run_step(
+        "affected drop",
+        [sys.executable, str(_REBUILD_AFFECTED_SCRIPT), "--rebuild",
+         "--budget-seconds", "0"],
+        timeout=900,
+    )
+    with contextlib.suppress(OSError):
+        ledger.write_text(requested, encoding="utf-8")
+    usage = None
+    with contextlib.suppress(Exception):
+        from core.graph import kuzu_store
+
+        usage = kuzu_store.disk_usage(path)
+    if usage:
+        _log(f"volume after the drop: {usage['free'] / 2**30:.2f} GB free")
+    return {"ok": bool(dropped.get("ok")), "token": requested, "drop": dropped,
+            "disk": usage}
+
+
 def _rebuild_affected_if_asked() -> dict[str, Any] | None:
     """Repair the AFFECTED rel table — ONCE per value of GEOGRAPH_REBUILD_AFFECTED.
 
@@ -1728,11 +1798,16 @@ def _boot_status() -> dict[str, Any]:
     # taken the single-writer lock deletes a database out from under a live
     # connection.
     reset = _reset_graph_if_asked()
+    # BEFORE THE REPAIR AND BEFORE THE SEEDS: every step after this one needs
+    # somewhere to write, and on a full volume there is nowhere.
+    freed = _drop_affected_if_asked()
     repaired = _rebuild_affected_if_asked()
 
     status: dict[str, Any] = {
         "seeded": True, "packs": [], "panel": None, "prices": None, "study": None,
     }
+    if freed is not None:
+        status["dropped_affected"] = freed
     if reset is not None:
         status["reset"] = reset
     if repaired is not None:

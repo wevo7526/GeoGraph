@@ -608,7 +608,6 @@ def wire(conn: Any, deadline: float) -> dict[str, Any]:
         if jobs_tight():
             return {"pack": name, "skipped": "paused for memory"}
         pack = packs.load(name)
-        rows = [r for r in serving.rows_of(name) if measurable(r)]
         seen = _wire_seen.get(name)
         if seen is None:
             # AS A SET, NEVER AS ROWS. This asks for every gdelt event id the
@@ -625,31 +624,49 @@ def wire(conn: Any, deadline: float) -> dict[str, Any]:
                 {"pack": name},
             )
             _wire_seen[name] = seen
-        pending = [r for r in rows if r["node_id"] not in seen]
-        if not pending:
-            _mark(_lean_marker(name))
-            _wire_done.add(name)
-            continue
 
         names_by_id = {str(a["id"]): str(a["name"]) for a in pack.actors}
         kuzu_store.merge_nodes(conn, "Source", [gdelt._SOURCE_META])
         written = 0
-        for start in range(0, len(pending), WIRE_BATCH_EVENTS):
-            if time.monotonic() >= deadline or jobs_tight():
-                return {"pack": name, "written": written, "held": len(seen),
-                        "pending": len(pending) - start, "stopped_early": True}
+        measured = 0
+        batch: list[dict[str, Any]] = []
+
+        # STREAMED, NOT MATERIALISED. This used to build the pack's whole lens
+        # as dicts, filter it into a second list, and only then start writing —
+        # and on 2026-08-17 that took the container from ~4 GB to its 8 GB
+        # ceiling within four seconds of "job: wire starting", four lives in a
+        # row, ending in a CRASHED deployment. Only a batch is ever resident
+        # now, so this job's cost is its batch size rather than its pack's size.
+        for row in serving.iter_rows_of(name):
+            if not measurable(row):
+                continue
+            measured += 1
+            if str(row["node_id"]) in seen:
+                continue
+            batch.append(row)
+            if len(batch) < WIRE_BATCH_EVENTS:
+                continue
             if kuzu_store.disk_is_tight(graph_path):
                 return {"pack": name, "written": written, "held": len(seen),
-                        "pending": len(pending) - start, "stopped": "volume nearly full",
+                        "stopped": "volume nearly full",
                         "disk": kuzu_store.disk_usage(graph_path)}
-            batch = pending[start:start + WIRE_BATCH_EVENTS]
+            written += _write_lean_batch(conn, batch, name, names_by_id, escalation)
+            for row in batch:
+                seen.add(str(row["node_id"]))
+            batch = []
+            # Checked AFTER the write, so a stop never strands a written batch
+            # outside `seen` — the ids are this job's resume point.
+            if time.monotonic() >= deadline or jobs_tight():
+                return {"pack": name, "written": written, "held": len(seen),
+                        "stopped_early": True}
+        if batch:
             written += _write_lean_batch(conn, batch, name, names_by_id, escalation)
             for row in batch:
                 seen.add(str(row["node_id"]))
         _mark(_lean_marker(name))
         _wire_done.add(name)
         return {"pack": name, "written": written, "held": len(seen),
-                "measurable": len(rows), "complete": True}
+                "measurable": measured, "complete": True}
     return {"note": "every pack's lean wire is in the graph"}
 
 

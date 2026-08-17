@@ -13,6 +13,7 @@ import json
 import os
 from typing import Any
 
+from core import packs as packs_module
 from core.games import family as family_module
 from core.games import pricing as pricing_module
 from core.games import solve as solve_module
@@ -20,6 +21,7 @@ from core.games import state as state_module
 from core.games import transition as transition_module
 from core.graph import kuzu_store
 from core.models import dynamics as dynamics_module
+from core.models import hostility as hostility_module
 from core.models import panel as panel_module
 from core.wire import serving
 
@@ -131,6 +133,12 @@ def build(conn: Any, region: str) -> dict[str, Any]:
         ),
         "model_trajectories": model_trajectories,
         "model_identity": model_identity,
+        # P(this pair is in a militarised dispute), per dyad, from the trained
+        # classifier — the read that decides ADVERSARY. Built once per region
+        # because it walks the whole table; None when no model ships or its
+        # gate failed, and `family.classify` then keeps its thresholds.
+        "hostility": hostility_scores(region),
+        "hostility_model": hostility_module.identity(),
         "graph_was_open": conn is not None,
         "as_of": max(row["date"] for row in table),
     }
@@ -140,6 +148,79 @@ def build(conn: Any, region: str) -> dict[str, Any]:
         CACHE.pop(next(iter(CACHE)))
     CACHE[region] = context
     return context
+
+
+def declared_rivalries(region: str) -> set[str]:
+    """dyad_ids the pack declares a rivalry for. The classifier reads it as a
+    FEATURE (weight +0.35), not as an override — a curated relation is
+    evidence, and the model was fitted with it present."""
+    from core.classifier import escalation
+
+    out: set[str] = set()
+    try:
+        pack = packs_module.load(region)
+    except Exception:  # noqa: BLE001 - a broken pack must not stop a solve
+        return out
+    for relation in pack.relations:
+        if str(relation.get("relation_type")) == "rivalry":
+            out.add(escalation.dyad_id(str(relation["a"]), str(relation["b"])))
+    return out
+
+
+def hostility_scores(region: str) -> dict[str, float]:
+    """dyad_id → P(militarised dispute) over the pair's TRAILING TWELVE MONTHS.
+
+    THE TRAINED READ OF WHAT A RELATIONSHIP IS. The thresholds it replaces
+    scored 0.533 AUC on the held-out decade against this model's 0.847 — a
+    coin flip against a usable classifier — and the coercive SHARE they keyed
+    on carries a fitted weight of -0.01. Empty when no model ships or its gate
+    failed, which leaves `family.classify` on its rules.
+
+    THREE THINGS HAD TO MATCH THE FIT, and each was wrong once:
+
+      * the FEATURES are built by `hostility.dyad_year_rows`, the function the
+        fit uses. The first wiring rebuilt them from the quarterly panel,
+        where `severe_share` and `fight_share` do not exist and arrived as
+        zeros — the United States and Russia scored 0.41 served against 0.82
+        trained, the whole difference between "rival" and "adversary".
+      * the WINDOW is twelve months, not the latest calendar year. The fit's
+        rows are complete years; the newest year in a live corpus is a partial
+        one, and `log_events` carries the largest weight in the model (+0.57),
+        so every pair was scored as though the world had gone quiet.
+      * `declared_rivalry` is a FEATURE the fit was given, so it has to be
+        supplied here too. Hardcoding it False cost every declared rivalry
+        the +0.35 the model had learned to give it.
+    """
+    payload = hostility_module.load()
+    if payload is None:
+        return {}
+    rivalries = declared_rivalries(region)
+    rows = list(serving.iter_rows_of(region))
+    if not rows:
+        return {}
+    newest = max(str(r.get("event_time") or "") for r in rows)[:10]
+    if len(newest) < 10:
+        return {}
+    year, month, day = int(newest[:4]), int(newest[5:7]), newest[8:10]
+    cutoff = f"{year - 1:04d}-{month:02d}-{day}"
+    window = [r for r in rows if str(r.get("event_time") or "") >= cutoff]
+    cells = hostility_module.dyad_year_rows(window)
+    merged: dict[str, dict[str, float]] = {}
+    for (dyad, _), cell in cells.items():
+        into = merged.setdefault(dyad, {
+            "events": 0.0, "coercion": 0.0, "severe": 0.0, "fight": 0.0,
+            "goldstein_sum": 0.0, "goldstein_n": 0.0, "max_departure": 0.0,
+        })
+        for key, value in cell.items():
+            if key == "max_departure":
+                into[key] = max(into[key], value)
+            else:
+                into[key] += value
+    return {
+        dyad: round(hostility_module.score(
+            payload, cell, declared_rivalry=dyad in rivalries), 4)
+        for dyad, cell in merged.items()
+    }
 
 
 def load_dynamics(region: str, family: str = "adversary") -> dict[str, Any] | None:

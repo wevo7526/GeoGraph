@@ -73,6 +73,9 @@ class LoadResult:
     written: int = 0
     dropped: int = 0
     reasons: dict[str, int] = field(default_factory=dict)
+    #: Prior edges a loader cleared before writing, where it owns its source
+    #: outright (see `load_alliances`). Reported, never silent.
+    replaced: int = 0
 
     def drop(self, reason: str) -> None:
         self.dropped += 1
@@ -481,6 +484,41 @@ def load_igo_memberships(conn: Any, csv_path: Path) -> LoadResult:
     return result
 
 
+def alliance_relation(row: dict[str, str]) -> str | None:
+    """COW's four obligation columns → the relation this archive records.
+
+    THE FILE HAS FOUR BOOLEANS AND THE LOADER READ NONE OF THEM. Every row of
+    `alliance_v4.1_by_directed.csv` became `relation_type: "alliance"`, so a
+    non-aggression treaty and a defence pact arrived indistinguishable — and
+    the game layer, which asks "are these two allies?" to decide whether it is
+    solving a burden-sharing problem or a contest, believed it. Measured on
+    2026-08-17:
+
+        US–Germany   1990-10  defense=1                       → alliance
+        US–Poland    1999-03  defense=1                       → alliance
+        France–Russia 1990-10 defense=0 nonagg=1 entente=1    → non_aggression
+        Germany–Russia 1990-11 defense=0 neutrality=1 …       → non_aggression
+        France–Russia 1992-02 defense=0 entente=1             → entente
+
+    France–Russia and Germany–Russia were solved as ALLIES on the eurasia
+    board and captioned "formal allies since 1992" on the surface.
+
+    The strongest obligation in the row decides, because a row can carry
+    several: a defence pact that also pledges non-aggression is a defence
+    pact.
+    """
+    def on(field: str) -> bool:
+        return str(row.get(field, "")).strip() == "1"
+
+    if on("defense"):
+        return "alliance"
+    if on("neutrality") or on("nonaggression"):
+        return "non_aggression"
+    if on("entente"):
+        return "entente"
+    return None
+
+
 def load_alliances(conn: Any, csv_path: Path) -> LoadResult:
     """Formal Alliances → RELATES_TO edges with validity windows.
 
@@ -492,6 +530,22 @@ def load_alliances(conn: Any, csv_path: Path) -> LoadResult:
     result = LoadResult()
     _merge_source(conn, "source:cow-alliances")
     existing = _existing_actors(conn)
+    # AUTHORITATIVE FOR ITS OWN SOURCE. Edge identity is
+    # (relation_type, valid_from), so a row that changes KIND — which is what
+    # reading COW's obligation columns does to every non-defence pact — writes
+    # a second edge and leaves the first in place. France–Russia would have
+    # kept its "alliance since 1992" beside the new "entente since 1992" and
+    # the surface would have gone on calling them formal allies. Clearing this
+    # source's edges first makes the loader converge on a re-run instead of
+    # accumulating; it is safe because nothing else writes them and the
+    # rewrite happens in the same call.
+    cleared = kuzu_store.query(
+        conn,
+        "MATCH (a:Actor)-[r:RELATES_TO]->(b:Actor) "
+        "WHERE r.source_id = $source DELETE r RETURN count(*) AS n",
+        {"source": "source:cow-alliances"},
+    )
+    result.replaced = int(cleared[0]["n"]) if cleared else 0
 
     edges: dict[tuple[str, str, str], dict[str, Any]] = {}
     for row in _read_rows(csv_path):
@@ -526,8 +580,12 @@ def load_alliances(conn: Any, csv_path: Path) -> LoadResult:
             if src not in existing or dst not in existing:
                 result.drop("ally state not in the graph")
                 continue
+            relation = alliance_relation(row)
+            if relation is None:
+                result.drop("alliance row with no obligation set")
+                continue
             edges[(src, dst, valid_from)] = {
-                "src": src, "dst": dst, "relation_type": "alliance",
+                "src": src, "dst": dst, "relation_type": relation,
                 "valid_from": valid_from, "valid_to": valid_to,
                 "source_id": "source:cow-alliances",
             }

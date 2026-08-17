@@ -682,11 +682,20 @@ def test_a_long_job_can_stop_itself_when_memory_tightens(monkeypatch):
     # stops for the deadline — the batch boundary of the lean loader — and
     # the volume beside it, because a full disk is the other uncatchable kill.
     source = Path(work.__file__).read_text(encoding="utf-8")
-    loop = source[source.index("for start in range(0, len(pending), WIRE_BATCH_EVENTS)"):]
-    assert "jobs_tight()" in loop[:200], (
+    # The loop STREAMS the corpus now (materialising a pack's lens as dicts
+    # took the container from 4 GB to its ceiling in four seconds), so this
+    # checks the batch boundary wherever it is rather than the shape it had.
+    loop = source[source.index("for row in serving.iter_rows_of(name)"):]
+    assert "jobs_tight()" in loop[:1400], (
         "the wire's per-batch check must cover memory as well as the deadline"
     )
-    assert "disk_is_tight" in loop[:600], "and the volume"
+    assert "disk_is_tight" in loop[:1400], "and the volume"
+    # And before the setup, which is this job's actual peak.
+    before = source[:source.index("for row in serving.iter_rows_of(name)")]
+    assert "jobs_tight()" in before[-2000:], (
+        "loading the lens and reading back its ids is the peak, and it happens "
+        "before the first batch"
+    )
 
 
 def test_a_persisted_game_map_goes_stale_when_what_it_read_moves():

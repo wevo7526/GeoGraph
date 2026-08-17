@@ -1589,3 +1589,47 @@ def test_the_family_sentence_never_reports_the_bar_as_a_measurement() -> None:
         {"share": 0.42, "events": 500, "coercive": 210, "thin": False},
     )
     assert "42%" in by_share["why"]
+
+
+def test_the_family_is_decided_by_a_trained_read_not_a_threshold() -> None:
+    """WHAT THE THRESHOLDS GOT WRONG, and what replaced them.
+
+    `ADVERSARY_SHARE` (0.25) and `ADVERSARY_COUNT` (300) were set by hand
+    against counts that were measuring something else. Once the counting was
+    fixed (`classifier.coercion`), neither survived: the United States and
+    Russia came out "a declared rivalry conducted in argument" on a 9.5%
+    coercive share, and Russia and Ukraine came out the same in the third year
+    of an invasion. A share cannot answer this — its denominator is every
+    coded interaction, and the wire codes far more diplomacy than force.
+
+    On the held-out decade the shipped rule scored 0.533 AUC against the
+    model's 0.847.
+    """
+    from core.games import family as family_module
+
+    russia = {"relations": [{"relation_type": "rivalry", "since": "2007-02-10"}]}
+    thin_share = {"share": 0.095, "events": 978, "coercive": 93, "thin": False}
+
+    # The old evidence, alone, still reads as argument.
+    assert family_module.classify(russia, thin_share)["family"] == "rival"
+    # The trained read sees the dispute.
+    hot = family_module.classify(russia, thin_share, hostility=0.897)
+    assert hot["family"] == "adversary"
+    assert "dispute model" in hot["why"] and "90%" in hot["why"]
+    assert hot["hostility"] == 0.897
+
+
+def test_a_treaty_is_overturned_by_evidence_not_by_a_rounding_error() -> None:
+    """The model's largest feature is VOLUME, so the busiest alliances drift
+    upward on attention alone: US-UK scores 0.508, eight thousandths over the
+    ordinary bar. A declared defence pact is a sourced, dated fact and is
+    overturned only by an obvious record."""
+    from core.games import family as family_module
+
+    allied = {"relations": [{"relation_type": "alliance", "since": "1949-04-04"}]}
+    calm = {"share": 0.033, "events": 1398, "coercive": 46, "thin": False}
+
+    assert family_module.classify(allied, calm, hostility=0.508)["family"] == "ally"
+    assert family_module.classify(allied, calm, hostility=0.84)["family"] == "ally"
+    # …but an ally whose behaviour is unmistakable is still caught.
+    assert family_module.classify(allied, calm, hostility=0.92)["family"] == "adversary"

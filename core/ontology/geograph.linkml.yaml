@@ -72,7 +72,27 @@ enums:
     description: The durable relationships that make the network a network.
     permissible_values:
       alliance:
-        description: Formal alliance (COW Formal Alliances in the deep past).
+        description: >-
+          A DEFENCE PACT — each side is obliged to come to the other's aid.
+          COW Formal Alliances marks this with `defense=1`, and it is the only
+          alliance obligation that makes a pair "allies" in the sense the game
+          layer means (a burden-sharing problem rather than a contest).
+          Everything else COW files under "alliance" is below, because
+          importing all four obligations as this one made France and Russia
+          formal allies from a 1992 entente, and Germany and Russia from a
+          1990 non-aggression treaty — both then solved as burden-sharing
+          partners and captioned "formal allies" on the surface (2026-08-17).
+      non_aggression:
+        description: >-
+          A pledge not to attack, or to stay neutral if the other is attacked
+          (COW `nonaggression` / `neutrality`). Evidence about a relationship,
+          NOT evidence of alignment: rivals sign these precisely because they
+          are rivals, which is why North and South Korea hold one.
+      entente:
+        description: >-
+          An agreement to consult in a crisis (COW `entente`) — the weakest
+          obligation COW records, and no claim about whose side either party
+          would take.
       rivalry:
         description: Sustained adversarial dyad.
       membership:
