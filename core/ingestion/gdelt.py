@@ -145,22 +145,43 @@ def _is_state_actor(
        "CANTON" as CHN and "BIRMINGHAM" as USA. Checking the code against the
        roster's ISO3 accepts every one of them.
 
-    2. The GEOCODE (Actor?Geo_Type == 1, country level). It does separate a
-       state from a place inside it — 762 of ANTIOCH's 836 slots geolocate in
-       California — but it also throws away the real archive, because a strike
-       is geocoded where it landed. Measured over eurasia before shipping:
-       76% of ALL rows dropped, and Russia-Ukraine's material conflict fell
-       from 19,902 to 2,229. That is the same failure as the home-soil rule in
-       `classifier.coercion`, caught the same way, and rejected for the same
-       reason: a filter that deletes the largest war in the archive is wrong
-       however sound its motivation.
+    2. The GEOCODE (Actor?Geo_Type == 1, country level). Rejected twice, and
+       the second measurement is the one that settles it. As a filter it threw
+       away the archive: 76% of ALL eurasia rows dropped and Russia-Ukraine's
+       material conflict fell from 19,902 to 2,229, because a strike is
+       geocoded where it landed. Then, as a per-NAME statistic — "is this
+       actor usually resolved to a country or to a place inside one?" — it was
+       measured across all 66 artifacts and it does not discriminate at all:
+
+           UNITED STATES  225,340 slots   29% country-typed
+           RUSSIA         165,295          36%
+           POLAND          13,049          47%
+           WASHINGTON      56,735           9%
+           ---- against the homographs ----
+           CANTON             477          52%
+           POLE             1,739          24%
+           HASSAN           5,619          21%
+           ANTIOCH            836           2%
+
+       CANTON scores HIGHER than the United States and POLE higher than
+       Washington, because Actor?Geo_Type describes where the EVENT happened,
+       not what the actor is. There is no column in GDELT 1.0 that separates
+       these rows.
 
     What ships is the narrow, precise cut: an actor with a non-state TYPE is
     not the state. Reuters, Pfizer, Boeing and AstraZeneca carry MED/BUS/MNC
-    and go; the homograph rows carry no type at all and stay, and they remain
-    a known defect — the instrument for them is a national-name allowlist
-    (country, demonym, capital) per roster member, which is a crosswalk this
-    repo does not have yet.
+    and go; the homograph rows carry no type at all and stay.
+
+    THE REMAINING DEFECT AND ITS ONLY INSTRUMENT. Since no column separates
+    them, the discriminator has to be the NAME, and that means a curated
+    allowlist per roster member — the country's name, its common variants, its
+    demonym and its capital ("UNITED STATES", "THE US", "AMERICAN",
+    "WASHINGTON"), against which anything else resolving to that country is
+    refused. It belongs beside `fips_iso3.yaml` as a crosswalk, it is roughly
+    sixty countries of curation, and it is deterministic and testable once
+    written. It is not something to derive from the archive it is meant to
+    clean, which is what the two rejected attempts above were both trying to
+    do.
     """
     actor_type = (fields[type_at] if len(fields) > type_at else "").strip().upper()
     return not (actor_type and actor_type not in _STATE_ROLES)
