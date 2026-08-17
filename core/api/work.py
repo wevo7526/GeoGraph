@@ -362,6 +362,13 @@ REFILL_CHUNK_EVENTS = 200
 #: projected back from the panel once the wire's lean copy is in".
 REFILL_PENDING = ".affected-refill-pending"
 
+#: Panel rows a refill tick may hold at once. The projection writes ~200
+#: edges/s, so a 180s slice writes ~36k edges and never needs more than this;
+#: the cap exists because the READ is what allocates, not the write. Unbounded,
+#: it pulled every remaining row of ~1M into Python dicts in a single call and
+#: killed the container.
+REFILL_ROWS_PER_TICK = int(os.getenv("GEOGRAPH_REFILL_ROWS", "120000"))
+
 
 def refill(conn: Any, deadline: float) -> dict[str, Any]:
     """Finish an AFFECTED re-projection the boot's repair step left unfinished.
@@ -403,7 +410,12 @@ def refill(conn: Any, deadline: float) -> dict[str, Any]:
         # Only the rows past the marker for the pack in progress; a pack not
         # yet started reads from its beginning on its own turn.
         after = marker.state.get("after") if marker.state.get("pack") else None
-        rows = rebuild.panel_effect_rows(panel, after=after)
+        # BOUNDED, because this runs in the API's own process. Reading every
+        # remaining row took the container to 7.1 GB of a 7.45 GB limit the
+        # first time the wire finished and this job actually had work — a
+        # crash loop no guard could catch, since the whole allocation happens
+        # inside one call. A tick's slice writes far fewer than this anyway.
+        rows = rebuild.panel_effect_rows(panel, after=after, limit=REFILL_ROWS_PER_TICK)
     finally:
         panel.close()
     dates = rebuild.event_dates(conn)

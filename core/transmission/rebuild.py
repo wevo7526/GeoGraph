@@ -56,25 +56,48 @@ MEASURED_STATUSES = ("computed", "overlapping")
 DEFAULT_CHUNK_EVENTS = 1000
 
 
-def panel_effect_rows(panel: Any, *, after: str | None = None) -> list[dict[str, Any]]:
-    """Every measured (event, market, window) row the panel remembers — or,
-    with `after`, only those past a resume marker's event id, so a job that
-    refills in slices does not re-read a million rows a tick.
+def panel_effect_rows(
+    panel: Any, *, after: str | None = None, limit: int | None = None,
+) -> list[dict[str, Any]]:
+    """The measured (event, market, window) rows the panel remembers, from
+    `after` onward, at most `limit` of them.
 
-    One read, materialised: a million rows is ~200 MB of Python dicts, which
-    is what a repair child has to spare and a request thread does not — this
-    is never called from one.
+    **`limit` IS NOT OPTIONAL IN A SHARED PROCESS.** This was written for a
+    repair CHILD, where materialising the lot was a fine trade and the
+    docstring said so — "a million rows is ~200 MB". Both halves aged badly.
+    The refill became a JOB inside the API, where the peak is not spare, and
+    eleven columns over a million rows is well past a gigabyte of Python
+    dicts, not 200 MB. On 2026-08-17 the wire finished, the refill job started
+    for the first time, read every remaining row in one statement and took the
+    container to 7.1 GB of a 7.45 GB limit — a crash loop that no guard could
+    catch, because the allocation happens inside one call.
+
+    THE CHUNK NEVER CUTS AN EVENT IN HALF. `refill` groups by event and the
+    marker resumes by event id, so a chunk ending mid-event would record that
+    event as done and silently drop its remaining markets. When the limit is
+    reached, the trailing event's rows are dropped and left for the next tick
+    — unless the whole chunk is one event, which must still make progress.
     """
+    sql = (
+        "SELECT event_node_id, market_ticker, effect_window, resolution, "
+        "status, raw_return, expected_return, abnormal_return, t_stat, "
+        "p_value, method FROM event_study_runs "
+        "WHERE status = ANY(%s) AND event_node_id > %s ORDER BY event_node_id"
+    )
+    params: list[Any] = [list(MEASURED_STATUSES), after or ""]
+    if limit is not None:
+        sql += " LIMIT %s"
+        params.append(int(limit))
     with panel.cursor() as cur:
-        cur.execute(
-            "SELECT event_node_id, market_ticker, effect_window, resolution, "
-            "status, raw_return, expected_return, abnormal_return, t_stat, "
-            "p_value, method FROM event_study_runs "
-            "WHERE status = ANY(%s) AND event_node_id > %s ORDER BY event_node_id",
-            (list(MEASURED_STATUSES), after or ""),
-        )
+        cur.execute(sql, tuple(params))
         columns = [d[0] for d in cur.description]
-        return [dict(zip(columns, row, strict=True)) for row in cur.fetchall()]
+        rows = [dict(zip(columns, row, strict=True)) for row in cur.fetchall()]
+    if limit is not None and len(rows) >= limit:
+        last = str(rows[-1]["event_node_id"])
+        trimmed = [r for r in rows if str(r["event_node_id"]) != last]
+        if trimmed:
+            return trimmed
+    return rows
 
 
 def event_dates(graph: Any) -> dict[str, dt.date]:
