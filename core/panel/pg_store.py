@@ -138,6 +138,32 @@ DDL: tuple[str, ...] = (
         PRIMARY KEY (region_pack, scope, dyad_id)
     )
     """,
+    # ── MIGRATIONS ───────────────────────────────────────────────────────────
+    #
+    # `CREATE TABLE IF NOT EXISTS` cannot add a column to a table that already
+    # exists, and this schema is applied on every boot against a database that
+    # does. `ADD COLUMN IF NOT EXISTS` is idempotent, so it belongs here rather
+    # than in a migration tool this project does not have.
+    #
+    # THESE TWO COLUMNS ARE WHAT LET MEASUREMENTS LEAVE THE GRAPH. AFFECTED is
+    # a SOURCED edge under the provenance invariant — every one carries a
+    # `source_id` resolving to a Source that exists — and the invariant has to
+    # travel with the data, not lapse when it moves. `first_mover` is the other
+    # field the edge carries and the row did not; it cannot be derived from a
+    # single row (it means "earliest session among the markets measured
+    # together"), so it must be stored.
+    """
+    ALTER TABLE event_study_runs ADD COLUMN IF NOT EXISTS source_id TEXT
+    """,
+    """
+    ALTER TABLE event_study_runs ADD COLUMN IF NOT EXISTS first_mover BOOLEAN
+    """,
+    # The read patterns that replace the Cypher: every consumer filters either
+    # by one event, or by one ticker across the archive.
+    """
+    CREATE INDEX IF NOT EXISTS event_study_runs_by_ticker
+        ON event_study_runs (market_ticker, status)
+    """,
 )
 
 
@@ -219,7 +245,10 @@ def upsert_intraday(conn: Any, rows: list[dict[str, Any]]) -> int:
     return len(rows)
 
 
-def record_runs(conn: Any, effects: list[Any], skips: list[Any]) -> int:
+def record_runs(
+    conn: Any, effects: list[Any], skips: list[Any],
+    *, source_of: Any = None,
+) -> int:
     """The event-study working set: every ATTEMPT, computed or skipped.
 
     A skip is a row, not an absence. "Tadawul has no 1973 reaction" and "we
@@ -229,15 +258,17 @@ def record_runs(conn: Any, effects: list[Any], skips: list[Any]) -> int:
     sql = """
         INSERT INTO event_study_runs
             (event_node_id, market_ticker, effect_window, resolution, status,
-             raw_return, expected_return, abnormal_return, t_stat, p_value, method)
+             raw_return, expected_return, abnormal_return, t_stat, p_value, method,
+             source_id, first_mover)
         VALUES (%(event_node_id)s, %(market_ticker)s, %(effect_window)s, %(resolution)s,
                 %(status)s, %(raw_return)s, %(expected_return)s, %(abnormal_return)s,
-                %(t_stat)s, %(p_value)s, %(method)s)
+                %(t_stat)s, %(p_value)s, %(method)s, %(source_id)s, %(first_mover)s)
         ON CONFLICT (event_node_id, market_ticker, effect_window) DO UPDATE SET
             resolution = EXCLUDED.resolution, status = EXCLUDED.status,
             raw_return = EXCLUDED.raw_return, expected_return = EXCLUDED.expected_return,
             abnormal_return = EXCLUDED.abnormal_return, t_stat = EXCLUDED.t_stat,
             p_value = EXCLUDED.p_value, method = EXCLUDED.method,
+            source_id = EXCLUDED.source_id, first_mover = EXCLUDED.first_mover,
             computed_at = now()
     """
     rows: list[dict[str, Any]] = [
@@ -250,6 +281,13 @@ def record_runs(conn: Any, effects: list[Any], skips: list[Any]) -> int:
             "abnormal_return": _finite(e.abnormal_return),
             "t_stat": _finite(e.t_stat), "p_value": _finite(e.p_value),
             "method": e.method,
+            # PROVENANCE, carried on the row now that the row is becoming the
+            # store rather than a watermark beside one. `effect_source` is a
+            # pure function of the result's resolution and ticker, which is
+            # what makes the backfill of historical rows exact rather than a
+            # guess — see `backfill_effect_sources`.
+            "source_id": source_of(e) if source_of else None,
+            "first_mover": bool(getattr(e, "first_mover", False)),
         }
         for e in effects
     ] + [
@@ -259,6 +297,10 @@ def record_runs(conn: Any, effects: list[Any], skips: list[Any]) -> int:
             "status": s.status, "raw_return": None, "expected_return": None,
             "abnormal_return": None, "t_stat": None, "p_value": None,
             "method": s.reason,
+            # A SKIP HAS NO PROVENANCE BECAUSE IT HAS NO NUMBER. "We looked and
+            # there was no market" cites nothing; the provenance rule binds
+            # measurements, and writing a source here would claim one.
+            "source_id": None, "first_mover": None,
         }
         for s in skips
     ]
@@ -606,3 +648,55 @@ def series(
             continue
         out.append({"obs_date": obs_date.isoformat(), "price": float(price)})
     return out
+
+
+def backfill_effect_sources(conn: Any) -> int:
+    """Stamp provenance on measurements recorded before the column existed.
+
+    EXACT, NOT INFERRED, and that distinction is why this is safe to run
+    against production. `runner.effect_source` is a pure function of a result's
+    `resolution` and `market_ticker` — monthly and annual returns are Shiller's
+    era, the FRED tenors are FRED's, everything else is yfinance — so the same
+    rule expressed in SQL reproduces exactly what the graph edge was stamped
+    with. Nothing is guessed and nothing is re-measured.
+
+    Idempotent: only rows with no source are touched. Skips are left alone,
+    because a skip has no number and therefore cites nothing.
+    """
+    from core.ingestion import market_data, shiller
+
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            UPDATE event_study_runs SET source_id = CASE
+                WHEN resolution IN ('month', 'year') THEN %(shiller)s
+                WHEN market_ticker IN ('DGS2', 'DGS3MO', 'DGS10') THEN %(fred)s
+                ELSE %(yfinance)s
+            END
+            WHERE source_id IS NULL AND status IN ('computed', 'overlapping')
+            """,
+            {
+                "shiller": shiller.SOURCE_SHILLER,
+                "fred": market_data.SOURCE_FRED,
+                "yfinance": market_data.SOURCE_YFINANCE,
+            },
+        )
+        stamped = int(cur.rowcount)
+    conn.commit()
+    return stamped
+
+
+def unsourced_effects(conn: Any) -> int:
+    """Measurements with no provenance — the invariant's backstop, in Postgres.
+
+    The graph enforced this through `ontology.validate_edge` on every AFFECTED
+    write. When the measurements live here instead, something has to hold the
+    same line, and a count that must be zero is that something.
+    """
+    with conn.cursor() as cur:
+        cur.execute(
+            "SELECT count(*) FROM event_study_runs "
+            "WHERE source_id IS NULL AND status IN ('computed', 'overlapping')"
+        )
+        row = cur.fetchone()
+    return int(row[0]) if row else 0

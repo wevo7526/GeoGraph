@@ -1357,12 +1357,25 @@ def _apply_panel_schema() -> dict[str, Any] | None:
     try:
         conn = pg_store.connect(settings)
         pg_store.apply_schema(conn)
+        # PROVENANCE, STAMPED ON MEASUREMENTS RECORDED BEFORE THE COLUMN
+        # EXISTED. Exact rather than inferred: `runner.effect_source` is a pure
+        # function of a row's resolution and ticker, so the same rule in SQL
+        # reproduces what the graph edge was stamped with. Idempotent — it
+        # touches only rows with no source — so it costs one indexed scan on
+        # every boot after the first.
+        stamped = pg_store.backfill_effect_sources(conn)
+        unsourced = pg_store.unsourced_effects(conn)
         conn.close()
     except pg_store.PanelUnavailable as exc:
         _log(f"panel schema NOT applied: {exc}")
         return {"ok": False, "error": str(exc)}
     _log("panel schema applied")
-    return {"ok": True}
+    if stamped:
+        _log(f"  stamped provenance on {stamped:,} measurements")
+    if unsourced:
+        # The invariant's backstop, in the store that now holds the numbers.
+        _log(f"  WARNING: {unsourced:,} measurements carry no source")
+    return {"ok": True, "sourced": stamped, "unsourced": unsourced}
 
 
 def _freeze_forecasts() -> dict[str, Any]:

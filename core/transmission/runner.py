@@ -302,7 +302,13 @@ def measure(
                     graph, group, market_node_ids=market_node_ids, source_id=source_id
                 )
             if pending_results or pending_skips:
-                pg_store.record_runs(panel, pending_results, pending_skips)
+                # The SAME `effect_source` the graph edge is stamped with, so
+                # the two stores cannot disagree about where a number came
+                # from while both exist — and so the Postgres row still
+                # carries it once the graph copy is gone.
+                pg_store.record_runs(
+                    panel, pending_results, pending_skips, source_of=effect_source
+                )
         pending_results.clear()
         pending_skips.clear()
         pending_by_source.clear()
