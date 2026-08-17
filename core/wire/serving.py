@@ -98,10 +98,20 @@ def available() -> bool:
 
 
 def reset() -> None:
-    """Drop the warmed state — FOR TESTS. Production never calls this: the
-    corpus is immutable per process, so there is nothing to re-warm to. Tests
-    repoint `GEOGRAPH_DERIVED_DIR` between cases, and warmed tables from the
-    previous directory must not survive the switch."""
+    """Drop the warmed state.
+
+    Written for tests, which repoint `GEOGRAPH_DERIVED_DIR` between cases and
+    must not see the previous directory's tables. Production called it never,
+    on the reasoning that the corpus is immutable for the life of a process —
+    true for as long as the artifacts only ever shipped inside the image.
+
+    THE `harvest` JOB ENDED THAT (2026-08-17). It appends new days to the
+    volume's overlay, so the corpus a process started with is no longer the
+    corpus on disk, and `work.harvest` calls this followed immediately by
+    `warm()` when a day actually landed. Immediately, because `table()`
+    rebuilds lazily: invalidating without refilling hands a ~20s re-parse to
+    the next user request instead of to the job that caused it.
+    """
     global _WARMED
     with _LOCK:
         _TABLES.clear()

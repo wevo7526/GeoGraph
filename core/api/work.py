@@ -1291,10 +1291,32 @@ def harvest(conn: Any, deadline: float) -> dict[str, Any]:
         fetched += 1
         if time.monotonic() >= deadline:
             break
+
+    # THE ONE PLACE THAT BREAKS "the corpus is immutable per process".
+    # Everything downstream reads `serving`'s derived tables, which are built
+    # once at startup precisely because the artifacts used to be frozen inside
+    # the image. Now they are not, so a day fetched here would sit on the
+    # volume unread until the container happened to restart — which is days,
+    # and makes a job that keeps the archive current not actually current.
+    #
+    # Re-warmed HERE rather than by invalidating and walking away: `table()`
+    # rebuilds lazily on first read, so dropping the tables without refilling
+    # them hands the ~20s re-parse to whichever user clicks next. A job has
+    # the time; a page does not. Skipped entirely when nothing was written, or
+    # an hourly no-op would re-parse three lenses for nothing.
+    rewarmed = False
+    if any(kept.values()):
+        from core.wire import serving
+
+        serving.reset()
+        serving.warm()  # ends in corpus.evict(), so the raw rows do not linger
+        rewarmed = True
+
     return {
         "days": fetched,
         "through": str(days[fetched - 1]) if fetched else None,
         "rows": kept,
+        "rewarmed": rewarmed,
         "remaining_to_yesterday": max(
             0, (today - _dt.timedelta(days=1) - days[fetched - 1]).days
         ) if fetched else None,
