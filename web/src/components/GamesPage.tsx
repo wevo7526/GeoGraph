@@ -452,22 +452,25 @@ function DyadGame({
         }
       />
 
-      {/* THE CALL — one lede, one odds line, one course, one market line. It
-          used to hold seven registers in one plate: kicker, three-line lede, a
-          caveat paragraph, an 11px mono line, a course paragraph and four
-          tiles, with nothing leading. */}
+      {/* THE GAME, not a second copy of the pair's call. Odds and what
+          courses like it did to prices live on the relationship page. */}
       <div className={`call mt-8 ${call.opensAbove && family?.family !== 'ally' ? 'call--rising' : ''}`}>
-        <div className="kicker">The call</div>
-        <p className="call-lede">{call.headline}</p>
-        <p className="call-odds">{call.odds}</p>
-        {call.course && <p className="call-note">{call.course}</p>}
-        {call.markets ? (
-          <p className="call-note">{call.markets}</p>
-        ) : (
-          <p className="call-note" style={{ color: 'var(--muted)' }}>
-            No market has enough comparable measurements to price this course.
-          </p>
-        )}
+        <div className="kicker">This pair's game</div>
+        <p className="call-lede">
+          {call.course ?? call.headline}
+        </p>
+        <p className="call-note">
+          The call — the odds, and what courses like it did to prices — is on the relationship page.
+        </p>
+        <p className="mt-3">
+          <button
+            type="button"
+            className="article-link"
+            onClick={() => onNavigate(`/relationships?dyad=${encodeURIComponent(dyad)}&region=${encodeURIComponent(region)}`)}
+          >
+            open the call →
+          </button>
+        </p>
         {family && !family.native && (
           <p className="call-note" style={{ color: 'var(--muted)' }}>
             <em>

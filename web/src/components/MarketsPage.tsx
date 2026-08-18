@@ -12,7 +12,7 @@ import { getBacktest, getCalibration, getForward, getJobs, getMarketsStory, getT
 import { useRegionLabel } from '../regions'
 import type { BacktestLedger, CalibrationWalk, ForwardView, JobsStatus, MarketStoryMarket, MarketsStory, TradeableEdge } from '../types'
 import { Beat, Chip, Disclosure, Empty, StoryHead } from '../ui'
-import { count, courseSentence, marketsLede, pctWord, signedPct } from '../lib/story'
+import { count, courseSentence, marketsLede, pctWord, signedPct, skillSentence, strategyWord } from '../lib/story'
 import { Bars, DotWhisker, Drawdown, EquityCurve, SeriesLine, Tiles, pct } from './charts/Kit'
 
 const money = (v: number) => `${v < 0 ? '−' : ''}$${Math.abs(v).toLocaleString('en-US', { maximumFractionDigits: 0 })}`
@@ -51,6 +51,7 @@ export default function MarketsPage({ region, onNavigate }: { region: string; on
   const [jobs, setJobs] = useState<JobsStatus | null>(null)
   const [showAll, setShowAll] = useState(false)
   const [focus, setFocus] = useState<string | null>(null)
+  const [cleanRead, setCleanRead] = useState(false)
 
   useEffect(() => {
     let live = true
@@ -99,6 +100,7 @@ export default function MarketsPage({ region, onNavigate }: { region: string; on
   const summary = ledger?.summary ?? null
   const lede = marketsLede(story, name)
   const measuredTotal = markets.reduce((a, m) => a + m.measured, 0)
+  const scored = skillSentence(story.transmission_skill, name)
 
   // ADVERSARY COURSES ONLY. The forward beat is read as "where the region's
   // risk points", and until 2026-08-17 it was led by Syria–Lebanon and
@@ -139,8 +141,17 @@ export default function MarketsPage({ region, onNavigate }: { region: string; on
               ? `games open at ${story.game_as_of.slice(0, 7)}`
               : story.computed_at ? `written ${story.computed_at.slice(0, 10)}` : undefined,
           },
-        ]} />
+        ]}         />
       </div>
+
+      {scored && (
+        <Beat
+          title="How the map has scored"
+          aside="Leave-one-out of stored reactions — the archive already measured; this only asks whether those measurements predicted the next one. Not a new event study."
+        >
+          <p>{scored}</p>
+        </Beat>
+      )}
 
       {studyStopped && (
         <p className="figure-note mt-4">
@@ -154,7 +165,7 @@ export default function MarketsPage({ region, onNavigate }: { region: string; on
       <Beat
         title="What a sharp escalation does to prices"
         major
-        aside={`Each market's measured response over the four sessions after a sharp escalation in ${name}. The dot is the typical move; the bar holds the middle half of what actually happened.`}
+        aside={`Each market's measured response over the four sessions after a sharp escalation in ${name}. The dot is the typical move; the bar holds the middle half of what actually happened.${cleanRead ? ' Showing the clean read: overlapping windows dropped.' : ''}`}
       >
         {headlined.length ? (
           <>
@@ -162,7 +173,7 @@ export default function MarketsPage({ region, onNavigate }: { region: string; on
               rows={markets
                 .filter((m) => m.headline || m.measured > 0)
                 .map((m) => {
-                  const h = m.headline ?? m.response?.sharp_escalation?.car_0_3
+                  const h = (cleanRead ? m.clean_headline : m.headline) ?? m.response?.sharp_escalation?.car_0_3
                   return {
                     key: m.ticker,
                     label: m.name,
@@ -181,6 +192,16 @@ export default function MarketsPage({ region, onNavigate }: { region: string; on
               rows hold too few measurements to read as a number. Click a market for its full
               response and the events that moved it most.
             </p>
+            <div className="toolbar mt-3" style={{ borderTop: 'none' }}>
+              <button
+                type="button"
+                className="btn btn--quiet"
+                aria-pressed={cleanRead}
+                onClick={() => setCleanRead((v) => !v)}
+              >
+                {cleanRead ? 'showing the clean read' : 'excluding overlapping windows'}
+              </button>
+            </div>
           </>
         ) : (
           <Empty>No market holds enough measured effects for a headline yet — the transmission engine is still measuring this region.</Empty>
@@ -216,7 +237,7 @@ export default function MarketsPage({ region, onNavigate }: { region: string; on
                 </tr>
               </thead>
               <tbody>
-                {Object.entries(focused.response).map(([kind, byWindow]) => (
+                {Object.entries((cleanRead ? focused.clean_response : focused.response) ?? focused.response).map(([kind, byWindow]) => (
                   <tr key={kind}>
                     <td>{KIND_WORDS[kind] ?? kind}</td>
                     {focused.windows.map((w) => {
@@ -240,6 +261,9 @@ export default function MarketsPage({ region, onNavigate }: { region: string; on
             Each cell is the median move and the number of events behind it; hover for the middle
             half. A cell marked thin has too few measurements to read.
           </p>
+          {strategyWord(focused.strategy_signal) && (
+            <p className="figure-note mt-2">{strategyWord(focused.strategy_signal)}</p>
+          )}
           {focused.biggest_moves.length > 0 && (
             <div className="mt-6">
               <div className="kicker mb-2">The events that moved it most</div>

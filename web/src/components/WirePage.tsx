@@ -25,12 +25,13 @@
  */
 import { useEffect, useState } from 'react'
 
-import { getEventEffects, getWire, getWireLive, lastFailureFor } from '../api'
+import { getWire, getWireLive, lastFailureFor } from '../api'
 import { count, wireHeadline, wireKindWord, wireLede, wireRead } from '../lib/story'
 import { useRegionLabel } from '../regions'
-import type { Effect, WireFeed, WireItem, WireLiveFeed, WireLiveItem } from '../types'
+import type { WireFeed, WireItem, WireLiveFeed, WireLiveItem } from '../types'
 import { Beat, Disclosure, Empty, StoryHead } from '../ui'
 import { Tiles } from './charts/Kit'
+import ImpactLine from './ImpactLine'
 
 const LIVE_POLL_MS = 60_000
 
@@ -42,54 +43,6 @@ function baselineFigure(item: WireItem): string {
     ? `+${item.pair_baseline.toFixed(1)}`
     : item.pair_baseline.toFixed(1)
   return `${points.toFixed(1)} pts from ${bar}`
-}
-
-function EventEffects({ eventId }: { eventId: string }) {
-  const [rows, setRows] = useState<Effect[] | undefined>(undefined)
-  useEffect(() => {
-    let live = true
-    setRows(undefined)
-    getEventEffects(eventId).then((r) => live && setRows(r?.rows ?? []))
-    return () => {
-      live = false
-    }
-  }, [eventId])
-  if (rows === undefined) return <p className="figure-note">Reading measured effects…</p>
-  if (!rows.length) {
-    return (
-      <p className="figure-note">
-        No measured market reaction for this event yet — it may still be in the
-        study queue, or every market was skipped.
-      </p>
-    )
-  }
-  const shown = rows.slice(0, 8)
-  return (
-    <div className="scroll-x mt-2">
-      <table className="rule-table" style={{ minWidth: 420 }}>
-        <thead>
-          <tr>
-            <th className="text-left">market</th>
-            <th className="text-right">move</th>
-            <th className="text-right">window</th>
-          </tr>
-        </thead>
-        <tbody>
-          {shown.map((row) => (
-            <tr key={`${row.ticker}-${row.window}`}>
-              <td>{row.market || row.ticker}</td>
-              <td className="text-right mono">
-                {row.abnormal_return == null
-                  ? '—'
-                  : `${row.abnormal_return >= 0 ? '+' : ''}${(row.abnormal_return * 100).toFixed(2)}%`}
-              </td>
-              <td className="text-right mono" style={{ color: 'var(--muted)' }}>{row.window}</td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
-  )
 }
 
 /** A departure, at full width: when, how far, what happened, what it means.
@@ -143,13 +96,18 @@ function Departure({
           </button>
         )}
         <button type="button" className="article-link" onClick={onEffects}>
-          {effectsOpen ? 'hide measured effects' : 'measured effects →'}
+          {effectsOpen ? 'hide measured vs typical' : 'measured vs typical →'}
         </button>
         <button type="button" className="article-link" onClick={onStudy}>
           the study →
         </button>
       </div>
-      {effectsOpen && <EventEffects eventId={item.node_id} />}
+      {effectsOpen && (
+        <ImpactLine
+          eventId={item.node_id}
+          onOpenPair={item.dyad_id ? onOpen : undefined}
+        />
+      )}
     </article>
   )
 }

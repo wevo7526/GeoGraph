@@ -77,7 +77,13 @@ const FADE = 2600
 const LIFE = GROW + HOLD + FADE
 const GAP = 1500
 
-export default function OrthoGlobe({ board }: { board: GlobeBoard }) {
+export default function OrthoGlobe({
+  board,
+  onNodeClick,
+}: {
+  board: GlobeBoard
+  onNodeClick?: (node: GlobeNode) => void
+}) {
   const canvas = useRef<HTMLCanvasElement>(null)
   const wrap = useRef<HTMLDivElement>(null)
   const grid = useMemo(() => graticule(15, 15), [])
@@ -89,6 +95,8 @@ export default function OrthoGlobe({ board }: { board: GlobeBoard }) {
     { node: GlobeNode; sx: number; sy: number } | null
   >(null)
   const hoverId = useRef<string | null>(null)
+  const onNodeClickRef = useRef(onNodeClick)
+  onNodeClickRef.current = onNodeClick
 
   const state = useRef({
     lam0: 20,
@@ -98,6 +106,7 @@ export default function OrthoGlobe({ board }: { board: GlobeBoard }) {
     vLam: DRIFT,
     vPhi: 0,
     dragging: false,
+    moved: false,
     lastX: 0,
     lastY: 0,
     paused: { hover: false, focus: false, hidden: false, offscreen: false },
@@ -262,6 +271,7 @@ export default function OrthoGlobe({ board }: { board: GlobeBoard }) {
       const node = id ? byId.get(id) : null
       const at = id ? s.screen.get(id) : null
       setHover(node && at ? { node, sx: at.sx, sy: at.sy } : null)
+      box.style.cursor = id && onNodeClickRef.current ? 'pointer' : ''
     }
 
     let raf = 0
@@ -297,20 +307,20 @@ export default function OrthoGlobe({ board }: { board: GlobeBoard }) {
     // ── drag to turn, hover to name ──────────────────────────────────────
     const down = (e: PointerEvent) => {
       s.dragging = true
+      s.moved = false
       s.lastX = e.clientX
       s.lastY = e.clientY
       s.vLam = 0
       s.vPhi = 0
       box.setPointerCapture?.(e.pointerId)
-      if (hoverId.current !== null) {
-        hoverId.current = null
-        setHover(null)
-      }
+      const rect = box.getBoundingClientRect()
+      pick(e.clientX - rect.left, e.clientY - rect.top)
     }
     const move = (e: PointerEvent) => {
       if (s.dragging) {
         const dx = e.clientX - s.lastX
         const dy = e.clientY - s.lastY
+        if (Math.hypot(dx, dy) > 4) s.moved = true
         s.lastX = e.clientX
         s.lastY = e.clientY
         // BOTH AXES ARE NEGATED, and that is the fix rather than a taste.
@@ -338,6 +348,13 @@ export default function OrthoGlobe({ board }: { board: GlobeBoard }) {
       if (!s.dragging) return
       s.dragging = false
       box.releasePointerCapture?.(e.pointerId)
+      if (!s.moved && hoverId.current && onNodeClickRef.current) {
+        const node = byId.get(hoverId.current)
+        if (node) onNodeClickRef.current(node)
+        s.vLam = DRIFT
+        s.vPhi = 0
+        return
+      }
       // Cap the throw so a fast flick does not spin the globe into a blur.
       s.vLam = Math.max(-200, Math.min(200, s.vLam))
       s.vPhi = Math.max(-110, Math.min(110, s.vPhi))

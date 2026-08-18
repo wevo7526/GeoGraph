@@ -1,15 +1,14 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   getActors,
-  getForecast,
-  getForecasts,
-  getPaperBook,
   getCoverage,
   getDyads,
   getEvent,
   getEventEffects,
   getEvents,
   getFlows,
+  getForecast,
+  getForecasts,
   getPack,
   getRegimes,
   getRelations,
@@ -26,6 +25,7 @@ import Graph3D, {
   type Graph3DHandle,
   type LinkSelection,
 } from './Graph3D'
+import ImpactLine from './ImpactLine'
 import TimeSlider, { YEAR_MIN, YEAR_NOW } from './TimeSlider'
 import { LineBand } from './charts/Charts'
 import type {
@@ -34,7 +34,6 @@ import type {
   EventDetail,
   Flow,
   ForecastDetail,
-  PaperBook,
   GraphActor,
   GraphEvent,
   Pack,
@@ -183,7 +182,15 @@ function EffectsSection({ effects }: { effects: Effect[] | null }) {
   )
 }
 
-function EventDetailPanel({ nodeId }: { nodeId: string }) {
+function EventDetailPanel({
+  nodeId,
+  region,
+  onNavigate,
+}: {
+  nodeId: string
+  region: string
+  onNavigate?: (route: string) => void
+}) {
   const [detail, setDetail] = useState<EventDetail | null>(null)
   const [trajectory, setTrajectory] = useState<Trajectory | null>(null)
   const [effects, setEffects] = useState<Effect[] | null>(null)
@@ -265,6 +272,22 @@ function EventDetailPanel({ nodeId }: { nodeId: string }) {
       </dl>
 
       <EffectsSection effects={effects} />
+
+      <div className="mt-4">
+        <Microcaps>Measured vs typical</Microcaps>
+        <ImpactLine
+          eventId={nodeId}
+          onOpenPair={
+            detail.dyad && onNavigate
+              ? () =>
+                  onNavigate(
+                    `/relationships?dyad=${encodeURIComponent(detail.dyad!.node_id)}` +
+                      `&region=${encodeURIComponent(region)}`,
+                  )
+              : undefined
+          }
+        />
+      </div>
 
       {detail.dyad && (
         <div className="mt-5 pt-4 border-t" style={{ borderColor: 'var(--line)' }}>
@@ -611,11 +634,16 @@ function PressureLine({ detail }: { detail: ForecastDetail }) {
 /** The reasoning layer, on screen: both frozen forecast modes. Appears when
  *  the slider crosses "now" — the forward segment of the timeline renders
  *  scenario space, and this panel IS that space. */
-function ForecastPanel({ region }: { region: string }) {
+function ForecastPanel({
+  region,
+  onNavigate,
+}: {
+  region: string
+  onNavigate?: (route: string) => void
+}) {
   const [nearTerm, setNearTerm] = useState<ForecastDetail | null>(null)
   const [longHorizon, setLongHorizon] = useState<ForecastDetail | null>(null)
   const [model, setModel] = useState<ForecastDetail | null>(null)
-  const [paper, setPaper] = useState<PaperBook | null>(null)
   const [empty, setEmpty] = useState(false)
 
   useEffect(() => {
@@ -635,9 +663,6 @@ function ForecastPanel({ region }: { region: string }) {
       ] as const) {
         const summary = newest(mode)
         if (summary) getForecast(summary.node_id).then((d) => active && d && set(d))
-        if (summary && mode === 'near_term') {
-          getPaperBook(summary.node_id).then((b) => active && b && setPaper(b))
-        }
       }
     })
     return () => {
@@ -734,55 +759,12 @@ function ForecastPanel({ region }: { region: string }) {
           <p className="mono text-xs mt-2" style={{ color: 'var(--muted)' }}>
             likelihoods are regime-gated base rates — recount them from the archive
           </p>
-
-          {paper && (
-            <div className="mt-5 pt-4 border-t" style={{ borderColor: 'var(--line)' }}>
-              <div className="flex items-baseline justify-between gap-3">
-                <Microcaps>Paper book · $1M notional</Microcaps>
-                <span
-                  className="mono text-sm"
-                  style={{ color: paper.pnl_usd >= 0 ? 'var(--accent)' : 'var(--alert)' }}
-                >
-                  {paper.pnl_usd >= 0 ? '+' : '−'}$
-                  {Math.abs(paper.pnl_usd).toLocaleString(undefined, {
-                    maximumFractionDigits: 0,
-                  })}
-                </span>
-              </div>
-              <ul className="mt-2 space-y-1">
-                {paper.positions.map((pos) => (
-                  <li
-                    key={pos.ticker}
-                    className="flex items-baseline justify-between gap-3 text-xs mono"
-                    style={{ color: 'var(--muted)' }}
-                  >
-                    <span>
-                      {pos.ticker} {pos.weight >= 0 ? 'long' : 'short'}{' '}
-                      {Math.abs(pos.weight * 100).toFixed(0)}%
-                    </span>
-                    {pos.status === 'marked' ? (
-                      <span
-                        style={{
-                          color:
-                            (pos.pnl_usd ?? 0) >= 0 ? 'var(--text)' : 'var(--alert)',
-                        }}
-                      >
-                        {(pos.pnl_usd ?? 0) >= 0 ? '+' : '−'}$
-                        {Math.abs(pos.pnl_usd ?? 0).toLocaleString(undefined, {
-                          maximumFractionDigits: 0,
-                        })}
-                      </span>
-                    ) : (
-                      <span>unfillable</span>
-                    )}
-                  </li>
-                ))}
-              </ul>
-              <p className="mono text-[10px] mt-2" style={{ color: 'var(--muted)' }}>
-                unfitted translation of the frozen scenarios · entered after cutoff,
-                marked at latest close · not advice
-              </p>
-            </div>
+          {onNavigate && (
+            <p className="mt-3">
+              <button type="button" className="article-link" onClick={() => onNavigate('/markets')}>
+                the paper book is on Markets →
+              </button>
+            </p>
           )}
         </div>
       )}
@@ -1226,9 +1208,9 @@ export default function Explorer({
           style={{ borderColor: 'var(--line)', background: 'var(--panel)' }}
         >
           {!selection && year > YEAR_NOW ? (
-            <ForecastPanel region={region} />
+            <ForecastPanel region={region} onNavigate={onNavigate} />
           ) : selection?.kind === 'event' ? (
-            <EventDetailPanel nodeId={selection.id} />
+            <EventDetailPanel nodeId={selection.id} region={region} onNavigate={onNavigate} />
           ) : selection?.kind === 'dyad' ? (
             <DyadPanel
               dyadId={selection.id}

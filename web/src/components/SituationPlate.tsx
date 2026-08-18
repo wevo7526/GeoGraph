@@ -6,13 +6,8 @@
  *  door now makes ONE claim and the pages behind it make the rest, and the
  *  departures still have a home on the Wire.
  *
- *  THE STRAPLINE WENT TOO (second cut, same day). It named the nineteen
- *  actors the globe cannot place — blocs, funds and armed movements with no
- *  coordinate — and losing it means the front door no longer discloses that
- *  gap. That is a deliberate trade the owner made for a page with no subtext
- *  on it, not an oversight: the globe now shows the states it can place and
- *  claims nothing about the rest, and `/api/globe` still serves `unplaced` for
- *  any surface that wants to say so.
+ *  Pulses and roster dots click through: a recent departure opens the pair,
+ *  otherwise the wire. They used to be ornamental.
  *
  *  WHITE, as the rest of the surface is. The dark plate this briefly wore was
  *  an override of a dated decision; it is withdrawn.
@@ -20,21 +15,47 @@
 import { useEffect, useState } from 'react'
 
 import { getGlobe, lastFailureFor } from '../api'
-import type { GlobeBoard } from '../types'
+import { dyadId } from '../lib/ids'
+import type { GlobeBoard, GlobeNode } from '../types'
 import { Empty } from '../ui'
 import OrthoGlobe from './OrthoGlobe'
 
-export default function SituationPlate({ region }: { region?: string }) {
-  const [board, setBoard] = useState<GlobeBoard | null | undefined>(undefined)
+export default function SituationPlate({
+  region,
+  board: given,
+  onOpen,
+}: {
+  region?: string
+  board?: GlobeBoard | null
+  onOpen?: (route: string) => void
+}) {
+  const [fetched, setFetched] = useState<GlobeBoard | null | undefined>(undefined)
+  const controlled = given !== undefined
+  const board = controlled ? given : fetched
 
   useEffect(() => {
+    if (controlled) return
     let live = true
-    setBoard(undefined)
-    getGlobe(region, 12).then((b) => live && setBoard(b))
+    setFetched(undefined)
+    getGlobe(region, 12).then((b) => live && setFetched(b))
     return () => {
       live = false
     }
-  }, [region])
+  }, [region, controlled])
+
+  const openNode = (node: GlobeNode) => {
+    if (!onOpen || !board) return
+    const pulse = board.pulses.find((p) => p.source === node.id || p.target === node.id)
+    if (pulse) {
+      onOpen(
+        `/relationships?dyad=${encodeURIComponent(dyadId(pulse.source, pulse.target))}` +
+          `&region=${encodeURIComponent(pulse.pack || region || '')}`,
+      )
+      return
+    }
+    const pack = node.packs[0] || region
+    onOpen(pack ? `/wire?region=${encodeURIComponent(pack)}` : '/wire')
+  }
 
   if (board === undefined) {
     return <div className="plate plate--waiting" aria-busy="true" />
@@ -50,7 +71,7 @@ export default function SituationPlate({ region }: { region?: string }) {
 
   return (
     <section className="plate" aria-label="the archive's roster, mapped">
-      <OrthoGlobe board={board} />
+      <OrthoGlobe board={board} onNodeClick={onOpen ? openNode : undefined} />
     </section>
   )
 }

@@ -20,6 +20,7 @@
 import type {
   ConceptSolution,
   DyadSolution,
+  EventImpact,
   MarketsStory,
   RegionMap,
   Scenario,
@@ -27,6 +28,8 @@ import type {
   Posture,
   Family,
   RegionRanking,
+  StrategySignal,
+  TransmissionSkill,
   WireFeed,
   WireItem,
 } from '../types'
@@ -496,4 +499,101 @@ export function wireLede(feed: WireFeed, label: string): Lede | null {
     `that is routine for a rivalry is a rupture for an alliance.` +
     cap
   return { headline, support, asOf: newest }
+}
+
+// ── the situation briefing ──────────────────────────────────────────────────
+
+const MARKET_TYPE_WORD: Record<string, string> = {
+  equity_index: 'regional equities',
+  commodity: 'commodities',
+  sovereign_yield: 'sovereign yields',
+}
+
+/** The working home's first sentence: what broke, then what the games and the
+ *  packed markets add — three named ledes, not a fourth invented claim. */
+export function situationLede(args: {
+  label: string
+  wire: WireFeed | null
+  map: RegionMap | null
+  story: MarketsStory | null
+}): Lede | null {
+  const wire = args.wire ? wireLede(args.wire, args.label) : null
+  const games =
+    args.map && !args.map.resolving ? regionLede(args.map, args.label) : null
+  const markets =
+    args.story && !args.story.pending ? marketsLede(args.story, args.label) : null
+  if (!wire && !games && !markets) return null
+
+  const headline = wire?.headline ?? games?.headline ?? markets?.headline ?? `The situation in ${args.label}`
+  const next = [games?.headline, markets?.headline].filter((part) => part && part !== headline)
+  const support = next.length ? next.join(' ') : (wire?.support ?? games?.support ?? markets?.support ?? null)
+  const asOf = wire?.asOf ?? games?.asOf ?? markets?.asOf ?? null
+  return { headline, support, asOf }
+}
+
+/** How the transmission map has scored, in a reader's words.
+ *
+ *  Leave-one-out of stored cells — never a new measurement. MAE stays off the
+ *  hero line; the sentence is sign-hit, whether it beat a naive last-cell
+ *  guess, and coverage. */
+export function skillSentence(skill: TransmissionSkill | null | undefined, label: string): string | null {
+  const kind = skill?.kind
+  if (!kind || kind.n == null || kind.n < 1) return null
+  const hit = kind.sign_hit
+  const covered = kind.coverage
+  const guess = kind.beats_naive
+    ? 'and beat a naive last-cell guess'
+    : 'and did not beat a naive last-cell guess'
+  const sign =
+    hit == null
+      ? 'the map has a sample but not a sign-hit rate yet'
+      : `the map got the sign of the next move right ${pctWord(hit, 0)} of the time`
+  const cover =
+    covered == null ? '' : `, on ${pctWord(covered, 0)} of ${label}'s stored reactions`
+  const types = Object.entries(skill?.by_market_type ?? {})
+    .filter(([, row]) => row.n && row.n > 0 && row.sign_hit != null)
+    .slice(0, 4)
+    .map(([key, row]) => `${MARKET_TYPE_WORD[key] ?? key.replaceAll('_', ' ')} ${pctWord(row.sign_hit, 0)}`)
+  const strata = types.length ? ` By kind of market: ${types.join('; ')}.` : ''
+  const control =
+    skill?.gspc_control?.n && skill.gspc_control.sign_hit != null
+      ? ` The S&P 500 control sat at ${pctWord(skill.gspc_control.sign_hit, 0)}.`
+      : ''
+  return `On a leave-one-out walk of stored reactions (matching by kind of event, excluding overlapping windows), ${sign} ${guess}${cover}.${strata}${control}`
+}
+
+/** Strategy gate as vocabulary — never as a blotter. */
+export function strategyWord(sig: StrategySignal | null | undefined): string | null {
+  if (!sig) return null
+  if (sig.thin || sig.n < 1) {
+    return 'Too few measurements to take a view — stand aside.'
+  }
+  if (sig.action === 'stand_aside') {
+    return 'Stand aside: the typical move does not clear a cost hurdle.'
+  }
+  if (sig.action === 'watch') {
+    return 'Watch: the typical move sits near the cost hurdle, not past it.'
+  }
+  const way =
+    sig.direction === 'long' ? 'higher' : sig.direction === 'short' ? 'lower' : 'unchanged'
+  return `The typical move is ${way}, and it clears a cost hurdle. That is a reading of the archive, not advice.`
+}
+
+/** One line of measured vs expected vs surprise. Empty is "not measured", never a zero. */
+export function impactLine(impact: EventImpact): string {
+  const rows = impact.markets.filter((m) => m.measured || m.expected).slice(0, 3)
+  if (!rows.length) return 'Not measured.'
+  return rows
+    .map((m) => {
+      if (!m.measured) {
+        return `${m.market_name} not measured`
+      }
+      if (!m.expected) {
+        return `${m.market_name} moved ${signedPct(m.measured.car)} — no comparable base rate`
+      }
+      const surprise =
+        m.surprise == null ? '' : `; surprise ${signedPct(m.surprise)}`
+      return `${m.market_name} moved ${signedPct(m.measured.car)}; typically ${signedPct(m.expected.median_car)}${surprise}`
+    })
+    .join(' · ')
 }

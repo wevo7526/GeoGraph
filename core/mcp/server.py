@@ -104,6 +104,34 @@ def build_server() -> Any:
         new call from the question string."""
         return tools.forecast(conn, question, mode)
 
+    @server.tool()
+    def markets_story(region: str = "mena") -> dict[str, Any]:
+        """Persisted markets story for a region pack: headline cells and the
+        leave-one-out transmission-skill block. Same store as GET
+        /api/markets/story. Pending means not computed yet, never a zero.
+        Does not re-run the event study."""
+        return tools.markets_story(region)
+
+    @server.tool()
+    def event_impact(event_id: str) -> dict[str, Any]:
+        """Measured vs expected vs surprise for one event — same function as
+        GET /api/impact/{event_id}. An empty markets list means nothing was
+        MEASURED, never that the event had no effect. Cite the coverage note."""
+        return tools.event_impact(conn, event_id)
+
+    @server.tool()
+    def region_call(region: str = "mena") -> dict[str, Any]:
+        """The persisted region map's lead pair and how many dyads were solved.
+        Same store as GET /api/games/region. Does not re-solve live."""
+        return tools.region_call(region)
+
+    @server.tool()
+    def wire_live(region: str = "mena", limit: int = 12) -> dict[str, Any]:
+        """Newest scored live-overlay rows for a region (GDELT 2.0 cache).
+        Empty means this process has no live batch yet, not that the region
+        is quiet. Rows are capped; `truncated` says when."""
+        return tools.wire_live(region, limit)
+
     return server
 
 

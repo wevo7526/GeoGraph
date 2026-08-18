@@ -68,12 +68,12 @@ export default function Landing({ onEnter }: { onEnter: (route: string) => void 
             <button
               type="button"
               className="ink-button landing-enter text-lg"
-              onClick={() => onEnter('/explore')}
+              onClick={() => onEnter('/situation')}
             >
               Enter
             </button>
           </div>
-          <SituationPlate />
+          <SituationPlate onOpen={onEnter} />
         </div>
       </main>
 

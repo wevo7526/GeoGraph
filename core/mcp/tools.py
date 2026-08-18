@@ -7,9 +7,11 @@ never raw {nodes, edges} payloads — measured on MarketGraph, those cost
 coverage caveat so an agent reports "the graph holds no X" narrowly and
 truthfully.
 
-Implemented now: find_actor, regime_at, and the graph-backed shells. The rest
-land with their layers and raise a phase-naming error until then — an agent
-told "Phase 2" reports that; an agent given an empty result invents.
+Implemented now: find_actor, regime_at, the graph-backed shells, plus
+markets_story, event_impact, region_call, and wire_live — thin, capped
+wrappers over the same functions the API uses, never a second estimator.
+The rest land with their layers and raise a phase-naming error until then —
+an agent told "Phase 2" reports that; an agent given an empty result invents.
 """
 
 from __future__ import annotations
@@ -283,4 +285,169 @@ def forecast(
             "sharp_departure_probability is the harder one."
         ),
         "coverage": _COVERAGE,
+    }
+
+
+def _panel() -> Any | None:
+    try:
+        from core import settings as settings_module
+        from core.panel import pg_store
+
+        return pg_store.connect(settings_module.load())
+    except Exception:  # noqa: BLE001 - MCP without a panel still answers
+        return None
+
+
+def markets_story(region: str = "mena") -> dict[str, Any]:
+    """The persisted markets story — same store the API reads. Compact headlines
+    plus the transmission-skill block. Never recomputes the event study."""
+    from core.panel import pg_store
+
+    panel = _panel()
+    if panel is None:
+        return {
+            "region": region,
+            "pending": True,
+            "headlines": [],
+            "coverage": _COVERAGE,
+            "note": "panel unavailable — nothing measured to report",
+        }
+    try:
+        stored = pg_store.market_story(panel, region)
+    finally:
+        panel.close()
+    if stored is None:
+        return {
+            "region": region,
+            "pending": True,
+            "headlines": [],
+            "coverage": _COVERAGE,
+            "note": "the markets story has not been computed for this region yet",
+        }
+    headlines = []
+    for market in stored.get("markets") or []:
+        cell = market.get("headline")
+        if not cell:
+            continue
+        headlines.append({
+            "ticker": market.get("ticker"),
+            "name": market.get("name"),
+            "median": cell.get("median"),
+            "n": cell.get("n"),
+        })
+        if len(headlines) >= 12:
+            break
+    return {
+        "region": stored.get("region", region),
+        "region_label": stored.get("region_label"),
+        "as_of": stored.get("as_of"),
+        "pending": False,
+        "headlines": headlines,
+        "transmission_skill": stored.get("transmission_skill"),
+        "coverage": _COVERAGE,
+        "truncated": sum(1 for m in (stored.get("markets") or []) if m.get("headline")) > 12,
+    }
+
+
+def event_impact(conn: kuzu.Connection, event_id: str) -> dict[str, Any]:
+    """Measured vs expected vs surprise — same function as GET /api/impact/{id}."""
+    from core.reasoning import impact as impact_module
+
+    result = impact_module.event_impact(conn, event_id)
+    if result is None:
+        return {
+            "event": event_id,
+            "markets": [],
+            "coverage": _COVERAGE,
+            "note": "no such event, or nothing measured",
+        }
+    markets = list(result.get("markets") or [])
+    return {
+        "mode": result.get("mode"),
+        "event": result.get("event"),
+        "markets": markets[:12],
+        "precedents": result.get("precedents"),
+        "boundary_statement": result.get("boundary_statement"),
+        "truncated": len(markets) > 12,
+        "coverage": _COVERAGE,
+    }
+
+
+def region_call(region: str = "mena") -> dict[str, Any]:
+    """The persisted region map's lead pair — not a live re-solve."""
+    from core.games import scenarios
+    from core.panel import pg_store
+
+    panel = _panel()
+    if panel is None:
+        return {
+            "region": region,
+            "lead": None,
+            "coverage": _COVERAGE,
+            "note": "panel unavailable — no persisted region map to report",
+        }
+    try:
+        stored = pg_store.game_solution(
+            panel, region, scope="region", version=scenarios.PAYLOAD_VERSION
+        )
+    finally:
+        panel.close()
+    if stored is None:
+        return {
+            "region": region,
+            "lead": None,
+            "coverage": _COVERAGE,
+            "note": "no persisted region map of the current shape",
+        }
+    ranking = stored.get("ranking") or []
+    lead = ranking[0] if ranking else None
+    return {
+        "region": stored.get("region", region),
+        "as_of": stored.get("as_of"),
+        "dyads_solved": stored.get("dyads_solved"),
+        "lead": lead,
+        "coverage": _COVERAGE,
+    }
+
+
+def wire_live(region: str = "mena", limit: int = 12) -> dict[str, Any]:
+    """Scored live overlay rows — the same GDELT 2.0 cache the Wire reads.
+
+    Does not invent a number. An empty result means this process has no live
+    batch yet, not that the region is quiet.
+    """
+    from core.wire import live as live_overlay
+
+    cap = max(1, min(int(limit), 12))
+    rows = list(live_overlay.rows_for(region) or [])
+    if not rows:
+        try:
+            from core import packs
+
+            live_overlay.refresh_pack(packs.load(region))
+            rows = list(live_overlay.rows_for(region) or [])
+        except Exception as exc:  # noqa: BLE001 - live feed failing is not a 500
+            return {
+                "region": region,
+                "rows": [],
+                "coverage": _COVERAGE,
+                "note": f"no live batch: {exc}",
+            }
+    compact = []
+    for row in rows[:cap]:
+        compact.append({
+            "node_id": row.get("node_id"),
+            "event_time": row.get("event_time") or row.get("available_at"),
+            "initiator_name": row.get("initiator_name"),
+            "target_name": row.get("target_name"),
+            "quad_class": row.get("quad_class"),
+            "implied_kind": row.get("implied_kind"),
+            "dyad_id": row.get("dyad_id"),
+        })
+    return {
+        "region": region,
+        "rows": compact,
+        "truncated": len(rows) > cap,
+        "coverage": _COVERAGE,
+        "note": None if compact else "no live batch in this process yet",
     }

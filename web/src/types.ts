@@ -1288,6 +1288,27 @@ export interface StrategySignal {
   reason: string
 }
 
+export interface SkillStratum {
+  n?: number | null
+  coverage?: number | null
+  sign_hit?: number | null
+  mae?: number | null
+  mae_naive?: number | null
+  beats_naive?: boolean | null
+}
+
+/** Compact leave-one-out scoreboard on stored cells — never a new study. */
+export interface TransmissionSkill {
+  window?: string
+  clean?: boolean
+  universe?: number
+  kind?: SkillStratum
+  by_market_type?: Record<string, SkillStratum>
+  sovereign_yield?: SkillStratum | null
+  gspc_control?: SkillStratum | null
+  method?: string
+}
+
 export interface MarketStoryMarket {
   ticker: string
   name: string
@@ -1301,6 +1322,11 @@ export interface MarketStoryMarket {
   response: Record<string, Record<string, ResponseCell>>
   headline: (ResponseCell & { kind: string }) | null
   strategy_signal?: StrategySignal
+  /** Dual of `response`: overlapping windows, weak p, out-of-regime and GDELT
+   *  duplicates dropped. The published mix stays in `response` so medians do
+   *  not silently jump. */
+  clean_response?: Record<string, Record<string, ResponseCell>>
+  clean_headline?: (ResponseCell & { kind: string }) | null
   first_mover_share: Record<string, number>
   biggest_moves: Array<{
     event_id: string
@@ -1390,6 +1416,7 @@ export interface MarketsStory {
     summary?: { dyads: number; dyads_measured: number; events: number; events_measured: number; share_measured: number }
     dyads?: Array<{ dyad_id: string; dyad_name?: string; events: number; measured: number }>
   } | null
+  transmission_skill?: TransmissionSkill | null
   method: string
   explanation: string[]
 }

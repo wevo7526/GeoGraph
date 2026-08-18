@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
-import { getHealth, getPacks } from '../api'
+import { getActors, getDyads, getHealth, getPacks, getWire } from '../api'
+import { wireHeadline } from '../lib/story'
 
 /** The one rail every working page shares, set as the paper's LEFT RULE:
  *  wordmark and region at the top (the lens every layer looks through), the
@@ -89,6 +90,7 @@ export default function Sidebar({
             ))}
           </select>
         </label>
+        <FindBox region={region} onNavigate={onNavigate} />
       </div>
 
       <nav className="sidebar-nav" aria-label="desks">
@@ -136,5 +138,115 @@ export default function Sidebar({
         </span>
       </div>
     </aside>
+  )
+}
+
+type Hit = { kind: 'pair' | 'event' | 'actor'; label: string; route: string }
+
+function FindBox({
+  region,
+  onNavigate,
+}: {
+  region: string
+  onNavigate: (route: string) => void
+}) {
+  const [q, setQ] = useState('')
+  const [hits, setHits] = useState<Hit[]>([])
+
+  useEffect(() => {
+    const needle = q.trim().toLowerCase()
+    if (needle.length < 2) {
+      setHits([])
+      return
+    }
+    let live = true
+    const timer = window.setTimeout(() => {
+      Promise.all([getActors(), getDyads(), getWire(region, 60)]).then(([actors, dyads, wire]) => {
+        if (!live) return
+        const out: Hit[] = []
+        for (const d of dyads?.rows ?? []) {
+          if (d.name.toLowerCase().includes(needle)) {
+            out.push({
+              kind: 'pair',
+              label: d.name,
+              route:
+                `/relationships?dyad=${encodeURIComponent(d.node_id)}` +
+                `&region=${encodeURIComponent(region)}`,
+            })
+          }
+        }
+        for (const item of wire?.rows ?? []) {
+          const head = wireHeadline(item)
+          const blob = `${head} ${item.initiator_name ?? ''} ${item.target_name ?? ''}`.toLowerCase()
+          if (!blob.includes(needle)) continue
+          out.push({
+            kind: 'event',
+            label: head,
+            route: item.dyad_id
+              ? `/relationships?dyad=${encodeURIComponent(item.dyad_id)}&region=${encodeURIComponent(region)}`
+              : '/wire',
+          })
+        }
+        for (const a of actors?.rows ?? []) {
+          if (a.region_pack && a.region_pack !== region) continue
+          if (!a.name.toLowerCase().includes(needle)) continue
+          const pair = (dyads?.rows ?? []).find((d) => d.name.toLowerCase().includes(a.name.toLowerCase()))
+          out.push({
+            kind: 'actor',
+            label: a.name,
+            route: pair
+              ? `/relationships?dyad=${encodeURIComponent(pair.node_id)}&region=${encodeURIComponent(region)}`
+              : '/wire',
+          })
+        }
+        const seen = new Set<string>()
+        const unique = out.filter((h) => {
+          if (seen.has(h.route + h.label)) return false
+          seen.add(h.route + h.label)
+          return true
+        })
+        setHits(unique.slice(0, 20))
+      })
+    }, 200)
+    return () => {
+      live = false
+      window.clearTimeout(timer)
+    }
+  }, [q, region])
+
+  return (
+    <div className="sidebar-find">
+      <label className="kicker sidebar-find-kicker" htmlFor="sidebar-find">
+        find
+      </label>
+      <input
+        id="sidebar-find"
+        type="search"
+        value={q}
+        onChange={(e) => setQ(e.target.value)}
+        placeholder="a pair or actor"
+        autoComplete="off"
+      />
+      {hits.length > 0 && (
+        <ul className="sidebar-hits">
+          {hits.map((hit) => (
+            <li key={`${hit.kind}-${hit.route}-${hit.label}`}>
+              <button
+                type="button"
+                className="sidebar-hit"
+                onClick={() => {
+                  onNavigate(hit.route)
+                  setQ('')
+                  setHits([])
+                }}
+              >
+                <span className="sidebar-hit-kind">{hit.kind}</span>
+                <span className="sidebar-hit-label">{hit.label}</span>
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
   )
 }
