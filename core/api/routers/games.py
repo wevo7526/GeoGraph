@@ -284,6 +284,11 @@ def explore(
     own = [r for r in context["table"] if r["dyad_id"] == dyad]
     if not own:
         raise HTTPException(status_code=404, detail=f"no series for {dyad}")
+    from core.wire import live as live_overlay
+
+    live_rows = live_overlay.rows_for(region, dyad)
+    if live_rows:
+        own = live_overlay.apply_to_own(own, live_rows)
 
     fitted = _defaults(region)
     payoffs = solve_module.Payoffs(

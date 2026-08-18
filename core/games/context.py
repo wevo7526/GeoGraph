@@ -124,10 +124,8 @@ def build(conn: Any, region: str) -> dict[str, Any]:
         "kernel_by_space": {"ally": kernel_ally, "rival": kernel_rival},
         "coverage_by_space": {"ally": transition_module.coverage(observed_ally),
                               "rival": transition_module.coverage(observed_rival)},
-        # Measured market effects live in the graph alone. An open graph adds
-        # them; without one the game still solves, priced over no effects
-        # rather than refusing — and it is a LIST, as every consumer iterates
-        # (an empty dict here once meant "iterate the keys of nothing").
+        # Measured market effects: panel first (GDELT lives there), graph
+        # AFFECTED as fallback for spine/deep-tier when Postgres is down.
         "effects": (
             pricing_module.measured_effects(conn, region_pack=region) if conn is not None else []
         ),

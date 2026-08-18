@@ -32,7 +32,9 @@ import type {
   ForwardView,
   EventImpact,
   ImpactCoverage,
+  JobsStatus,
   MarketsStory,
+  TradeableEdge,
 } from './types'
 
 /** A recorded API failure — kept so the surface can tell BROKEN from EMPTY.
@@ -318,6 +320,13 @@ export const getDyadSolution = (region: string, dyad: string) =>
 // the markets job and served from Postgres (pending until its first pass).
 export const getMarketsStory = (region: string) =>
   get<MarketsStory>(`/api/markets/story?region=${encodeURIComponent(region)}`)
+
+export const getTradeableEdge = (leader = '^TASI.SR', follower = '^GSPC') => {
+  const query = new URLSearchParams({ leader, follower })
+  return get<TradeableEdge>(`/api/trading/edge?${query}`)
+}
+
+export const getJobs = () => get<JobsStatus>('/api/jobs')
 
 // The standing book: the latest frozen near-term call marked at the latest close.
 export const getForward = (region: string) =>

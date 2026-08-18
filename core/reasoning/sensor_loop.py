@@ -63,13 +63,20 @@ def _strongest_effect(rows: list[dict[str, Any]]) -> dict[str, Any] | None:
     return min(finite, key=lambda r: (float(r["p_value"]), r["window"], r["ticker"]))
 
 
-def update_from_effect(conn: Any, event_node_id: str) -> list[dict[str, Any]]:
-    """Read the event's MEASURED AFFECTED edges, compare against the expected
+def update_from_effect(
+    conn: Any, event_node_id: str, *, panel: Any | None = None,
+) -> list[dict[str, Any]]:
+    """Read the event's MEASURED effects, compare against the expected
     move given current estimates, and write updated resolve AttributeEstimate
     rows for the actors involved. Returns what it wrote.
 
     Refuses an unmeasured event outright: with no realized outcome there is
     nothing the loop is allowed to learn from.
+
+    Graph AFFECTED first (spine / deep-tier). GDELT measurements live in
+    `event_study_runs`; pass `panel` so those still update resolve after the
+    graph copy of the wire is gone. Actor ids come off the Event node or,
+    for a corpus-only event, off the scored row.
     """
     effects = kuzu_store.query(
         conn,
@@ -78,18 +85,39 @@ def update_from_effect(conn: Any, event_node_id: str) -> list[dict[str, Any]]:
         "a.t_stat AS t_stat, a.p_value AS p_value",
         {"id": event_node_id},
     )
+    if not effects and panel is not None:
+        from core.panel import pg_store
+
+        effects = [
+            {
+                "ticker": r["market_ticker"],
+                "window": r["window"],
+                "abnormal": r["abnormal_return"],
+                "t_stat": r["t_stat"],
+                "p_value": r["p_value"],
+            }
+            for r in pg_store.computed_runs(panel, event_id=event_node_id)
+        ]
     if not effects:
         raise ValueError(
             f"{event_node_id} has no measured effects — the sensor loop updates "
             "from REALIZED outcomes only (build-spec section 4), and none exist."
         )
 
-    event = kuzu_store.query(
+    event_rows = kuzu_store.query(
         conn,
         "MATCH (e:Event {node_id: $id}) RETURN e.event_time AS event_time, "
         "e.quad_class AS quad_class",
         {"id": event_node_id},
-    )[0]
+    )
+    event = event_rows[0] if event_rows else None
+    if event is None:
+        from core.wire import serving
+
+        row = serving.event(event_node_id)
+        if row is None:
+            raise ValueError(f"{event_node_id} is not in the graph or the corpus")
+        event = {"event_time": row.get("event_time"), "quad_class": row.get("quad_class")}
 
     strongest = _strongest_effect(effects)
     if (
@@ -108,7 +136,13 @@ def update_from_effect(conn: Any, event_node_id: str) -> list[dict[str, Any]]:
         "OPTIONAL MATCH (e)-[:DIRECTED_AT]->(t:Actor) "
         "RETURN i.node_id AS initiator, t.node_id AS target",
         {"id": event_node_id},
-    )[0]
+    )
+    actors = actors[0] if actors else {"initiator": None, "target": None}
+    if not actors.get("initiator") and not actors.get("target"):
+        from core.wire import serving
+
+        row = serving.event(event_node_id) or {}
+        actors = {"initiator": row.get("initiator_id"), "target": row.get("target_id")}
     written: list[dict[str, Any]] = []
     edges: list[dict[str, Any]] = []
     for actor_id in dict.fromkeys(

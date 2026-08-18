@@ -94,6 +94,11 @@ def dyad_series(
                 "which is too little history to normalise against."
             ),
         )
+    from core.wire import live as live_overlay
+
+    live_rows = live_overlay.rows_for(region or "", dyad_id)
+    if live_rows:
+        rows = live_overlay.apply_to_own(rows, live_rows)
     active = [r for r in rows if r["intensity"] > 0.0]
     return {
         "dyad_id": dyad_id,

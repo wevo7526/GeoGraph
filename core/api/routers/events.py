@@ -15,6 +15,7 @@ from typing import Any
 
 from fastapi import APIRouter, HTTPException, Query, Request
 
+from core import archive as archive_bounds
 from core import settings as settings_module
 from core.graph import kuzu_store
 from core.wire import serving as wire_serving
@@ -102,7 +103,10 @@ def list_events(
         # error, which is why Regime carries start_date/end_date.
         if start:
             clauses.append("e.event_time >= $start_date")
-            params["start_date"] = start
+            params["start_date"] = archive_bounds.clamp_start(start)
+        else:
+            clauses.append("e.event_time >= $start_date")
+            params["start_date"] = archive_bounds.START
         if end:
             clauses.append("e.event_time <= $end_date")
             params["end_date"] = end
@@ -216,7 +220,55 @@ def event_effects(request: Request, node_id: str) -> dict[str, Any]:
         "ORDER BY ticker, window",
         {"id": node_id},
     )
+    if not rows:
+        rows = _effects_from_panel(conn, node_id)
     return {"event": node_id, "measured": len(rows), "rows": rows}
+
+
+def _effects_from_panel(conn: Any, event_id: str) -> list[dict[str, Any]]:
+    """GDELT measurements live in event_study_runs after the graph copy is gone."""
+    from core.panel import pg_store
+
+    try:
+        panel = pg_store.connect(settings_module.load())
+    except pg_store.PanelUnavailable:
+        return []
+    try:
+        runs = pg_store.computed_runs(panel, event_id=event_id)
+    finally:
+        panel.close()
+    if not runs:
+        return []
+    markets = {
+        str(r["ticker"]): r
+        for r in kuzu_store.query(
+            conn,
+            "MATCH (m:Market) RETURN m.node_id AS market_node_id, m.name AS market, "
+            "m.ticker AS ticker, m.market_type AS market_type",
+        )
+    }
+    rows: list[dict[str, Any]] = []
+    for run in runs:
+        meta = markets.get(str(run["market_ticker"]), {})
+        rows.append({
+            "market_node_id": meta.get("market_node_id"),
+            "market": meta.get("market"),
+            "ticker": run["market_ticker"],
+            "market_type": meta.get("market_type"),
+            "window": run["window"],
+            "resolution": run.get("resolution"),
+            "raw_return": run.get("raw_return"),
+            "expected_return": run.get("expected_return"),
+            "abnormal_return": run["abnormal_return"],
+            "t_stat": run.get("t_stat"),
+            "p_value": run.get("p_value"),
+            "first_mover": run.get("first_mover"),
+            "overlapping": run.get("status") == "overlapping",
+            "method": run.get("method"),
+            "source_id": run.get("source_id"),
+        })
+    rows.sort(key=lambda r: (str(r["ticker"]), str(r["window"])))
+    return rows
 
 
 def _wire_event_detail(node_id: str) -> dict[str, Any] | None:
@@ -510,12 +562,9 @@ def _actor_names(request: Request | None = None) -> dict[str, str]:
 _LIVE_TTL_SECONDS = 60.0
 _live_cache: dict[str, Any] = {"at": 0.0, "payload": None, "region": None}
 
-#: Goldstein bands → the kinds the transmission map measured. RAW SCORE, and
-#: the payload says so: the map's kinds are Head B DEPARTURES from a pair's own
-#: baseline, and a raw score is not that. Labelling a live event by its coding
-#: and attaching what similarly-coded events historically did is honest; calling
-#: it a departure would not be, because the baseline needs the pair's history
-#: and this event is fifteen minutes old.
+#: Goldstein bands → the kinds the transmission map measured. KEPT as the
+#: raw-score fallback and pinned by tests; `/wire/live` now uses Head B
+#: (`markets.kind_of` over `escalation_direction`) against the snapshot EWMA.
 def _implied_kind(goldstein: float | None) -> str:
     if goldstein is None:
         return "stable"
@@ -526,6 +575,15 @@ def _implied_kind(goldstein: float | None) -> str:
     if goldstein > 2.0:
         return "de-escalation"
     return "stable"
+
+
+#: `stable` is the dump bucket: every consult, public statement and near-zero
+#: Goldstein score lands here, so its historical median is "what the region's
+#: markets do on ordinary days", not what THIS event is worth. Attaching that
+#: cell as a high-confidence trade is how a 1-mention Iran–Iraq consultation
+#: shipped with "short Dubai / long the S&P" on 2026-08-17. Escalation kinds
+#: are sparse enough that the cell is actually about events like this one.
+_ACTIONABLE_KINDS = frozenset({"sharp_escalation", "escalation", "de-escalation"})
 
 
 @router.get("/wire/live")
@@ -552,10 +610,10 @@ def wire_live(region: str = "mena", limit: int = Query(30, ge=1, le=100)) -> dic
     import time
 
     from core import packs
-    from core.ingestion import stream as live_stream
     from core.panel import pg_store
     from core.reasoning import markets as markets_module
     from core.reasoning import strategy as strategy_module
+    from core.wire import live as live_overlay
 
     now = time.monotonic()
     if (_live_cache["payload"] is not None and _live_cache["region"] == region
@@ -568,12 +626,8 @@ def wire_live(region: str = "mena", limit: int = Query(30, ge=1, le=100)) -> dic
         pack = packs.load(region)
     except packs.PackError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
-    roster = {
-        a["iso3"]: {"node_id": a["id"], "name": a["name"]}
-        for a in pack.actors if a.get("iso3")
-    }
     try:
-        polled = live_stream.poll(pack, roster)
+        polled = live_overlay.refresh_pack(pack)
     except Exception as exc:  # noqa: BLE001 - a live feed failing is not a 500
         raise HTTPException(
             status_code=503, detail=f"the GDELT 2.0 stream did not answer: {exc}"
@@ -604,25 +658,33 @@ def wire_live(region: str = "mena", limit: int = Query(30, ge=1, le=100)) -> dic
     rows: list[dict[str, Any]] = []
     for row in polled.get("rows", [])[:limit]:
         goldstein = row.get("goldstein")
-        kind = _implied_kind(None if goldstein is None else float(goldstein))
+        kind = markets_module.kind_of(
+            row.get("escalation_direction"), row.get("escalation_magnitude"),
+        )
         outlook = []
-        for ticker, entry in responses.items():
-            cell = ((entry["response"].get(kind) or {}).get(markets_module.HEADLINE_WINDOW)
-                    or {})
-            if not cell.get("n"):
-                continue
-            outlook.append({
-                "ticker": ticker,
-                "market": entry["name"],
-                "median": cell.get("median"),
-                "p25": cell.get("p25"),
-                "p75": cell.get("p75"),
-                "n": cell.get("n"),
-                "share_positive": cell.get("share_positive"),
-                "thin": bool(cell.get("thin")),
-                **strategy_module.assess_cell(cell),
-            })
-        outlook.sort(key=lambda m: abs(m.get("median") or 0.0), reverse=True)
+        # THE DUMP BUCKET CARRIES NO PRICE. A stable-kind median is the
+        # region's ordinary-day move, identical on every consult; stamping it
+        # `trade` taught the wire page to look like a blotter. Escalation
+        # kinds keep the historical cell, IQR included, so a reader can see
+        # the spread the strategy gate is (or is not) clearing.
+        if kind in _ACTIONABLE_KINDS:
+            for ticker, entry in responses.items():
+                cell = ((entry["response"].get(kind) or {}).get(markets_module.HEADLINE_WINDOW)
+                        or {})
+                if not cell.get("n"):
+                    continue
+                outlook.append({
+                    "ticker": ticker,
+                    "market": entry["name"],
+                    "median": cell.get("median"),
+                    "p25": cell.get("p25"),
+                    "p75": cell.get("p75"),
+                    "n": cell.get("n"),
+                    "share_positive": cell.get("share_positive"),
+                    "thin": bool(cell.get("thin")),
+                    **strategy_module.assess_cell(cell),
+                })
+            outlook.sort(key=lambda m: abs(m.get("median") or 0.0), reverse=True)
         rows.append({
             "node_id": row.get("node_id"),
             "event_time": row.get("event_time"),
@@ -630,6 +692,9 @@ def wire_live(region: str = "mena", limit: int = Query(30, ge=1, le=100)) -> dic
             "cameo_code": row.get("action_cameo_code"),
             "quad_class": row.get("quad_class"),
             "goldstein": goldstein,
+            "escalation_baseline": row.get("escalation_baseline"),
+            "escalation_direction": row.get("escalation_direction"),
+            "escalation_magnitude": row.get("escalation_magnitude"),
             "initiator_id": row.get("initiator_id"),
             "target_id": row.get("target_id"),
             "initiator_name": names.get(str(row.get("initiator_id") or "")),
@@ -654,12 +719,12 @@ def wire_live(region: str = "mena", limit: int = Query(30, ge=1, le=100)) -> dic
         "cached": False,
         "method": (
             "GDELT 2.0's 15-minute export, filtered to this pack's roster. "
-            "`implied_kind` is the event's RAW Goldstein banded to the kinds the "
-            "transmission map measured — it is NOT a Head B departure from the "
-            "pair's own baseline, which needs history this event does not have "
-            "yet. `market_outlook` is the measured record: realised abnormal "
-            "returns over the four sessions after past events of that coding, "
-            "with n. Nothing here is a forecast and nothing is advice."
+            "`implied_kind` is Head B against the pair's snapshot EWMA — a "
+            "departure from what these two normally do, not a raw Goldstein "
+            "band. `market_outlook` is the frozen transmission map: realised "
+            "abnormal returns over the four sessions after past events of that "
+            "coding, with n. Nothing here is written to the graph, nothing is "
+            "a forecast, and nothing is advice."
         ),
     }
     _live_cache.update({"at": now, "payload": payload, "region": region})

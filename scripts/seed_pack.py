@@ -18,6 +18,7 @@ from __future__ import annotations
 import sys
 from typing import Any
 
+from core import archive as archive_bounds
 from core import packs
 from core import settings as settings_module
 from core.classifier import escalation
@@ -123,6 +124,10 @@ def seed(conn: Any, pack: packs.Pack) -> dict[str, int]:
     ]
     kuzu_store.merge_edges(conn, "RELATES_TO", relates)
     counts["RELATES_TO"] = _written(conn, "RELATES_TO", relates)
+    # Dyad nodes for the declared pairs, even when the spine never names
+    # them. The wire copy can stop on a full volume; these must not vanish
+    # with it. Spine coding below SETs EWMA on the pairs it actually folded.
+    counts["roster_dyads"] = kuzu_store.merge_nodes(conn, "Dyad", pack.dyad_nodes())
 
     pack_source = f"source:{pack.name}-marquee"
     events: list[dict[str, Any]] = []
@@ -138,6 +143,12 @@ def seed(conn: Any, pack: packs.Pack) -> dict[str, int]:
                 "backbone — an uncoded event has no Goldstein score, so Head B cannot "
                 "measure it and it would sit in the graph unclassifiable."
             )
+        if not archive_bounds.covers(e["date"]):
+            # The YAML keeps the founding episodes (NATO 1949, Korean armistice)
+            # as documentation; RELATES_TO already carries the live relationship.
+            # Seeding them as Event nodes would put pre-fiat history back on the
+            # volume the 1972 floor exists to clear.
+            continue
         events.append({
             "node_id": e["id"], "name": e["name"], "event_time": e["date"],
             "action_cameo_code": cameo,
@@ -187,10 +198,10 @@ def seed(conn: Any, pack: packs.Pack) -> dict[str, int]:
     counts["events"] = kuzu_store.merge_nodes(conn, "Event", events)
 
     occurred: list[dict[str, Any]] = []
-    for e in pack.marquee_events:
-        for regime in regimes.regimes_at(e["date"]).values():
+    for row in events:
+        for regime in regimes.regimes_at(row["event_time"]).values():
             if regime:
-                occurred.append({"src": e["id"], "dst": f"regime:{regime['id']}"})
+                occurred.append({"src": row["node_id"], "dst": f"regime:{regime['id']}"})
 
     for rel, rows in (
         ("INITIATED_BY", initiated),

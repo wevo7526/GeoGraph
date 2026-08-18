@@ -36,9 +36,6 @@ import {
   standingLabel,
   relationshipName,
   tensionLevel,
-  tensionSentence,
-  tensionTrend,
-  yearOf,
 } from '../lib/language'
 import { useRegionLabel } from '../regions'
 import type {
@@ -56,7 +53,7 @@ import type {
   TimelineEvent,
   DyadSolution,
 } from '../types'
-import { dyadCall, typicalBand } from '../lib/story'
+import { dyadCall, postureClause, relationshipStandfirst, standingPhrase, typicalBand } from '../lib/story'
 import { BoxRow, Fan, LineBand } from './charts/Charts'
 import type { Point } from './charts/Charts'
 import { Bars, FanRibbon, MultiLine, pct } from './charts/Kit'
@@ -225,7 +222,6 @@ export default function RelationshipPage({ region, onNavigate }: { region: strin
 
   const rows = series ? series.rows : []
   const level = rows.length ? tensionLevel(rows[rows.length - 1].intensity, series?.peak ?? 0) : null
-  const trend = tensionTrend(rows)
   const linePoints: Point[] = rows.map((r) => ({ x: r.q, y: r.intensity }))
 
   // ── THE CALL: where tension heads, the forecasted move + type, its markets ──
@@ -257,6 +253,14 @@ export default function RelationshipPage({ region, onNavigate }: { region: strin
   const standing = standingLabel(solution?.opening?.standing)
   const posture = postureNote(solution?.opening?.posture)
   const family = familyRead(solution?.opening?.family)
+  const intensityNow = solution?.opening?.intensity_label
+    ?? (level ? `friction ${level}` : null)
+  const standfirst = relationshipStandfirst({
+    standing: standingPhrase(solution?.opening?.standing) ?? standing,
+    posture: postureClause(solution?.opening?.posture),
+    intensity: intensityNow,
+    span: series?.span ?? null,
+  })
   const nextType = nextStep ? bandLabel(nextStep.intensity_band, bands, bandNames) : null
   // The badge tracks where the relationship is HEADING (the trajectory
   // endpoint), so it agrees with the lede rather than the immediate step —
@@ -303,16 +307,8 @@ export default function RelationshipPage({ region, onNavigate }: { region: strin
         kicker={`Relationship · ${regionLabel.toUpperCase()}`}
         title={name}
         standfirst={
-          level ? (
-            <span>
-              {standing ? (
-                <>
-                  <strong>{standing.charAt(0).toUpperCase() + standing.slice(1)}.</strong>{' '}
-                </>
-              ) : null}
-              {tensionSentence(level, trend)}
-              {series ? `, over ${yearOf(series.span[0])}–${yearOf(series.span[1])}` : ''}.
-            </span>
+          standfirst ? (
+            <span>{standfirst}</span>
           ) : dyads === null ? (
             'Reading the archive…'
           ) : undefined
@@ -440,8 +436,8 @@ export default function RelationshipPage({ region, onNavigate }: { region: strin
               <>
                 <StatLine
                   items={[
-                    { label: 'friction now', value: level ?? '—' },
-                    { label: 'direction', value: <span style={{ textTransform: 'capitalize' }}>{trend}</span> },
+                    { label: 'against its own baseline', value: intensityNow ?? level ?? '—' },
+                    { label: 'heading', value: <span style={{ textTransform: 'capitalize' }}>{forwardTrend}</span> },
                     { label: 'its worst quarter', value: (series.peak ?? 0).toFixed(1) },
                     { label: 'quarters on record', value: series.active_quarters },
                   ]}

@@ -110,6 +110,15 @@ class DyadTracker:
         self.alpha = alpha
         self._baselines: dict[str, float] = {}
 
+    def seed(self, dyad_id: str, baseline: float) -> None:
+        """Open a dyad at a known EWMA — the snapshot's last fold.
+
+        Without this, a live 15-minute file would hit Head B's first-event
+        rule and every new pair would be `stable` at magnitude 0, which is
+        exactly not a departure from history.
+        """
+        self._baselines[str(dyad_id)] = float(baseline)
+
     def observe(self, dyad_id: str, score: float) -> dict[str, Any]:
         """Classify against the dyad's baseline, then fold the event in."""
         baseline = self._baselines.get(dyad_id)

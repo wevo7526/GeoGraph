@@ -145,13 +145,11 @@ def _start_jobs(app: FastAPI, settings: Any) -> None:
                 enabled=jobs_module._enabled("counts"),
                 slice_seconds=120.0,
             ),
-            # THE ONLY JOB THAT LEARNS A NEW FACT. Every other job re-derives
-            # from artifacts baked into the image, so without this one the
-            # archive is frozen at the last commit and the whole convergence
-            # loop converges on a snapshot. It takes no graph lock and writes
-            # no graph — it downloads, screens and appends files — so it is
-            # placed above the writers rather than behind them. Off unless
-            # GEOGRAPH_HARVEST_DIR names a directory on the volume.
+            # Harvest is a no-op while the snapshot is frozen (the default):
+            # live intake is GDELT 2.0's 15-minute stream, scored in memory,
+            # never appended onto the training corpus. GEOGRAPH_SNAPSHOT_FROZEN=0
+            # grows the 1.0 overlay again. Off unless GEOGRAPH_HARVEST_DIR names
+            # a directory on the volume.
             jobs_module.Job(
                 name="harvest", every=3600.0, run=work.harvest,
                 enabled=jobs_module._enabled("harvest"),
@@ -170,16 +168,15 @@ def _start_jobs(app: FastAPI, settings: Any) -> None:
                 enabled=jobs_module._enabled("prices"),
                 slice_seconds=300.0,
             ),
-            # THE WIRE RIGHT AFTER THE COUNTS, because everything below it
-            # reads what it writes: after a reset the lean copy is what the
-            # study measures, the refill projects onto and the games price. Last
-            # in the list it got 60s per twelve-minute pass; here it gets its
-            # slice before the heavy solvers, and once the copy is complete it
-            # returns in milliseconds.
+            # THE WIRE JOB KEEPS ROSTER DYADS CURRENT. The corpus is the
+            # wire; GDELT Event nodes are no longer copied into Kuzu (that
+            # copy, plus AFFECTED onto it, filled the 5 GB volume). The
+            # study measures corpus rows into Postgres. Once this job has
+            # marked complete, refill may project onto spine events.
             jobs_module.Job(
                 name="wire", every=60.0, run=work.wire,
                 enabled=jobs_module._enabled("wire"),
-                slice_seconds=120.0,
+                slice_seconds=30.0,
             ),
             jobs_module.Job(
                 name="games", every=60.0, run=work.games,
@@ -214,6 +211,22 @@ def _start_jobs(app: FastAPI, settings: Any) -> None:
                 enabled=jobs_module._enabled("markets"),
                 slice_seconds=240.0,
             ),
+            # Quarantined WAL tails, deleted OUTSIDE the database so a nearly
+            # full volume can still open. Runs before the study so the 400 MB
+            # floor is not the first thing that notices the tails.
+            jobs_module.Job(
+                name="reclaim", every=240.0, run=work.reclaim,
+                enabled=jobs_module._enabled("reclaim"),
+                slice_seconds=30.0,
+            ),
+            # Delete the graph's leftover GDELT Event copy (and AFFECTED on
+            # those events). Corpus + event_study_runs keep the facts. Runs
+            # after reclaim so a tight volume has WAL room to delete.
+            jobs_module.Job(
+                name="trim", every=60.0, run=work.trim,
+                enabled=jobs_module._enabled("trim"),
+                slice_seconds=60.0,
+            ),
             # An unfinished AFFECTED re-projection, completed with the site
             # up (see work.refill); a no-op when no marker exists.
             jobs_module.Job(
@@ -225,6 +238,14 @@ def _start_jobs(app: FastAPI, settings: Any) -> None:
                 name="study", every=120.0, run=work.study,
                 enabled=jobs_module._enabled("study"),
                 slice_seconds=240.0, child=True,
+            ),
+            # Spec §4: resolve estimates update from REALIZED AFFECTED edges.
+            # Behind the study so a newly measured event is a candidate on the
+            # next pass; watermarked, so a slice is resumable.
+            jobs_module.Job(
+                name="sensor", every=180.0, run=work.sensor,
+                enabled=jobs_module._enabled("sensor"),
+                slice_seconds=60.0,
             ),
             # The wire load is the heaviest writer (~145 events/sec into Kuzu)
             # and the one that was a downtime decision: mena's 450k artifact

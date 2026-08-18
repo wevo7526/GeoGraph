@@ -117,6 +117,16 @@ def test_the_walk_forward_has_no_lookahead_and_compounds():
     assert summary["max_drawdown"] == 0.0
 
 
+def test_the_continuation_walk_does_not_carry_the_impact_gate():
+    """The paper book marks the three-year continuation call. The event-impact
+    gate (`strategy_contract`, car_0_3) is a different clock and must not ride
+    on this walk as if it were the same rule."""
+    result = _walk()
+    assert "strategy" not in result
+    assert "three years" in result["question"]
+    assert "event-impact" in result["method"]
+
+
 def test_a_quarter_the_panel_cannot_fill_is_a_recorded_skip():
     series = _series()
     series["X"] = [row for row in series["X"] if row["obs_date"] >= "2018-01-01"]

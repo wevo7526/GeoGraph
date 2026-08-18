@@ -350,3 +350,24 @@ def test_a_declared_ally_fighting_on_its_own_soil_is_presence_not_war():
     assert coercion.counts_as_coercion(
         _row(action_cameo_code="163", action_geo="GBR",
              initiator_iso3="USA", target_iso3="GBR"), allied=True)
+
+
+def test_a_consult_is_not_an_actionable_live_kind():
+    """The live wire's dump bucket must not ship as a trade.
+
+    A Goldstein +1.0 consult is `stable` on the raw-score fallback. Head B
+    against a nearby baseline is also `stable`. That cell is the region's
+    ordinary day — attaching it as a high-confidence trade is how Iran–Iraq
+    consultations shipped with "short Dubai / long the S&P".
+    """
+    from core.api.routers.events import _ACTIONABLE_KINDS, _implied_kind
+    from core.reasoning import markets as markets_module
+
+    assert _implied_kind(1.0) == "stable"
+    assert _implied_kind(1.0) not in _ACTIONABLE_KINDS
+    assert _implied_kind(-2.5) in _ACTIONABLE_KINDS
+    assert _implied_kind(-7.0) in _ACTIONABLE_KINDS
+    assert _implied_kind(3.0) in _ACTIONABLE_KINDS
+    assert markets_module.kind_of("stable", 0.0) not in _ACTIONABLE_KINDS
+    assert markets_module.kind_of("deescalating", 4.0) in _ACTIONABLE_KINDS
+    assert markets_module.kind_of("de-escalating", 4.0) == "de-escalation"

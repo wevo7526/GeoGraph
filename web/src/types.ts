@@ -162,6 +162,9 @@ export interface WireLiveItem {
   mentions?: number | null
   num_sources?: number | null
   implied_kind: string
+  escalation_baseline?: number | null
+  escalation_direction?: string | null
+  escalation_magnitude?: number | null
   market_outlook: WireLiveMarketImpact[]
 }
 
@@ -776,6 +779,8 @@ export interface BacktestLedger {
     last?: string
   }>
   quarters_skipped?: number
+  /** What the book is marking — locked, not shortened silently. */
+  question?: string
   books?: { escalation: Record<string, number>; reversion: Record<string, number> }
   note?: string
   method?: string
@@ -794,6 +799,7 @@ export interface ForwardView {
   net_weights: Record<string, number>
   book: MarkedBook | null
   book_unavailable: string | null
+  question?: string
   pressure: {
     node_id: string
     generated_at: string
@@ -1324,6 +1330,10 @@ export interface MarketsStory {
   pending?: boolean
   note?: string
   as_of?: string | null
+  /** The game context's last quarter — what the solved map opened on. */
+  game_as_of?: string | null
+  /** The newest event that actually carries an AFFECTED edge. */
+  measured_through?: string | null
   computed_at?: string
   persisted?: boolean
   markets: MarketStoryMarket[]
@@ -1389,4 +1399,37 @@ export interface MarketsStory {
   } | null
   method: string
   explanation: string[]
+}
+
+export interface TradeableEdge {
+  drift: Array<{
+    market_ticker: string
+    n: number
+    mean_impact: number | string | null
+    mean_drift: number | string | null
+    drift_after_up: number | string | null
+    drift_after_down: number | string | null
+  }>
+  leadlag: {
+    n: number
+    correlation: number | string | null
+    leader?: string
+    follower?: string
+    window?: string
+    n_leader_moved_first?: number
+  }
+  method: string
+}
+
+export interface JobsStatus {
+  running: boolean
+  memory?: {
+    disk_free_gb?: number
+    disk_total_gb?: number
+    paused_for_memory?: boolean
+  }
+  jobs?: Array<{
+    name: string
+    last_result?: { stopped?: string; note?: string } | null
+  }>
 }

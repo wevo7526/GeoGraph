@@ -88,6 +88,7 @@ def backtest_ledger(region: str = "mena") -> dict[str, Any]:
                 "skipped": run["skipped"],
                 "skip_reasons": _skip_reasons(run["skipped"]),
                 "books": books,
+                "question": paper.QUESTION,
                 "method": run["method"],
                 "note": (
                     f"the walk ran and every one of its {run['quarters_skipped']} "
@@ -140,6 +141,7 @@ def backtest_ledger(region: str = "mena") -> dict[str, Any]:
         "skipped": run["skipped"] if run else [],
         "skip_reasons": _skip_reasons(run["skipped"]) if run else [],
         "books": books,
+        "question": paper.QUESTION,
         "method": rows[-1]["method"],
     }
 
@@ -319,6 +321,7 @@ def forward_view(request: Request, region: str = "mena") -> dict[str, Any]:
         "book": book,
         "book_unavailable": book_unavailable,
         "pressure": pressure,
+        "question": paper.QUESTION,
     }
 
 

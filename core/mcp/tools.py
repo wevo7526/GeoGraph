@@ -28,9 +28,9 @@ MAX_ROWS = 50
 #: happened in 1956" when the truthful answer is "this archive does not cover
 #: 1956 yet" — a different claim, and the difference matters.
 _COVERAGE = (
-    "This archive currently holds curated marquee spines for the installed "
-    "region packs, not a complete event record. Absence of an event here is not "
-    "evidence it did not happen. Deep-tier history (1905-1979) lands in Phase 3."
+    "This archive holds the installed region packs' roster, the deep-tier "
+    "spine, and a lean projection of the modern wire. Absence of an event "
+    "here is not evidence it did not happen."
 )
 
 
@@ -74,15 +74,6 @@ def neighbors(conn: kuzu.Connection, node_id: str) -> dict[str, Any]:
 def regime_at(date: str) -> dict[str, Any]:
     """Which monetary order and polarity epoch a date sits in."""
     return regime_module.regimes_at(date)
-
-
-def _not_yet(tool: str, phase: str) -> dict[str, Any]:
-    return {
-        "status": "not_implemented",
-        "tool": tool,
-        "phase": phase,
-        "note": "Report this honestly: the layer is not built, the data is not absent.",
-    }
 
 
 def events_between(conn: kuzu.Connection, actor_a: str, actor_b: str,
@@ -192,6 +183,8 @@ def event_effects(conn: kuzu.Connection, event_id: str) -> dict[str, Any]:
         "ORDER BY ticker, window LIMIT $limit",
         {"id": event_id, "limit": MAX_ROWS + 1},
     )
+    if not rows:
+        rows = _effects_from_panel(event_id)
     return {
         "event": event_id,
         "measured": len(rows[:MAX_ROWS]),
@@ -201,9 +194,93 @@ def event_effects(conn: kuzu.Connection, event_id: str) -> dict[str, Any]:
     }
 
 
-def analogues_for(query_ref: str) -> dict[str, Any]:
-    return _not_yet("analogues_for", "Phase 5")
+def _effects_from_panel(event_id: str) -> list[dict[str, Any]]:
+    try:
+        from core import settings as settings_module
+        from core.panel import pg_store
+
+        panel = pg_store.connect(settings_module.load())
+    except Exception:  # noqa: BLE001 - graph-only MCP
+        return []
+    try:
+        runs = pg_store.computed_runs(panel, event_id=event_id)
+    finally:
+        panel.close()
+    return [
+        {
+            "ticker": r["market_ticker"],
+            "window": r["window"],
+            "resolution": r.get("resolution"),
+            "abnormal_return": r["abnormal_return"],
+            "t_stat": r.get("t_stat"),
+            "p_value": r.get("p_value"),
+            "first_mover": r.get("first_mover"),
+            "overlapping": r.get("status") == "overlapping",
+            "method": r.get("method"),
+        }
+        for r in runs
+    ]
 
 
-def forecast(question: str, mode: str = "near_term") -> dict[str, Any]:
-    return _not_yet("forecast", "Phase 5")
+def analogues_for(conn: kuzu.Connection, query_ref: str) -> dict[str, Any]:
+    """Regime-admissible structural analogues for an event already in the graph.
+
+    Read-only: ranks, does not persist Analogue nodes (the MCP server holds a
+    reader against the single-writer lock). The vector-index half is still
+    unbuilt; this is the deterministic half that disposes.
+    """
+    from core.reasoning import analogy
+
+    try:
+        rows = analogy.rank_from_conn(conn, query_ref, k=min(MAX_ROWS, 8), persist=False)
+    except KeyError as exc:
+        return {"rows": [], "error": str(exc), "coverage": _COVERAGE}
+    return {
+        "rows": [
+            {
+                "event_id": r["event_id"],
+                "similarity": r["similarity"],
+                "regime_matched": r["regime_matched"],
+                "rationale": r["rationale"],
+            }
+            for r in rows
+        ],
+        "truncated": False,
+        "coverage": _COVERAGE,
+    }
+
+
+def forecast(
+    conn: kuzu.Connection, question: str, mode: str = "near_term",
+) -> dict[str, Any]:
+    """The frozen Forecast nodes already in the graph — not a new computation.
+
+    The question string is recorded, not parsed: this archive freezes calls
+    offline and serves them. near_term is the three-year continuation window
+    (modern-era base rate ~0.92-0.97); long_horizon carries the boundary
+    statement and no likelihoods.
+    """
+    rows = kuzu_store.query(
+        conn,
+        "MATCH (f:Forecast) WHERE f.mode = $mode "
+        "RETURN f.node_id AS node_id, f.region_pack AS region_pack, "
+        "f.question AS question, f.generated_at AS generated_at, "
+        "f.horizon_end AS horizon_end, "
+        "f.boundary_statement AS boundary_statement, "
+        "f.brier_score AS brier_score "
+        "ORDER BY f.generated_at DESC LIMIT $limit",
+        {"mode": mode, "limit": MAX_ROWS + 1},
+    )
+    return {
+        "rows": rows[:MAX_ROWS],
+        "truncated": len(rows) > MAX_ROWS,
+        "asked": question,
+        "mode": mode,
+        "note": (
+            "frozen Forecast nodes; this tool does not compute a new call from "
+            "the question string. near_term marks P(escalate again within three "
+            "years) — a nearly vacuous modern-era question. The game layer's "
+            "sharp_departure_probability is the harder one."
+        ),
+        "coverage": _COVERAGE,
+    }

@@ -19,6 +19,7 @@ from collections import defaultdict
 from typing import Any
 
 from core.graph import kuzu_store
+from core.panel import pg_store
 from core.reasoning import strategy
 
 #: An escalation whose magnitude — the departure from the pair's own baseline,
@@ -41,10 +42,16 @@ MIN_CELL = 8
 
 
 def kind_of(direction: str | None, magnitude: float | None) -> str:
-    """Which reading of the escalation coding an event falls under."""
+    """Which reading of the escalation coding an event falls under.
+
+    Head B emits `deescalating` (no hyphen); some graph rows still carry
+    `de-escalating`. Both are the same direction. A live overlay that only
+    accepted the hyphen silently dumped every de-escalation into `stable`
+    and attached no market cell.
+    """
     if direction == "escalating":
         return "sharp_escalation" if (magnitude or 0.0) >= SHARP_MAGNITUDE else "escalation"
-    if direction == "de-escalating":
+    if direction in ("de-escalating", "deescalating"):
         return "de-escalation"
     return "stable"
 
@@ -71,9 +78,75 @@ def _quantiles(values: list[float]) -> dict[str, float]:
             "share_positive": round(sum(1 for v in ordered if v > 0) / n, 4)}
 
 
-def market_rows(conn: Any, ticker: str, region_pack: str) -> list[dict[str, Any]]:
+def coding_for(conn: Any, pack_name: str) -> dict[str, dict[str, Any]]:
+    """event_id → Head B coding + actors, graph spine first then the corpus.
+
+    Markets and game pricing used to JOIN AFFECTED to Event. After the graph
+    copy of the wire is gone, the Event node is missing for GDELT ids; the
+    scored corpus still has every field the quantile cut needs.
+    """
+    from core import packs as packs_module
+    from core.wire import serving
+
+    index: dict[str, dict[str, Any]] = {}
+    rows = kuzu_store.query(
+        conn,
+        "MATCH (e:Event) WHERE NOT starts_with(e.node_id, 'event:gdelt-') "
+        "AND (e.region_pack = $pack OR e.region_pack = '' OR e.region_pack IS NULL) "
+        "OPTIONAL MATCH (e)-[:INITIATED_BY]->(i:Actor) "
+        "OPTIONAL MATCH (e)-[:DIRECTED_AT]->(t:Actor) "
+        "RETURN e.node_id AS event_id, e.event_time AS date, "
+        "e.escalation_direction AS direction, e.escalation_magnitude AS magnitude, "
+        "e.quad_class AS quad_class, e.region_pack AS region_pack, "
+        "e.name AS name, i.node_id AS initiator_id, i.name AS initiator, "
+        "t.node_id AS target_id, t.name AS target",
+        {"pack": pack_name},
+    )
+    for row in rows:
+        index[str(row["event_id"])] = row
+    names: dict[str, str] = {}
+    try:
+        names = {a["id"]: a["name"] for a in packs_module.load(pack_name).actors}
+    except Exception:  # noqa: BLE001 - names are display-only
+        names = {}
+    try:
+        stream = serving.iter_rows_of(pack_name)
+    except Exception:  # noqa: BLE001 - corpus-less tests stay on the graph
+        stream = []
+    for row in stream:
+        event_id = str(row["node_id"])
+        if event_id in index:
+            continue
+        index[event_id] = {
+            "event_id": event_id,
+            "date": row.get("event_time"),
+            "direction": row.get("escalation_direction"),
+            "magnitude": row.get("escalation_magnitude"),
+            "quad_class": row.get("quad_class"),
+            "region_pack": row.get("region_pack") or pack_name,
+            "name": row.get("name") or "",
+            "initiator_id": row.get("initiator_id"),
+            "initiator": names.get(row.get("initiator_id") or "", row.get("initiator_id")),
+            "target_id": row.get("target_id"),
+            "target": names.get(row.get("target_id") or "", row.get("target_id")),
+        }
+    return index
+
+
+def market_rows(
+    conn: Any, ticker: str, region_pack: str, *,
+    panel: Any | None = None, coding: dict[str, dict[str, Any]] | None = None,
+) -> list[dict[str, Any]]:
     """Every measured effect on one market for one region's events (the deep
-    tier rides with every region: `region_pack = ''`). Small tuples only."""
+    tier rides with every region: `region_pack = ''`). Small tuples only.
+
+    Panel-first when a connection is handed in: that is where GDELT
+    measurements live after the graph copy of the wire is gone. Tests without
+    Postgres keep the graph path.
+    """
+    if panel is not None:
+        coding = coding if coding is not None else coding_for(conn, region_pack)
+        return _rows_from_panel(panel, ticker, region_pack, coding)
     return kuzu_store.query(
         conn,
         "MATCH (e:Event)-[a:AFFECTED]->(m:Market {ticker: $ticker}) "
@@ -86,6 +159,62 @@ def market_rows(conn: Any, ticker: str, region_pack: str) -> list[dict[str, Any]
     )
 
 
+def _rows_from_panel(
+    panel: Any, ticker: str, region_pack: str, coding: dict[str, dict[str, Any]],
+) -> list[dict[str, Any]]:
+    out: list[dict[str, Any]] = []
+    for run in pg_store.computed_runs(panel, ticker=ticker):
+        meta = coding.get(str(run["event_node_id"]))
+        if meta is None:
+            continue
+        pack = meta.get("region_pack") or ""
+        if pack not in (region_pack, ""):
+            continue
+        out.append({
+            "direction": meta.get("direction"),
+            "magnitude": meta.get("magnitude"),
+            "date": meta.get("date"),
+            "window": run["window"],
+            "ar": run["abnormal_return"],
+            "first_mover": run.get("first_mover"),
+            "overlapping": run.get("status") == "overlapping",
+        })
+    return out
+
+
+def _measured_through(
+    conn: Any, region_pack: str, *,
+    panel: Any | None = None, coding: dict[str, dict[str, Any]] | None = None,
+) -> str | None:
+    """The newest event that actually carries a measured effect for this pack.
+
+    Distinct from the game context's `as_of`, which is the last complete
+    quarter the solver opened on. A reader who sees only that date thinks
+    the transmission map stopped in July."""
+    if panel is not None and coding is not None:
+        last: str | None = None
+        for event_id in pg_store.computed_event_ids(panel):
+            meta = coding.get(str(event_id))
+            if meta is None:
+                continue
+            pack = meta.get("region_pack") or ""
+            if pack not in (region_pack, ""):
+                continue
+            date = str(meta.get("date") or "")
+            if date and (last is None or date > last):
+                last = date
+        return last
+    rows = kuzu_store.query(
+        conn,
+        "MATCH (e:Event)-[:AFFECTED]->(:Market) "
+        "WHERE e.region_pack = $pack OR e.region_pack = '' "
+        "RETURN max(e.event_time) AS last",
+        {"pack": region_pack},
+    )
+    last_row = rows[0]["last"] if rows else None
+    return str(last_row) if last_row else None
+
+
 #: How many bindings one event can produce in the pattern above. Six is
 #: generous against the duplicates seen in production (four per event) and
 #: costs one query's rows, not a second query.
@@ -93,7 +222,8 @@ _DUPLICATE_HEADROOM = 6
 
 
 def biggest_moves(
-    conn: Any, ticker: str, region_pack: str, *, roster: set[str], limit: int = 8
+    conn: Any, ticker: str, region_pack: str, *, roster: set[str], limit: int = 8,
+    panel: Any | None = None, coding: dict[str, dict[str, Any]] | None = None,
 ) -> list[dict[str, Any]]:
     """The events that moved this market most, at the headline window — OF
     THIS REGION.
@@ -112,6 +242,11 @@ def biggest_moves(
     """
     if not roster:
         return []
+    if panel is not None:
+        coding = coding if coding is not None else coding_for(conn, region_pack)
+        return _biggest_from_panel(
+            panel, ticker, region_pack, roster=roster, limit=limit, coding=coding,
+        )
     rows = kuzu_store.query(
         conn,
         "MATCH (i:Actor)<-[:INITIATED_BY]-(e:Event)-[:DIRECTED_AT]->(t:Actor), "
@@ -149,6 +284,62 @@ def biggest_moves(
     seen: set[str] = set()
     happenings: set[tuple[str, float]] = set()
     for r in rows:
+        event_id = str(r["event_id"])
+        if event_id in seen:
+            continue
+        seen.add(event_id)
+        happening = (str(r["date"])[:10], round(float(r["ar"]), 4))
+        if happening in happenings:
+            continue
+        happenings.add(happening)
+        out.append({
+            "event_id": event_id, "name": r["name"], "date": r["date"],
+            "kind": kind_of(r["direction"], r["magnitude"]),
+            "pair": (f"{r['initiator']} → {r['target']}"
+                     if r.get("initiator") and r.get("target") else None),
+            "abnormal_return": round(float(r["ar"]), 6),
+            "first_mover": bool(r["first_mover"]),
+        })
+        if len(out) == limit:
+            break
+    return out
+
+
+def _biggest_from_panel(
+    panel: Any, ticker: str, region_pack: str, *,
+    roster: set[str], limit: int, coding: dict[str, dict[str, Any]],
+) -> list[dict[str, Any]]:
+    ranked: list[dict[str, Any]] = []
+    for run in pg_store.computed_runs(panel, ticker=ticker, window=HEADLINE_WINDOW):
+        meta = coding.get(str(run["event_node_id"]))
+        if meta is None or run.get("abnormal_return") is None:
+            continue
+        pack = meta.get("region_pack") or ""
+        initiator = meta.get("initiator_id")
+        target = meta.get("target_id")
+        if pack == region_pack:
+            pass
+        elif pack == "":
+            if initiator not in roster or target not in roster:
+                continue
+        else:
+            continue
+        ranked.append({
+            "event_id": str(run["event_node_id"]),
+            "name": meta.get("name"),
+            "date": meta.get("date"),
+            "direction": meta.get("direction"),
+            "magnitude": meta.get("magnitude"),
+            "initiator": meta.get("initiator"),
+            "target": meta.get("target"),
+            "ar": run["abnormal_return"],
+            "first_mover": run.get("first_mover"),
+        })
+    ranked.sort(key=lambda r: abs(float(r["ar"])), reverse=True)
+    out: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    happenings: set[tuple[str, float]] = set()
+    for r in ranked:
         event_id = str(r["event_id"])
         if event_id in seen:
             continue
@@ -224,14 +415,18 @@ def story(
     coverage: dict[str, Any] | None,
     as_of: str | None,
     dyad_names: dict[str, str] | None = None,
+    panel: Any | None = None,
 ) -> dict[str, Any]:
     """The whole markets story for one region — assembled from measured
     effects, the persisted game map, the curve report and the SWF flows."""
     roster = {str(actor["id"]) for actor in pack.actors}
+    coding = coding_for(conn, pack.name) if panel is not None else None
     markets: list[dict[str, Any]] = []
     for market in pack.markets:
         ticker = str(market["ticker"])
-        rows = market_rows(conn, ticker, pack.name)
+        rows = market_rows(
+            conn, ticker, pack.name, panel=panel, coding=coding,
+        )
         shape = market_response(rows)
         markets.append({
             "ticker": ticker,
@@ -245,7 +440,10 @@ def story(
                 transaction_cost_bps=strategy.ROUND_TRIP_COST_BPS,
             ),
             "biggest_moves": (
-                biggest_moves(conn, ticker, pack.name, roster=roster)
+                biggest_moves(
+                    conn, ticker, pack.name, roster=roster,
+                    panel=panel, coding=coding,
+                )
                 if shape["measured"] else []
             ),
         })
@@ -273,7 +471,17 @@ def story(
         # (`Pack.label` ← `region_label` in its actors.yaml).
         "region": pack.name,
         "region_label": pack.label,
+        # `as_of` is the GAME CONTEXT's last quarter — what the solved map
+        # opened on. The markets page used to label it "archive runs to",
+        # which made a July opening look like the transmission map stopped
+        # in July while the wire ran to mid-August. `game_as_of` is the same
+        # number under its real name; `measured_through` is the newest event
+        # that actually carries an AFFECTED edge.
         "as_of": as_of,
+        "game_as_of": as_of,
+        "measured_through": _measured_through(
+            conn, pack.name, panel=panel, coding=coding,
+        ),
         "markets": markets,
         "market_impact": impact,
         "strategy": strategy.strategy_contract(),
@@ -284,9 +492,11 @@ def story(
         "sovereign_capital": sovereign,
         "coverage": coverage,
         "method": (
-            "Every number is a quantile of measured AFFECTED edges (the event study's "
-            "abnormal returns, calendar-aware, per event × market × window) or a field "
-            "of the persisted game map; events are cut by Head B's escalation coding "
+            "Every number is a quantile of measured event-study rows (the "
+            "transmission engine's abnormal returns, calendar-aware, per "
+            "event × market × window; Postgres is the store, the graph AFFECTED "
+            "copy is optional) or a field of the persisted game map; events "
+            "are cut by Head B's escalation coding "
             f"(sharp = a departure of {SHARP_MAGNITUDE:g}+ Goldstein points from the "
             f"pair's own baseline); the headline window is {HEADLINE_WINDOW}; a cell "
             f"under {MIN_CELL} measurements is flagged thin. The strategy layer "

@@ -501,7 +501,7 @@ def test_the_curated_spine_is_measured_before_the_deep_archive():
     # and no numbers" on all three case studies. Curated first, then dates.
     study = _study_module()
     archive = [
-        {"id": "event:cow-mid-1", "date": "1911-07-01", "goldstein": -9.0},
+        {"id": "event:cow-mid-1", "date": "1973-10-06", "goldstein": -9.0},
         {"id": "event:gdelt-quiet", "date": "1990-01-01", "goldstein": -1.0},
         {"id": "event:gdelt-loud", "date": "1990-01-02", "goldstein": -9.0},
         {"id": "event:mena-2025-rising-lion", "date": "2025-06-13", "goldstein": -10.0},

@@ -271,7 +271,7 @@ def test_every_recurring_job_runs_inside_the_api_rather_than_a_boot():
 
     from core.api import work
 
-    for name in ("study", "games", "wire", "rescore", "forecasts", "scores",
+    for name in ("study", "games", "wire", "trim", "rescore", "forecasts", "scores",
                  "metrics", "backtest", "calibration"):
         job = getattr(work, name, None)
         assert callable(job), f"{name} is not a job"
@@ -311,6 +311,9 @@ def test_the_study_is_a_child_and_stops_on_its_own_budget(monkeypatch):
     # storage assertion returns.
     source = Path(app_module.__file__).read_text(encoding="utf-8")
     assert 'name="study"' in source and "child=True" in source
+    assert 'name="sensor"' in source
+    assert 'name="reclaim"' in source
+    assert 'name="trim"' in source
     assert work._STORAGE_ASSERTION == "KU_UNREACHABLE"
     assert work._PREFER_CHILD, (
         "the study must default to a CHILD: an in-process segfault on the "
@@ -453,7 +456,8 @@ def test_the_study_falls_back_to_a_child_only_on_the_storage_assertion(monkeypat
 
     monkeypatch.setattr(work, "_PREFER_CHILD", False)
 
-    def _boom(conn, deadline):
+    def _boom(conn, deadline, write_graph=True):
+        del write_graph
         raise RuntimeError(
             'Assertion failed in file ".../csr_node_group.cpp" on line 411: '
             "KU_UNREACHABLE"
@@ -471,7 +475,9 @@ def test_the_study_falls_back_to_a_child_only_on_the_storage_assertion(monkeypat
     monkeypatch.setattr(work, "_PREFER_CHILD", False)
     monkeypatch.setattr(
         work, "_study_in_process",
-        lambda c, d: (_ for _ in ()).throw(RuntimeError("panel is unreachable")),
+        lambda c, d, write_graph=True: (_ for _ in ()).throw(
+            RuntimeError("panel is unreachable")
+        ),
     )
     with pytest.raises(RuntimeError, match="panel is unreachable"):
         work.study(object(), time.monotonic() + 60)
@@ -530,7 +536,8 @@ def test_the_study_shrinks_its_own_tick_when_the_buffer_pool_runs_out(monkeypatc
     monkeypatch.setattr(work, "_PREFER_CHILD", False)  # force the in-process path
     monkeypatch.setattr(work, "_events_per_tick", 2500)
 
-    def _full(conn: Any, deadline: float) -> dict[str, Any]:
+    def _full(conn: Any, deadline: float, write_graph: bool = True) -> dict[str, Any]:
+        del write_graph
         raise RuntimeError(
             "Buffer manager exception: Unable to allocate memory! The buffer "
             "pool is full and no memory could be freed!"
@@ -678,27 +685,33 @@ def test_a_long_job_can_stop_itself_when_memory_tightens(monkeypatch):
     monkeypatch.setattr(kuzu_store, "container_memory_bytes", lambda: None)
     assert not jobs_module.memory_is_tight()
 
-    # And the wire actually consults it, at the boundary where it already
-    # stops for the deadline — the batch boundary of the lean loader — and
-    # the volume beside it, because a full disk is the other uncatchable kill.
+    # The study still consults it at the event boundary — the remaining
+    # writer that can allocate gigabytes inside a slice.
     source = Path(work.__file__).read_text(encoding="utf-8")
-    # The loop STREAMS the corpus now (materialising a pack's lens as dicts
-    # took the container from 4 GB to its ceiling in four seconds), so this
-    # checks the batch boundary wherever it is rather than the shape it had.
-    loop = source[source.index("for row in serving.iter_rows_of(name)"):]
-    assert "jobs_tight()" in loop[:1400], (
-        "the wire's per-batch check must cover memory as well as the deadline"
+    study = source[source.index("def out_of_room"): source.index("outcome = runner.measure")]
+    assert "jobs_tight()" in study, "the study must stop a slice when memory tightens"
+
+    wire = source[source.index("def wire("): source.index("def _ensure_roster_dyads")]
+    assert "iter_rows_of" not in wire, (
+        "the wire job must not copy the corpus into Kuzu — that copy filled "
+        "the 5 GB volume"
     )
-    assert "disk_is_tight" in loop[:1400], "and the volume"
-    # And before the setup, which is this job's actual peak.
-    before = source[:source.index("for row in serving.iter_rows_of(name)")]
-    assert "jobs_tight()" in before[-2000:], (
-        "loading the lens and reading back its ids is the peak, and it happens "
-        "before the first batch"
-    )
+    assert "_write_lean_batch" not in source
 
 
-def test_a_persisted_game_map_goes_stale_when_what_it_read_moves():
+def test_the_wire_job_keeps_roster_dyads_and_leaves_the_corpus_as_the_wire():
+    """GDELT Event nodes in Kuzu were a 2 KB/edge duplicate of the panel."""
+    import inspect
+
+    from core.api import work
+
+    src = inspect.getsource(work.wire)
+    assert "iter_rows_of" not in src
+    assert "_ensure_roster_dyads" in src
+    assert "corpus" in src.lower()
+
+
+def test_a_persisted_game_map_goes_stale_when_what_it_read_moves(monkeypatch):
     """THE FINGERPRINT COVERS WHAT THE SOLVE READS. The maps used to re-solve
     on a PAYLOAD_VERSION bump and nothing else — so a corrected relationship
     reached the game page only through a code deploy. Now the RELATES_TO web,
@@ -706,6 +719,7 @@ def test_a_persisted_game_map_goes_stale_when_what_it_read_moves():
     fingerprint re-solves once; the same inputs stand."""
     from core.api import work
 
+    monkeypatch.setenv("GEOGRAPH_SNAPSHOT_FROZEN", "0")
     current = {"version": "v1", "relates": 100, "relates_latest": "2018-03-04",
                "affected": 1_000_000, "model_frozen": "2026-08-16T18:27:01"}
     assert work.games_stale(None, current) == "no persisted map"
@@ -729,15 +743,39 @@ def test_a_persisted_game_map_goes_stale_when_what_it_read_moves():
         work.games_stale({"inputs": {**current, "version": "v0"}}, current) or "")
 
 
+def test_a_frozen_snapshot_re_solves_on_the_live_export_not_affected(monkeypatch):
+    """The snapshot is weights. AFFECTED growth is not new information; the
+    15-minute export stamp is."""
+    from core.api import work
+
+    monkeypatch.setenv("GEOGRAPH_SNAPSHOT_FROZEN", "1")
+    current = {"version": "v1", "relates": 100, "relates_latest": "2018-03-04",
+               "affected": 1_000_000, "model_frozen": "2026-08-16T18:27:01",
+               "live": "20260817181500"}
+    assert work.games_stale({"inputs": {**current, "affected": 100}}, current) is None
+    assert "live export moved" in (
+        work.games_stale({"inputs": {**current, "live": "older"}}, current) or "")
+    assert work.games_stale({"inputs": dict(current)}, current) is None
+
+
+def test_harvest_is_a_noop_while_the_snapshot_is_frozen(monkeypatch, tmp_path):
+    from core.api import work
+
+    monkeypatch.setenv("GEOGRAPH_SNAPSHOT_FROZEN", "1")
+    monkeypatch.setenv("GEOGRAPH_HARVEST_DIR", str(tmp_path))
+    out = work.harvest(None, 0.0)
+    assert "frozen" in out["skipped"]
+
+
 def test_a_reclaim_drops_every_cache_that_can_be_rebuilt(monkeypatch) -> None:
     """A RECLAIM THAT FREES NOTHING IS THE WORST OUTCOME: it costs a rebuild,
     reports a number that looks like action, and leaves the process exactly as
     close to the kill line as it was.
 
     `forget_wire_ids` documented itself as "called under memory pressure" and
-    was called by nothing (found 2026-08-17) — a few hundred thousand id
-    strings per pack, held for the process's life, invisible to the loop that
-    exists to give memory back.
+    was called by nothing (found 2026-08-17). It still resets the roster-dyad
+    flag so a reclaim does not leave the next wire tick thinking it already
+    merged them.
     """
     from core.api import jobs as jobs_module
     from core.api import work
@@ -745,7 +783,7 @@ def test_a_reclaim_drops_every_cache_that_can_be_rebuilt(monkeypatch) -> None:
     from core.wire import corpus
 
     work._archive_cache.update({"count": 7, "events": ["x"], "dates": {"x": 1}})
-    work._wire_seen["mena"] = {"event:gdelt-1"}
+    work._dyads_ensured = True
     context_module.CACHE["mena"] = {"effects": ["big"]}
     evicted: list[bool] = []
     monkeypatch.setattr(corpus, "evict", lambda: evicted.append(True))
@@ -755,5 +793,133 @@ def test_a_reclaim_drops_every_cache_that_can_be_rebuilt(monkeypatch) -> None:
 
     assert evicted, "the parsed corpus is the largest of them"
     assert work._archive_cache["count"] is None, "the study's archive scan"
-    assert not work._wire_seen, "the wire's id sets"
+    assert work._dyads_ensured is False, "the roster-dyad once-per-process flag"
     assert not context_module.CACHE, "the region contexts, which grow with the study"
+
+
+def test_reclaim_deletes_quarantined_wal_tails(tmp_path):
+    """The only reclaim that happens OUTSIDE the database."""
+    from core.graph import kuzu_store
+
+    db = tmp_path / "geograph.kuzu"
+    db.write_bytes(b"x")
+    tail = tmp_path / "geograph.kuzu.wal.broken-1"
+    tail.write_bytes(b"0" * 100)
+    junk = tmp_path / "scratch.tmp"
+    junk.write_bytes(b"1" * 50)
+    out = kuzu_store.reclaim_non_data(db)
+    assert not tail.exists() and not junk.exists()
+    assert out["freed_bytes"] == 150
+    assert "geograph.kuzu.wal.broken-1" in out["removed"]
+    assert db.exists(), "the database file is the knowledge graph — leave it"
+
+
+def test_a_full_graph_volume_keeps_measuring_into_postgres(monkeypatch):
+    """5 GB graph + 5 GB panel: the graph keeps dyads and AFFECTED; the
+    panel takes new measurements once the graph is at its floor.
+
+    Production 2026-08-17: the study returned `stopped: volume nearly full`
+    in 0.0s every tick, so the panel sat unused and coverage froze. The
+    AFFECTED mirror is what filled the graph; stopping the study to protect
+    it wasted the store that still had room.
+    """
+    from core.api import work
+    from core.graph import kuzu_store
+    from core.transmission import runner
+
+    called: dict[str, Any] = {}
+
+    def _in_process(conn: Any, deadline: float, write_graph: bool = True) -> dict[str, Any]:
+        called["write_graph"] = write_graph
+        called["child"] = False
+        return {"measured": 4, "graph_effects": write_graph}
+
+    def _child(deadline: float) -> dict[str, Any]:
+        called["child"] = True
+        return {"argv": ["should-not-run"]}
+
+    monkeypatch.setattr(work, "_PREFER_CHILD", True)
+    monkeypatch.setattr(work, "_study_in_process", _in_process)
+    monkeypatch.setattr(work, "_study_child_plan", _child)
+    monkeypatch.setattr(kuzu_store, "disk_is_tight", lambda path: True)
+    monkeypatch.setattr(runner, "WRITE_GRAPH_EFFECTS", True)
+
+    out = work.study(object(), time.monotonic() + 60)
+    assert called.get("child") is False, "a child would still try to grow AFFECTED"
+    assert called["write_graph"] is False
+    assert out["graph_effects"] is False
+    assert out["measured"] == 4
+
+
+def test_declared_pairs_are_dyad_nodes():
+    """The knowledge graph's dyads come from the roster, not only from wire
+    events that may never land on a full volume."""
+    from core import packs as packs_module
+    from core.classifier import escalation
+
+    pack = packs_module.load("mena")
+    nodes = {row["node_id"]: row for row in pack.dyad_nodes()}
+    assert nodes
+    iran_us = escalation.dyad_id("actor:cow-2", "actor:cow-630")
+    assert iran_us in nodes
+    assert nodes[iran_us]["actor_a_id"] == "actor:cow-2"
+    assert "ewma_baseline" not in nodes[iran_us]
+
+
+def test_graph_mirror_ids_exclude_the_gdelt_wire():
+    from core.transmission import runner
+
+    events = [
+        {"id": "event:mena-2019-abqaiq"},
+        {"id": "event:gdelt-123"},
+        {"id": "event:cow-mid-1"},
+    ]
+    assert runner.graph_mirror_ids(events) == {
+        "event:mena-2019-abqaiq", "event:cow-mid-1",
+    }
+
+
+def test_trim_deletes_gdelt_events_and_keeps_the_spine(tmp_path):
+    from core import archive as archive_bounds
+    from core.graph import kuzu_store
+
+    conn = kuzu_store.connect(tmp_path / "trim.kuzu")
+    try:
+        kuzu_store.apply_schema(conn)
+        kuzu_store.merge_nodes(conn, "Event", [
+            {
+                "node_id": "event:gdelt-1", "name": "Wire strike",
+                "event_time": "2020-01-01",
+                "action_cameo_code": "190", "goldstein": -10.0,
+                "quad_class": "material_conflict", "fidelity_tier": "modern_coded",
+                "temporal_resolution": "day", "source_scale": "goldstein",
+                "region_pack": "mena",
+            },
+            {
+                "node_id": "event:mena-2019-abqaiq", "name": "Abqaiq",
+                "event_time": "2019-09-14", "action_cameo_code": "190",
+                "goldstein": -10.0, "quad_class": "material_conflict",
+                "fidelity_tier": "modern_coded", "temporal_resolution": "day",
+                "source_scale": "coded", "region_pack": "mena",
+            },
+        ])
+        deleted = archive_bounds.drop_gdelt_events(conn, limit=50)
+        assert deleted == 1
+        left = {
+            r["id"] for r in kuzu_store.query(
+                conn, "MATCH (e:Event) RETURN e.node_id AS id"
+            )
+        }
+        assert left == {"event:mena-2019-abqaiq"}
+    finally:
+        kuzu_store.close(conn)
+
+
+def test_refill_does_not_project_gdelt_rows_back_onto_the_graph():
+    from pathlib import Path
+
+    from core.transmission import rebuild
+
+    src = Path(rebuild.__file__).read_text(encoding="utf-8")
+    assert "event:gdelt-" in src
+    assert "NOT LIKE" in src

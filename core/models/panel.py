@@ -195,7 +195,9 @@ def build(
         # forecaster can be asked which WAY a dyad is about to move, not only
         # how hard. The magnitude is unsigned (|score - baseline|), so the sign
         # comes from the classifier's direction.
-        if row["magnitude"] is not None and row["direction"] in ("escalating", "de-escalating"):
+        if row["magnitude"] is not None and row["direction"] in (
+            "escalating", "de-escalating", "deescalating",
+        ):
             mag = float(row["magnitude"])
             signed = mag if row["direction"] == "escalating" else -mag
             if abs(signed) > abs(cell["signed_intensity"]):

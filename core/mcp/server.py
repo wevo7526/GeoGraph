@@ -93,15 +93,16 @@ def build_server() -> Any:
     @server.tool()
     def analogues_for(query_ref: str) -> dict[str, Any]:
         """Regime-admissible historical analogues with similarity and
-        rationale. (Phase 5.)"""
-        return tools.analogues_for(query_ref)
+        rationale. Structural match only — the vector-index half is unbuilt."""
+        return tools.analogues_for(conn, query_ref)
 
     @server.tool()
     def forecast(question: str, mode: str = "near_term") -> dict[str, Any]:
-        """Reasoned scenarios. near_term carries likelihoods (Brier-scored);
+        """Frozen Forecast nodes. near_term carries likelihoods (Brier-scored);
         long_horizon maps structural pressure over windows and NEVER calls
-        dates — surface its boundary statement verbatim. (Phase 5.)"""
-        return tools.forecast(question, mode)
+        dates — surface its boundary statement verbatim. Does not compute a
+        new call from the question string."""
+        return tools.forecast(conn, question, mode)
 
     return server
 

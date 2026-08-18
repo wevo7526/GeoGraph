@@ -24,9 +24,21 @@ from __future__ import annotations
 
 from typing import Any
 
-from core.reasoning import strategy
-
 NOTIONAL_USD = 1_000_000
+
+#: What the book is marking. Locked: do not silently shorten the three-year
+#: horizon, and do not substitute the game's sharper-than-usual departure
+#: probability. The modern-era base rate of this question is 0.92–0.97, which
+#: is why recent calibration skill is negative — the question is nearly
+#: vacuous, not the estimator. Stated beside every ledger so a reader does
+#: not take a 90% paper return as evidence the hard question was answered.
+QUESTION = (
+    "This book marks the frozen near-term call: P(a focal dyad escalates "
+    "again within three years). That question's modern-era base rate is "
+    "0.92–0.97, so the book is a translation of a nearly-vacuous continuation "
+    "call, not of the game's sharper-than-usual departure probability. The "
+    "horizon is locked; it is not shortened silently."
+)
 
 
 def method_for(

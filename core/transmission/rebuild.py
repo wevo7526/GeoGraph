@@ -72,6 +72,11 @@ def panel_effect_rows(
     container to 7.1 GB of a 7.45 GB limit — a crash loop that no guard could
     catch, because the allocation happens inside one call.
 
+    GDELT rows are skipped: those Event nodes are not kept in the graph
+    (the corpus is the wire; the panel holds the measurements). Projecting
+    them back would refill the volume with the copy this loop exists to
+    retire.
+
     THE CHUNK NEVER CUTS AN EVENT IN HALF. `refill` groups by event and the
     marker resumes by event id, so a chunk ending mid-event would record that
     event as done and silently drop its remaining markets. When the limit is
@@ -82,7 +87,9 @@ def panel_effect_rows(
         "SELECT event_node_id, market_ticker, effect_window, resolution, "
         "status, raw_return, expected_return, abnormal_return, t_stat, "
         "p_value, method FROM event_study_runs "
-        "WHERE status = ANY(%s) AND event_node_id > %s ORDER BY event_node_id"
+        "WHERE status = ANY(%s) AND event_node_id > %s "
+        "AND event_node_id NOT LIKE 'event:gdelt-%%' "
+        "ORDER BY event_node_id"
     )
     params: list[Any] = [list(MEASURED_STATUSES), after or ""]
     if limit is not None:

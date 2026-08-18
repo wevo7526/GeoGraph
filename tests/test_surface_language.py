@@ -83,6 +83,12 @@ MACHINE_TOKENS = {
         "the mean-Goldstein label, which scored the US and China 'friendly' — "
         "core/games/scenarios.py forbids presenting it as a characterisation"
     ),
+    "exact benchmark": (
+        "the LP correlated equilibrium is an audit of distance from Nash, not Nash itself"
+    ),
+    "What is actionable now": (
+        "the live wire is intel scored against a snapshot baseline, not a blotter"
+    ),
 }
 
 
@@ -92,6 +98,28 @@ def test_the_machines_vocabulary_stays_off_the_page(token: str) -> None:
     assert not hits, (
         f"{token!r} is back in {', '.join(hits)} — {MACHINE_TOKENS[token]}"
     )
+
+
+def test_the_wire_does_not_render_coded_event_names() -> None:
+    """The event's own `name` is CAMEO vocabulary. The globe already ships
+    initiator_name / target_name instead; the wire page caught up."""
+    wire = _strip_comments(
+        (WEB / "components" / "WirePage.tsx").read_text(encoding="utf-8")
+    )
+    assert "item.name" not in wire, (
+        "WirePage is rendering the coded event name; compose a headline from "
+        "named fields in lib/story.ts (wireHeadline) instead"
+    )
+    assert "wireHeadline" in wire
+
+
+def test_the_relationship_page_leads_with_three_reads_not_a_hostility_ladder() -> None:
+    """Standing, posture, intensity — not tensionSentence over the bands."""
+    rel = _strip_comments(
+        (WEB / "components" / "RelationshipPage.tsx").read_text(encoding="utf-8")
+    )
+    assert "tensionSentence" not in rel
+    assert "relationshipStandfirst" in rel
 
 
 def test_a_dyad_id_is_never_built_into_a_sentence() -> None:

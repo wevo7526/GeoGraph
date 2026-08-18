@@ -816,3 +816,43 @@ def test_the_paper_endpoint_is_honest_without_a_panel(db_path, monkeypatch, tmp_
         assert response.status_code == 503  # no panel, no invented fills
         long = near.replace("near-term", "long-horizon")
         assert client.get(f"/api/forecasts/{long}/paper").status_code == 400
+
+
+def test_the_paper_book_states_the_question_it_marks():
+    """Do not silently shorten the horizon or swap in the game's harder call."""
+    from core.reasoning import paper
+
+    assert "three years" in paper.QUESTION
+    assert "not shortened silently" in paper.QUESTION
+    assert "sharp" in paper.QUESTION.lower() or "departure" in paper.QUESTION
+
+
+def test_mcp_analogues_rank_without_persisting(db_path):
+    from core.mcp import tools as mcp_tools
+
+    conn = kuzu_store.connect(db_path)
+    try:
+        before = kuzu_store.query(conn, "MATCH (a:Analogue) RETURN count(*) AS n")[0]["n"]
+        body = mcp_tools.analogues_for(conn, "event:mena-2025-midnight-hammer")
+        after = kuzu_store.query(conn, "MATCH (a:Analogue) RETURN count(*) AS n")[0]["n"]
+    finally:
+        kuzu_store.close(conn)
+    assert body["rows"]
+    assert after == before
+    assert "not_implemented" not in body
+
+
+def test_mcp_forecast_serves_frozen_nodes(db_path):
+    from core.mcp import tools as mcp_tools
+
+    freeze = _load("run_forecasts").freeze
+    freeze(db_path, region_pack="mena")
+    conn = kuzu_store.connect(db_path, read_only=True)
+    try:
+        body = mcp_tools.forecast(conn, "will this region escalate", "near_term")
+    finally:
+        kuzu_store.close(conn)
+    assert body["rows"]
+    assert body["mode"] == "near_term"
+    assert body["asked"] == "will this region escalate"
+    assert "not_implemented" not in body

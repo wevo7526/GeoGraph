@@ -161,6 +161,8 @@ def test_the_story_is_quantiles_of_measured_effects_cut_by_the_coding(conn):
     # a sharp escalation", rendering an internal pack key as a place.
     assert payload["region"] == "t" and payload["region_label"] == "Testland"
     assert "Testland's coded record" in text and "t's coded record" not in text
+    assert payload["game_as_of"] == "2020-12-31"
+    assert payload["measured_through"]
 
 
 def test_the_named_moves_are_this_regions_events(conn):

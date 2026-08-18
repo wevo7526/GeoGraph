@@ -18,15 +18,79 @@
  *  miss the second — the mistake the relationship page made before its bands
  *  became comparatives. The sentences are composed in lib/story.ts from named
  *  fields; the backend ships numbers, never prose.
+ *
+ *  Headlines are composed the same way. The event's own `name` is CAMEO
+ *  vocabulary ("Engage in negotiation: Israel → Egypt") and is never rendered
+ *  here — the globe already refused that string; this page caught up.
  */
 import { useEffect, useState } from 'react'
 
-import { getWire, getWireLive, lastFailureFor } from '../api'
-import { count, wireLede, wireRead } from '../lib/story'
+import { getEventEffects, getWire, getWireLive, lastFailureFor } from '../api'
+import { count, wireHeadline, wireKindWord, wireLede, wireRead } from '../lib/story'
 import { useRegionLabel } from '../regions'
-import type { WireFeed, WireItem, WireLiveFeed } from '../types'
-import { Beat, Chip, Disclosure, Empty, StoryHead } from '../ui'
+import type { Effect, WireFeed, WireItem, WireLiveFeed, WireLiveItem } from '../types'
+import { Beat, Disclosure, Empty, StoryHead } from '../ui'
 import { Tiles } from './charts/Kit'
+
+const LIVE_POLL_MS = 60_000
+
+function baselineFigure(item: WireItem): string {
+  const points = item.points_from_baseline
+  if (points === null) return '—'
+  if (item.pair_baseline === null) return `${points.toFixed(1)} pts`
+  const bar = item.pair_baseline >= 0
+    ? `+${item.pair_baseline.toFixed(1)}`
+    : item.pair_baseline.toFixed(1)
+  return `${points.toFixed(1)} pts from ${bar}`
+}
+
+function EventEffects({ eventId }: { eventId: string }) {
+  const [rows, setRows] = useState<Effect[] | null | undefined>(undefined)
+  useEffect(() => {
+    let live = true
+    setRows(undefined)
+    getEventEffects(eventId).then((r) => live && setRows(r?.rows ?? []))
+    return () => {
+      live = false
+    }
+  }, [eventId])
+  if (rows === undefined) return <p className="figure-note">Reading measured effects…</p>
+  if (!rows.length) {
+    return (
+      <p className="figure-note">
+        No measured market reaction for this event yet — it may still be in the
+        study queue, or every market was skipped.
+      </p>
+    )
+  }
+  const shown = rows.slice(0, 8)
+  return (
+    <div className="scroll-x mt-2">
+      <table className="rule-table" style={{ minWidth: 420 }}>
+        <thead>
+          <tr>
+            <th className="text-left">market</th>
+            <th className="text-right">move</th>
+            <th className="text-right">window</th>
+          </tr>
+        </thead>
+        <tbody>
+          {shown.map((row) => (
+            <tr key={`${row.ticker}-${row.window}`}>
+              <td>{row.market || row.ticker}</td>
+              <td className="text-right mono">
+                {row.abnormal_return == null
+                  ? '—'
+                  : `${row.abnormal_return >= 0 ? '+' : ''}${(row.abnormal_return * 100).toFixed(2)}%`}
+              </td>
+              <td className="text-right mono" style={{ color: 'var(--muted)' }}>{row.window}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  )
+}
 
 /** A departure, at full width: when, how far, what happened, what it means.
  *
@@ -34,7 +98,19 @@ import { Tiles } from './charts/Kit'
  *  uses for a column of returns, because it is what makes figures scannable
  *  without a table's rules. Colour carries SIGN, as it does everywhere on this
  *  surface: alert for coercive, accent for cooperative. */
-function Departure({ item, onOpen }: { item: WireItem; onOpen: () => void }) {
+function Departure({
+  item,
+  onOpen,
+  onEffects,
+  onStudy,
+  effectsOpen,
+}: {
+  item: WireItem
+  onOpen: () => void
+  onEffects: () => void
+  onStudy: () => void
+  effectsOpen: boolean
+}) {
   const points = item.points_from_baseline
   // COLOUR CARRIES THE DIRECTION OF THE DEPARTURE, not the act's absolute
   // sign. `--accent` and `--alert` are a diverging pair meaning
@@ -55,15 +131,94 @@ function Departure({ item, onOpen }: { item: WireItem; onOpen: () => void }) {
         </time>
         <span className="ledger-leader" aria-hidden="true" />
         <span className="ledger-figure" style={{ color: sign }}>
-          {points === null ? '—' : `${points.toFixed(1)} pts`}
+          {points === null ? '—' : baselineFigure(item)}
         </span>
       </div>
-      <h3 className="wire-headline">{item.name}</h3>
+      <h3 className="wire-headline">{wireHeadline(item)}</h3>
       <p className="wire-read">{wireRead(item)}</p>
-      {item.dyad_id && (
-        <button type="button" className="article-link" onClick={onOpen}>
-          open the relationship →
+      <div className="toolbar mt-2" style={{ borderTop: 'none' }}>
+        {item.dyad_id && (
+          <button type="button" className="article-link" onClick={onOpen}>
+            open the relationship →
+          </button>
+        )}
+        <button type="button" className="article-link" onClick={onEffects}>
+          {effectsOpen ? 'hide measured effects' : 'measured effects →'}
         </button>
+        <button type="button" className="article-link" onClick={onStudy}>
+          the study →
+        </button>
+      </div>
+      {effectsOpen && <EventEffects eventId={item.node_id} />}
+    </article>
+  )
+}
+
+function LiveCard({ item }: { item: WireLiveItem }) {
+  const outlook = item.market_outlook
+  const kind = wireKindWord(item.implied_kind)
+  return (
+    <article className="wire-entry">
+      <div className="ledger-row">
+        <time className="mono text-xs" style={{ color: 'var(--muted)' }}>{item.available_at ?? item.event_time}</time>
+        <span className="ledger-leader" aria-hidden="true" />
+        <span className="ledger-figure">{item.mentions ?? '—'} mentions</span>
+      </div>
+      <h3 className="wire-headline">{wireHeadline(item)}</h3>
+      <p className="wire-read">
+        {item.escalation_direction
+          ? `${item.implied_kind === 'stable' ? 'Routine against this pair’s snapshot baseline' : `Head B reads this as ${kind} against this pair’s snapshot EWMA`}${
+              item.escalation_magnitude != null
+                ? ` (${item.escalation_magnitude.toFixed(1)} Goldstein points from their usual).`
+                : '.'
+            } Historical market cells below are analogy — what similarly coded events did — not a live trade.`
+          : `Coded as ${kind}. Historical cells are analogy from the frozen transmission map, not a live trade.`}
+      </p>
+      {outlook.length ? (
+        <div className="scroll-x mt-2">
+          <table className="rule-table" style={{ minWidth: 480 }}>
+            <thead>
+              <tr>
+                <th className="text-left">historically, after this kind</th>
+                <th className="text-right">median</th>
+                <th className="text-right">middle half</th>
+                <th className="text-right">sample</th>
+              </tr>
+            </thead>
+            <tbody>{outlook.map((market) => (
+              <tr key={market.ticker}>
+                <td>
+                  {market.market}{' '}
+                  <span className="mono text-xs" style={{ color: 'var(--muted)' }}>
+                    {market.thin ? 'thin' : ''}
+                  </span>
+                </td>
+                <td className="text-right mono">
+                  {market.median == null ? '—' : `${market.median >= 0 ? '+' : ''}${(market.median * 100).toFixed(2)}%`}
+                </td>
+                <td className="text-right mono" style={{ color: 'var(--muted)' }}>
+                  {market.p25 == null || market.p75 == null
+                    ? '—'
+                    : `${(market.p25 * 100).toFixed(1)} to ${(market.p75 * 100).toFixed(1)}`}
+                </td>
+                <td className="text-right mono">{market.n}</td>
+              </tr>
+            ))}</tbody>
+          </table>
+        </div>
+      ) : item.implied_kind === 'stable' ? (
+        <p className="figure-note">
+          No priced cell: this is routine against the pair&rsquo;s own baseline, and the
+          historical &ldquo;stable&rdquo; median is what the region does on an ordinary
+          day, not what this event is worth.
+        </p>
+      ) : (
+        <p className="figure-note">No measured market cell for this event&rsquo;s Head B kind — analogy has nothing to attach.</p>
+      )}
+      {item.source_url && (
+        <a className="article-link" href={item.source_url} target="_blank" rel="noreferrer">
+          source →
+        </a>
       )}
     </article>
   )
@@ -79,15 +234,20 @@ export default function WirePage({
   const label = useRegionLabel(region)
   const [feed, setFeed] = useState<WireFeed | null | undefined>(undefined)
   const [liveFeed, setLiveFeed] = useState<WireLiveFeed | null | undefined>(undefined)
+  const [openEffects, setOpenEffects] = useState<string | null>(null)
 
   useEffect(() => {
     let live = true
     setFeed(undefined)
     setLiveFeed(undefined)
+    setOpenEffects(null)
     getWire(region).then((r) => live && setFeed(r))
-    getWireLive(region).then((r) => live && setLiveFeed(r))
+    const pullLive = () => getWireLive(region).then((r) => live && setLiveFeed(r))
+    pullLive()
+    const id = window.setInterval(pullLive, LIVE_POLL_MS)
     return () => {
       live = false
+      window.clearInterval(id)
     }
   }, [region])
 
@@ -130,6 +290,11 @@ export default function WirePage({
       `/relationships?dyad=${encodeURIComponent(item.dyad_id ?? '')}` +
         `&region=${encodeURIComponent(region)}`,
     )
+  const study = (item: WireItem) =>
+    onNavigate(
+      `/case/dynamic?event=${encodeURIComponent(item.node_id)}` +
+        `&region=${encodeURIComponent(region)}`,
+    )
 
   return (
     <div className="reading-column py-8">
@@ -141,34 +306,12 @@ export default function WirePage({
 
       {liveFeed?.rows.length ? (
         <Beat
-          title="What is actionable now"
+          title="What just arrived"
           major
-          aside="GDELT 2.0's newest 15-minute export, filtered to this region. A market is tradable only when its measured median clears both the sample floor and the declared round-trip cost hurdle; thin cells remain watch items."
+          aside="GDELT 2.0's newest 15-minute export, scored with Head B against each pair's snapshot baseline. A historical cell is analogy — what similarly coded events did — attached only for escalations and step-downs. Routine traffic is not a trade. Not advice."
         >
           {liveFeed.rows.slice(0, 8).map((item) => (
-            <article key={item.node_id} className="wire-entry">
-              <div className="ledger-row">
-                <time className="mono text-xs" style={{ color: 'var(--muted)' }}>{item.available_at ?? item.event_time}</time>
-                <span className="ledger-leader" aria-hidden="true" />
-                <span className="ledger-figure">{item.mentions ?? '—'} mentions</span>
-              </div>
-              <h3 className="wire-headline">{item.name}</h3>
-              {item.market_outlook.length ? (
-                <div className="scroll-x mt-2">
-                  <table className="rule-table" style={{ minWidth: 520 }}>
-                    <thead><tr><th className="text-left">market impact</th><th className="text-right">median</th><th className="text-right">edge after cost</th><th className="text-right">read</th></tr></thead>
-                    <tbody>{item.market_outlook.map((market) => (
-                      <tr key={market.ticker}>
-                        <td>{market.market} <span className="mono text-xs" style={{ color: 'var(--muted)' }}>{market.n} reactions</span></td>
-                        <td className="text-right mono">{market.median == null ? '—' : `${market.median >= 0 ? '+' : ''}${(market.median * 100).toFixed(2)}%`}</td>
-                        <td className="text-right mono">{market.edge_after_cost == null ? '—' : `${(market.edge_after_cost * 100).toFixed(2)}%`}</td>
-                        <td className="text-right"><Chip label={`${market.action} · ${market.direction}`} tone={market.action === 'trade' ? 'ink' : 'muted'} /></td>
-                      </tr>
-                    ))}</tbody>
-                  </table>
-                </div>
-              ) : <p className="figure-note">No measured market cell clears the live event&rsquo;s historical kind.</p>}
-            </article>
+            <LiveCard key={item.node_id} item={item} />
           ))}
           <p className="figure-note">{liveFeed.method}</p>
         </Beat>
@@ -181,7 +324,7 @@ export default function WirePage({
               label: 'departures',
               value: count(departures.length),
               tone: departures.length ? 'loss' : 'plain',
-              sub: `of ${count(feed.rows.length)} coded events`,
+              sub: `of ${count(feed.rows.length)} coded events${feed.truncated ? ' (newest sixty)' : ''}`,
             },
             {
               label: 'newest event',
@@ -205,7 +348,14 @@ export default function WirePage({
       >
         {departures.length ? (
           departures.map((item) => (
-            <Departure key={item.node_id} item={item} onOpen={() => open(item)} />
+            <Departure
+              key={item.node_id}
+              item={item}
+              onOpen={() => open(item)}
+              onEffects={() => setOpenEffects((id) => (id === item.node_id ? null : item.node_id))}
+              onStudy={() => study(item)}
+              effectsOpen={openEffects === item.node_id}
+            />
           ))
         ) : (
           <Empty>
@@ -235,12 +385,8 @@ export default function WirePage({
                 {routine.map((item) => (
                   <tr key={item.node_id}>
                     <td className="mono text-xs whitespace-nowrap">{item.event_time}</td>
-                    <td>{item.name}</td>
-                    <td className="text-right figure">
-                      {item.points_from_baseline === null
-                        ? '—'
-                        : `${item.points_from_baseline.toFixed(1)}`}
-                    </td>
+                    <td>{wireHeadline(item)}</td>
+                    <td className="text-right figure">{baselineFigure(item)}</td>
                   </tr>
                 ))}
               </tbody>
@@ -254,7 +400,9 @@ export default function WirePage({
         <p className="figure-note">
           The distance is measured in Goldstein points against the pair&rsquo;s own
           running baseline, which is why the same event can be routine for one
-          pair and a departure for another. Nothing here is a forecast: the wire
+          pair and a departure for another. The live section uses the event&rsquo;s
+          raw Goldstein band, not that baseline — a fifteen-minute-old event has
+          no history of its own yet. Nothing here is a forecast: the wire
           reports what was coded and how far it sat from usual.
         </p>
       </Disclosure>

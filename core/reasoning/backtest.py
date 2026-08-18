@@ -11,12 +11,13 @@ that quarter's book through the pack's own paper translation, the book is
 entered at the first panel close after the cutoff and marked at the NEXT
 quarter end, and the quarterly returns chain into an equity curve.
 
-What this measures: whether ACTING on the frozen rule made or lost paper
-money, quarter by quarter, with no hindsight anywhere — the base rates each
-quarter are counted from that quarter's past only, the books are fixed in
-the pack, and a quarter the panel cannot fill is a RECORDED SKIP, never a
-fabricated fill. The curve is a calibration instrument, not a strategy
-pitch, and it ships with the rule that generated it.
+What this measures: how a fund following the frozen intel book would have
+marked, quarter by quarter, with no hindsight anywhere — the base rates each
+quarter are counted from that quarter's past only, the books are the pack's
+fixed paper translation of the three-year continuation call, and a quarter
+the panel cannot fill is a RECORDED SKIP, never a fabricated fill. The curve
+is a calibration instrument for that intel, not a trading product and not a
+backtest of the event-impact gate (`strategy_contract` / car_0_3).
 
 Section 17: every number is counted or panel arithmetic. Nothing here is
 originated by a model, and nothing is fitted to the curve it produces.
@@ -26,7 +27,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from core.reasoning import forecasting, paper, strategy
+from core.reasoning import forecasting, paper
 
 #: A quarter only trades when its base rate rests on at least this many
 #: episodes — a likelihood counted from three episodes is noise wearing a
@@ -199,16 +200,18 @@ def walk_forward(
             "max_drawdown": round(max_drawdown, 6),
             "transaction_cost_bps": round(float(transaction_cost_bps), 4),
         },
-        "strategy": strategy.strategy_contract(
-            transaction_cost_bps=transaction_cost_bps,
-        ),
+        "question": paper.QUESTION,
         "method": (
-            "walk-forward: each quarter end, forecast from events <= cutoff "
-            "only (same estimator as live freezes), build the pack's paper "
-            f"book, enter first close after cutoff, mark at next quarter end; "
+            "walk-forward paper book of the pack-weighted three-year "
+            "continuation call: each quarter end, forecast from events <= cutoff "
+            "only (same estimator as live freezes), blend the pack's fixed "
+            "escalation and reversion books by that call's likelihood, enter "
+            "first close after cutoff, mark at next quarter end, "
+            f"{transaction_cost_bps:g} bps round-trip; "
             f"quarters with < {MIN_EPISODES} base-rate episodes, focal dyads "
             "below the standard episode bar, or any unenterable leg are "
             "recorded skips — only fully-entered books compound. "
+            "Not a backtest of the event-impact gate. "
             + paper.method_for(
                 escalation_book,
                 reversion_book,

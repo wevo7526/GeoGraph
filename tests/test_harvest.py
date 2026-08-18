@@ -1,10 +1,10 @@
 """The harvest job — the only thing in the loop that learns a new fact.
 
 Twelve jobs kept the platform current and none of them could fetch a new
-EVENT: `work.wire` projects artifacts that ship inside the image, so the
-archive was frozen at the last commit and every other job re-derived from that
-snapshot. These tests pin the two properties that make the fix safe rather
-than the download, which is GDELT's business and not testable offline.
+EVENT: the study measures the corpus, so without a harvest the archive was
+frozen at the last commit. These tests pin the two properties that make the
+fix safe rather than the download, which is GDELT's business and not testable
+offline.
 
 THE FAILURE MODE WORTH THE MOST HERE IS SILENT. If harvested days were
 appended to `data/derived`, they would be destroyed by the next deploy — the
@@ -161,6 +161,7 @@ def test_the_harvest_bar_matches_the_era_it_extends():
 def test_the_job_is_off_unless_a_directory_is_named(monkeypatch):
     from core.api import work
 
+    monkeypatch.setenv("GEOGRAPH_SNAPSHOT_FROZEN", "0")
     monkeypatch.delenv("GEOGRAPH_HARVEST_DIR", raising=False)
     assert "skipped" in work.harvest(None, 0.0)
 
@@ -172,6 +173,7 @@ def test_the_job_takes_no_graph_connection(monkeypatch, tmp_path):
     lock with the others."""
     from core.api import work
 
+    monkeypatch.setenv("GEOGRAPH_SNAPSHOT_FROZEN", "0")
     monkeypatch.setenv("GEOGRAPH_HARVEST_DIR", str(tmp_path))
     harvest.mark_harvested(tmp_path, dt.date.today())
     out = work.harvest(None, 0.0)

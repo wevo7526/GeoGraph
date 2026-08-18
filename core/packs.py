@@ -96,6 +96,33 @@ class Pack:
             return frozenset({"USA", "RUS"})
         return frozenset(str(code) for code in declared)
 
+    def dyad_nodes(self) -> list[dict[str, Any]]:
+        """Dyad nodes for every declared pair — independent of the wire copy.
+
+        The 5 GB graph keeps actors, RELATES_TO, dyads and AFFECTED. Wire
+        events are a projection that stops when the volume is at its floor;
+        the roster's pairs must still exist as Dyad nodes so the explorer and
+        the games have a relationship to hang measurements on. EWMA slots are
+        omitted so a re-merge cannot wipe Head B's standing baseline.
+        """
+        from core.classifier import escalation
+
+        names = {str(a["id"]): str(a["name"]) for a in self.actors}
+        rows: dict[str, dict[str, Any]] = {}
+        for rel in self.relations:
+            a, b = str(rel["a"]), str(rel["b"])
+            did = escalation.dyad_id(a, b)
+            if did in rows:
+                continue
+            aa, bb = sorted((a, b))
+            rows[did] = {
+                "node_id": did,
+                "name": f"{names.get(aa, aa)}–{names.get(bb, bb)}",
+                "actor_a_id": aa,
+                "actor_b_id": bb,
+            }
+        return list(rows.values())
+
     @property
     def case_study(self) -> dict[str, Any] | None:
         """The narrated episode, if the pack declares one.

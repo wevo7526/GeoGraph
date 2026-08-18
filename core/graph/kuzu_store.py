@@ -326,6 +326,39 @@ def disk_is_tight(path: Path, floor: int = DISK_FLOOR_BYTES) -> bool:
     return usage is not None and usage["free"] < floor
 
 
+def reclaim_non_data(path: Path) -> dict[str, Any]:
+    """Delete quarantined WAL tails and tmp files beside the database.
+
+    THE DEADLOCK THIS BREAKS. A full volume cannot DROP a table: Kuzu needs
+    room for a twelve-byte WAL record to do anything. Quarantined
+    `*.wal.broken-*` tails (~20 MB each) and leftover `*.tmp` files are
+    evidence, not data — deleting them is the only reclaim that happens
+    outside the database. Dropping a table does not shrink the file on disk,
+    and this function never drops Dyad nodes or AFFECTED edges: those ARE
+    the knowledge graph the 5 GB volume is for.
+    """
+    freed = 0
+    removed: list[str] = []
+    parent = path.parent
+    for stale in sorted(parent.glob(f"{path.name}.wal.broken-*")):
+        with contextlib.suppress(OSError):
+            size = stale.stat().st_size
+            stale.unlink()
+            freed += size
+            removed.append(stale.name)
+    for stale in sorted(parent.glob("*.tmp")):
+        with contextlib.suppress(OSError):
+            size = stale.stat().st_size
+            stale.unlink()
+            freed += size
+            removed.append(stale.name)
+    return {
+        "freed_bytes": freed,
+        "removed": removed,
+        "disk": disk_usage(path),
+    }
+
+
 def buffer_pool_bytes() -> int:
     """How much page cache to allow — sized to the CONTAINER, never the host."""
     override = os.getenv("GEOGRAPH_BUFFER_POOL_BYTES")

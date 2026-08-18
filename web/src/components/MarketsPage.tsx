@@ -1,27 +1,18 @@
 /** The markets page: what this region's geopolitics has DONE to prices, and
- *  what that did to a $1M book that traded the frozen calls.
+ *  how a fund following the frozen intel book would have marked.
  *
- *  REWRITTEN 2026-08-17. The page was honest and unreadable: an h1 asserting
- *  "US 2-Year Treasury yield moves +0.47% when mena escalates sharply" (a coin
- *  flip — 52% of 84 events were positive, and `mena` is a pack key, not a
- *  caption), a standfirst of four parenthesised CAR windows, a transmission map
- *  drawn as bars of the median with every bar inside ±0.5% while the payload's
- *  interquartile ranges ran −1.9% to +3.9%, and the platform's single most
- *  legible figure — a paper book up 90.9% since 2007 — at beat six of seven
- *  under an aside apologising for its presence.
- *
- *  Now: a lede that measures its own claim before making it (lib/story.ts), the
- *  transmission map as dot-and-whisker so the spread is the story it actually
- *  is, the equity curve as the page's opening figure, and the method under a
- *  disclosure. Everything is still persisted server-side and nothing here
- *  recomputes a forecast.
+ *  THE TRANSMISSION MAP IS THE PAGE. The paper book is a later beat — pack-
+ *  weighted three-year continuation, walk-forward, 10 bps, skips recorded —
+ *  not a trading product and not a backtest of the event-impact rule. The
+ *  equity curve used to open the lede and made a 90% return look like evidence
+ *  the impact gate worked.
  */
 import { useEffect, useMemo, useState } from 'react'
-import { getBacktest, getForward, getMarketsStory, lastFailureFor } from '../api'
+import { getBacktest, getCalibration, getForward, getJobs, getMarketsStory, getTradeableEdge, lastFailureFor } from '../api'
 import { useRegionLabel } from '../regions'
-import type { BacktestLedger, ForwardView, MarketStoryMarket, MarketsStory } from '../types'
+import type { BacktestLedger, CalibrationWalk, ForwardView, JobsStatus, MarketStoryMarket, MarketsStory, TradeableEdge } from '../types'
 import { Beat, Chip, Disclosure, Empty, StoryHead } from '../ui'
-import { count, courseSentence, marketsLede, signedPct } from '../lib/story'
+import { count, courseSentence, marketsLede, pctWord, signedPct } from '../lib/story'
 import { Bars, DotWhisker, Drawdown, EquityCurve, SeriesLine, Tiles, pct } from './charts/Kit'
 
 const money = (v: number) => `${v < 0 ? '−' : ''}$${Math.abs(v).toLocaleString('en-US', { maximumFractionDigits: 0 })}`
@@ -45,20 +36,31 @@ const WINDOW_WORDS: Record<string, string> = {
 }
 const windowWord = (w: string) => WINDOW_WORDS[w] ?? w
 
-export default function MarketsPage({ region }: { region: string; onNavigate: (route: string) => void }) {
+const num = (v: number | string | null | undefined) => {
+  const n = typeof v === 'string' ? Number(v) : v
+  return n == null || !Number.isFinite(n) ? null : n
+}
+
+export default function MarketsPage({ region, onNavigate }: { region: string; onNavigate: (route: string) => void }) {
   const label = useRegionLabel(region)
   const [story, setStory] = useState<MarketsStory | null | undefined>(undefined)
   const [ledger, setLedger] = useState<BacktestLedger | null | undefined>(undefined)
   const [forward, setForward] = useState<ForwardView | null | undefined>(undefined)
+  const [edge, setEdge] = useState<TradeableEdge | null | undefined>(undefined)
+  const [walk, setWalk] = useState<CalibrationWalk | null | undefined>(undefined)
+  const [jobs, setJobs] = useState<JobsStatus | null>(null)
   const [showAll, setShowAll] = useState(false)
   const [focus, setFocus] = useState<string | null>(null)
 
   useEffect(() => {
     let live = true
-    setStory(undefined); setLedger(undefined); setForward(undefined); setFocus(null)
+    setStory(undefined); setLedger(undefined); setForward(undefined); setEdge(undefined); setWalk(undefined); setFocus(null)
     getMarketsStory(region).then((s) => live && setStory(s))
     getBacktest(region).then((l) => live && setLedger(l))
     getForward(region).then((f) => live && setForward(f))
+    getTradeableEdge().then((e) => live && setEdge(e))
+    getCalibration(region).then((c) => live && setWalk(c))
+    getJobs().then((j) => live && setJobs(j))
     return () => { live = false }
   }, [region])
 
@@ -95,7 +97,7 @@ export default function MarketsPage({ region }: { region: string; onNavigate: (r
   const cov = story.coverage?.summary
   const rows = ledger?.rows ?? []
   const summary = ledger?.summary ?? null
-  const lede = marketsLede(story, name, summary)
+  const lede = marketsLede(story, name)
   const measuredTotal = markets.reduce((a, m) => a + m.measured, 0)
 
   // ADVERSARY COURSES ONLY. The forward beat is read as "where the region's
@@ -107,6 +109,8 @@ export default function MarketsPage({ region }: { region: string; onNavigate: (r
   const forwardCourses = (story.forward?.courses ?? []).filter(
     (c) => c.family?.family !== 'ally',
   )
+  const studyStopped = jobs?.jobs?.find((j) => j.name === 'study')?.last_result?.stopped
+  const diskFree = jobs?.memory?.disk_free_gb
 
   return (
     <div className="reading-column py-8">
@@ -114,19 +118,6 @@ export default function MarketsPage({ region }: { region: string; onNavigate: (r
         kicker={`Markets · ${name.toUpperCase()}`}
         title={lede?.headline ?? `How ${name} moves markets`}
         standfirst={lede?.support}
-        action={
-          summary && rows.length > 1 ? (
-            <figure className="head-figure">
-              <EquityCurve rows={rows} notional={summary.notional_usd ?? 1_000_000} width={360} height={120} />
-              <figcaption>
-                <span className="figure text-lg" style={{ color: summary.total_return >= 0 ? 'var(--accent)' : 'var(--alert)' }}>
-                  {summary.total_return >= 0 ? '+' : ''}{pct(summary.total_return, 1)}
-                </span>{' '}
-                on $1M of paper positions, {summary.first_quarter?.slice(0, 4)}–{summary.last_quarter?.slice(0, 4)}
-              </figcaption>
-            </figure>
-          ) : undefined
-        }
       />
 
       <div className="mt-8">
@@ -142,34 +133,22 @@ export default function MarketsPage({ region }: { region: string; onNavigate: (r
             sub: `across ${markets.filter((m) => m.measured).length} of ${markets.length} markets`,
           },
           {
-            label: 'archive runs to',
-            value: story.as_of ? story.as_of.slice(0, 7) : '—',
-            sub: story.computed_at ? `written ${story.computed_at.slice(0, 10)}` : undefined,
+            label: 'measured through',
+            value: story.measured_through ? story.measured_through.slice(0, 7) : '—',
+            sub: story.game_as_of
+              ? `games open at ${story.game_as_of.slice(0, 7)}`
+              : story.computed_at ? `written ${story.computed_at.slice(0, 10)}` : undefined,
           },
         ]} />
       </div>
 
-      {story.market_impact?.length ? (
-        <Beat
-          title="The rule, applied to this region"
-          aside="A trade requires at least eight measured reactions and a median larger than the fixed 10 bps round-trip hurdle. Thin cells remain watch items."
-        >
-          <div className="scroll-x">
-            <table className="rule-table" style={{ minWidth: 520 }}>
-              <thead><tr><th className="text-left">market</th><th className="text-right">median</th><th className="text-right">sample</th><th className="text-right">decision</th></tr></thead>
-              <tbody>{story.market_impact.slice(0, 8).map((impact) => (
-                <tr key={impact.ticker}>
-                  <td>{impact.market} <span className="mono text-xs" style={{ color: 'var(--muted)' }}>{impact.ticker}</span></td>
-                  <td className="text-right mono">{impact.expected_return == null ? '—' : `${impact.expected_return >= 0 ? '+' : ''}${(impact.expected_return * 100).toFixed(2)}%`}</td>
-                  <td className="text-right mono">{impact.n}</td>
-                  <td className="text-right">{impact.action} {impact.direction !== 'flat' ? `· ${impact.direction}` : ''}</td>
-                </tr>
-              ))}</tbody>
-            </table>
-          </div>
-          <p className="figure-note">The persisted paper ledger below uses the same fixed pack books and declared cost hurdle; it is a historical walk-forward, not an in-sample curve fit.</p>
-        </Beat>
-      ) : null}
+      {studyStopped && (
+        <p className="figure-note mt-4">
+          The event study is paused ({studyStopped}
+          {diskFree != null ? ` · ${diskFree.toFixed(2)} GB free on the volume` : ''}).
+          Coverage will not grow until the volume has headroom.
+        </p>
+      )}
 
       {/* 1 — THE TRANSMISSION MAP */}
       <Beat
@@ -269,15 +248,15 @@ export default function MarketsPage({ region }: { region: string; onNavigate: (r
                   <li key={e.event_id} className="flex items-baseline gap-3">
                     <span className="mono w-16 shrink-0 text-right" style={{ color: e.abnormal_return >= 0 ? 'var(--accent)' : 'var(--alert)' }}>{signedPct(e.abnormal_return, 1)}</span>
                     <span className="mono w-24 shrink-0" style={{ color: 'var(--muted)' }}>{e.date}</span>
-                    {/* The wire's event names are built FROM the pair
-                        ("Provide aid: United States → Turkey"), so printing
-                        `pair` beside them said it twice on most rows. */}
-                    <span className="truncate">
-                      {e.name}
-                      {e.pair && !e.name.includes(e.pair) ? (
-                        <span style={{ color: 'var(--muted)' }}> · {e.pair}</span>
-                      ) : null}
-                    </span>
+                    <button
+                      type="button"
+                      className="article-link truncate text-left"
+                      onClick={() => onNavigate(
+                        `/case/dynamic?event=${encodeURIComponent(e.event_id)}&region=${encodeURIComponent(region)}`,
+                      )}
+                    >
+                      {e.pair || e.name}
+                    </button>
                     <Chip label={KIND_SHORT[e.kind] ?? e.kind} tone={e.kind.includes('escalation') && e.kind !== 'de-escalation' ? 'bad' : 'muted'} />
                     {e.first_mover && <Chip label="printed first" tone="ink" />}
                   </li>
@@ -359,10 +338,62 @@ export default function MarketsPage({ region }: { region: string; onNavigate: (r
         </Beat>
       )}
 
-      {/* 5 — THE PAPER BOOK */}
+      {/* 4b — WHAT IS STILL IN THE PRICE AFTER THE NEWS IS PUBLIC */}
       <Beat
-        title="The paper book"
-        aside="The frozen call, translated mechanically into $1M of positions and marked to market quarter by quarter. Out of sample by construction: every position is entered after the call that implied it."
+        title="What is still tradeable after the news is public"
+        aside="A measurement, not a blotter. GDELT 1.0 arrives a day late, so session 0 — the impact itself — is already in the price. Drift is sessions 2–3. The Gulf/US weekend gap is a published price the follower has not responded to yet."
+      >
+        {edge === undefined && <Empty>Reading the measured edge…</Empty>}
+        {edge === null && <Empty>{lastFailureFor('/api/trading/edge')?.detail ?? 'the edge measurement did not answer'}</Empty>}
+        {edge && (
+          <>
+            {edge.drift.length ? (
+              <div className="scroll-x">
+                <table className="rule-table" style={{ minWidth: 520 }}>
+                  <thead>
+                    <tr>
+                      <th className="text-left">market</th>
+                      <th className="text-right">sample</th>
+                      <th className="text-right">drift after an up move</th>
+                      <th className="text-right">drift after a down move</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {edge.drift.slice(0, 8).map((row) => {
+                      const up = num(row.drift_after_up)
+                      const down = num(row.drift_after_down)
+                      return (
+                        <tr key={row.market_ticker}>
+                          <td className="mono">{row.market_ticker}</td>
+                          <td className="text-right mono">{row.n}</td>
+                          <td className="text-right mono">{up == null ? '—' : signedPct(up, 2)}</td>
+                          <td className="text-right mono">{down == null ? '—' : signedPct(down, 2)}</td>
+                        </tr>
+                      )
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            ) : <Empty>No ticker has enough paired windows to read a drift.</Empty>}
+            {edge.leadlag && (
+              <p className="figure-note mt-3">
+                {edge.leadlag.leader} leading {edge.leadlag.follower}: correlation{' '}
+                {num(edge.leadlag.correlation) == null ? '—' : num(edge.leadlag.correlation)!.toFixed(2)}
+                {' '}over {count(edge.leadlag.n)} shared events
+                {edge.leadlag.n_leader_moved_first
+                  ? ` · the leader printed first on ${count(edge.leadlag.n_leader_moved_first)}`
+                  : ''}.
+              </p>
+            )}
+            <p className="figure-note">{edge.method}</p>
+          </>
+        )}
+      </Beat>
+
+      {/* 5 — HOW A FUND FOLLOWING THIS INTEL WOULD HAVE MARKED */}
+      <Beat
+        title="How a fund following this intel would have done"
+        aside="Pack-weighted three-year continuation, walked forward: each quarter the frozen call is translated through the pack's books, entered after the cutoff, marked at the next quarter end, 10 bps round-trip, skips recorded. Not a trading product, and not a backtest of the event-impact rule."
       >
         {ledger === undefined && <Empty>Reading the ledger…</Empty>}
         {ledger === null && <Empty>{lastFailureFor('/api/trading/backtest')?.detail ?? 'no paper model for this region'}</Empty>}
@@ -374,6 +405,35 @@ export default function MarketsPage({ region }: { region: string; onNavigate: (r
               { label: 'worst fall from a peak', value: `−${pct(summary.max_drawdown, 1)}`, tone: 'loss', sub: 'peak to trough' },
               { label: 'the standing book', value: forward?.book ? money(forward.book.pnl_usd) : '—', tone: forward?.book ? (forward.book.pnl_usd >= 0 ? 'gain' : 'loss') : 'plain', sub: forward ? `on the call of ${forward.forecast.as_of}` : forward === null ? 'no frozen call' : 'marking…' },
             ]} />
+            {(ledger.skip_reasons?.length ?? 0) > 0 && (
+              <p className="figure-note mt-3">
+                Skipped quarters, grouped:{' '}
+                {ledger.skip_reasons!.map((s) => `${s.reason} (${s.quarters})`).join(' · ')}.
+              </p>
+            )}
+            {rows.length > 1 && (
+              <figure className="mt-4">
+                <EquityCurve rows={rows} notional={summary.notional_usd ?? 1_000_000} width={720} height={140} />
+                <figcaption className="figure-note">
+                  Equity on $1M of paper positions, {summary.first_quarter?.slice(0, 4)}–{summary.last_quarter?.slice(0, 4)}.
+                  A fund following the frozen intel book — not a live blotter.
+                </figcaption>
+              </figure>
+            )}
+            {walk && !walk.pending && walk.recent && (
+              <p className="figure-note">
+                Over the last {walk.recent.years} years this question&rsquo;s skill is{' '}
+                {walk.recent.skill == null ? '—' : walk.recent.skill.toFixed(2)}
+                {walk.recent.observed_rate != null
+                  ? ` against a ${pctWord(walk.recent.observed_rate, 0)} base rate`
+                  : ''}
+                — the call is nearly vacuous in the modern era, which is why the
+                book is not evidence on the harder departure question.
+              </p>
+            )}
+            {(ledger.question || forward?.question) && (
+              <p className="figure-note">{ledger.question ?? forward?.question}</p>
+            )}
             {rows.length > 1 && (
               <div className="mt-6">
                 <div className="kicker mb-1">Fall from the running peak</div>

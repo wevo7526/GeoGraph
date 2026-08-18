@@ -84,7 +84,7 @@ def main() -> None:
         sys.exit(str(exc))
 
     events = runner.archive(graph)
-    if not events:
+    if not events and not args.all:
         kuzu_store.close(graph)
         sys.exit("the graph holds no events — seed first")
 
@@ -96,21 +96,34 @@ def main() -> None:
         if missing:
             kuzu_store.close(graph)
             sys.exit(f"no such event(s) in the graph: {', '.join(sorted(missing))}")
+        all_dates = {e["id"]: event_study.parse_event_date(e["date"]) for e in events}
     elif args.spine:
         chosen = [e for e in events if e["id"] in curated]
         if not chosen:
             kuzu_store.close(graph)
             sys.exit(f"packs/{pack.name} names no event the graph holds — seed first")
+        all_dates = {e["id"]: event_study.parse_event_date(e["date"]) for e in events}
     elif args.all:
-        chosen = runner.select_all(
-            events, curated, min_gdelt_goldstein=args.min_gdelt_goldstein
+        graph_events = [
+            e for e in events
+            if e["id"] in curated or not str(e["id"]).startswith("event:gdelt-")
+        ]
+        all_dates = {
+            e["id"]: event_study.parse_event_date(e["date"]) for e in graph_events
+        }
+        merged, all_dates = runner.add_corpus_wire(
+            graph_events, all_dates, pack,
+            min_gdelt_goldstein=args.min_gdelt_goldstein,
         )
-        excluded = len(events) - len(chosen)
+        chosen = runner.select_all(
+            merged, curated, min_gdelt_goldstein=args.min_gdelt_goldstein,
+        )
+        excluded = len(merged) - len(chosen)
         if excluded:
             print(
                 f"{excluded} GDELT events below the |goldstein| "
                 f">= {args.min_gdelt_goldstein} materiality bar are not measured "
-                "(they remain in the graph and in Head B's baselines)"
+                "(they remain in the corpus; Head B's baselines still fold them)"
             )
     else:
         candidates = {e["id"] for e in pack.marquee_events if e.get("phase0_candidate")}
@@ -122,7 +135,7 @@ def main() -> None:
                 "--event, or run --all."
             )
 
-    all_dates = {e["id"]: event_study.parse_event_date(e["date"]) for e in events}
+        all_dates = {e["id"]: event_study.parse_event_date(e["date"]) for e in events}
 
     try:
         panel = pg_store.connect(settings)
@@ -181,6 +194,7 @@ def main() -> None:
                 time.monotonic() + args.budget_seconds
                 if args.budget_seconds else None
             ),
+            graph_event_ids=runner.graph_mirror_ids(events or chosen),
         )
         if outcome["stopped_early"]:
             print(f"budget spent — {outcome['remaining']} events left for the next run")

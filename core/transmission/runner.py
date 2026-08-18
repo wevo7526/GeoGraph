@@ -148,7 +148,7 @@ def select_all(
     FIRST and then NEWEST FIRST.
 
     The archive arrives ordered by event_time, so a run that exhausts its
-    budget measures 1905 forward and stops — and every event a surface is
+    budget measures the archive floor forward and stops — and every event a surface is
     written around (the case studies, the marquee spine, this decade) sits at
     the far end of that walk. Production had measured 632,586 effects and had
     reached 2003; the front page's own episodes were the last thing it would
@@ -171,11 +171,16 @@ def select_all(
     curated, not by being old — and a market that did not exist at event time
     is a recorded skip either way, so early events are the cheapest to lose.
     """
+    from core import archive as archive_bounds
+
     chosen = [
         e for e in events
-        if not str(e["id"]).startswith("event:gdelt-")
-        or (e["goldstein"] is not None
-            and abs(float(e["goldstein"])) >= min_gdelt_goldstein)
+        if archive_bounds.covers(e.get("date") or e.get("event_time"))
+        and (
+            not str(e["id"]).startswith("event:gdelt-")
+            or (e["goldstein"] is not None
+                and abs(float(e["goldstein"])) >= min_gdelt_goldstein)
+        )
     ]
     # TWO STABLE PASSES, because the sort keys run in opposite directions and
     # a string date cannot be negated inside one key. Date descending first,
@@ -183,6 +188,65 @@ def select_all(
     chosen.sort(key=lambda e: (str(e["date"]), str(e["id"])), reverse=True)
     chosen.sort(key=lambda e: e["id"] not in curated)
     return chosen
+
+
+def graph_mirror_ids(events: list[dict[str, Any]]) -> set[str]:
+    """Events that still get an AFFECTED node in Kuzu — not the GDELT wire.
+
+    The wire lives in the corpus; its measurements live in `event_study_runs`.
+    Mirroring every one into the graph is what filled the 5 GB volume.
+    """
+    return {
+        e["id"] for e in events
+        if not str(e["id"]).startswith("event:gdelt-")
+    }
+
+
+def add_corpus_wire(
+    events: list[dict[str, Any]],
+    dates: dict[str, dt.date],
+    pack: Any,
+    *,
+    min_gdelt_goldstein: float = DEFAULT_MIN_GDELT_GOLDSTEIN,
+) -> tuple[list[dict[str, Any]], dict[str, dt.date]]:
+    """Append measurable corpus rows the graph no longer holds as Event nodes.
+
+    Forecasts, games and the wire page already read the corpus. The study has
+    to as well or deleting the graph's GDELT copy would freeze measurement at
+    the marquee spine.
+    """
+    from core import archive as archive_bounds
+    from core.wire import serving
+
+    out = list(events)
+    out_dates = dict(dates)
+    seen = {e["id"] for e in out}
+    try:
+        stream = serving.iter_rows_of(pack.name)
+    except Exception:  # noqa: BLE001 - no corpus is a graph-only study
+        return out, out_dates
+    for row in stream:
+        goldstein = row.get("goldstein")
+        if not archive_bounds.covers(row.get("event_time")):
+            continue
+        if goldstein is None or abs(float(goldstein)) < min_gdelt_goldstein:
+            continue
+        event_id = str(row["node_id"])
+        if event_id in seen:
+            continue
+        try:
+            parsed = event_study.parse_event_date(row["event_time"])
+        except (TypeError, ValueError):
+            continue
+        seen.add(event_id)
+        out.append({
+            "id": event_id,
+            "date": row["event_time"],
+            "goldstein": goldstein,
+            "name": row.get("name") or "",
+        })
+        out_dates[event_id] = parsed
+    return out, out_dates
 
 
 def effect_source(result: event_study.EffectResult) -> str:
@@ -233,6 +297,8 @@ def measure(
     deadline: float | None = None,
     on_event: Any = None,
     stop_when: Any = None,
+    write_graph: bool | None = None,
+    graph_event_ids: set[str] | None = None,
 ) -> dict[str, Any]:
     """Measure `chosen` against `pack`'s markets; write effects and runs.
 
@@ -248,7 +314,15 @@ def measure(
     slice with time left can still reach the container's limit — and an OOM
     kill mid-write is what left the graph unopenable on 2026-08-17. Kept as a
     callable so this module owes nothing to `core.api`.
+
+    `graph_event_ids` is the set of events that still get an AFFECTED mirror.
+    The GDELT wire lives in the corpus and its measurements live in
+    `event_study_runs`; mirroring every one into Kuzu is what filled the
+    5 GB volume (~2 KB/edge) without adding a fact the panel did not already
+    hold. Curated spine and deep-tier events stay in the graph because the
+    narrated pages hang off those nodes.
     """
+    mirror = WRITE_GRAPH_EFFECTS if write_graph is None else write_graph
     market_node_ids = {m["ticker"]: m["id"] for m in pack.markets}
     overlap = _Overlap(all_dates)
 
@@ -323,8 +397,15 @@ def measure(
             # negligible disk cost, and readers move over separately. Nothing
             # is lost either way: `transmission.rebuild` re-projects the whole
             # table from these same rows whenever a graph copy is wanted.
-            if WRITE_GRAPH_EFFECTS:
+            if mirror:
                 for source_id, group in pending_by_source.items():
+                    if graph_event_ids is not None:
+                        group = [
+                            row for row in group
+                            if row.event_node_id in graph_event_ids
+                        ]
+                    if not group:
+                        continue
                     written += effects_writer.write_effects(
                         graph, group, market_node_ids=market_node_ids,
                         source_id=source_id,
@@ -386,11 +467,17 @@ def measure(
                 market["ticker"], PANEL_FREQUENCY[resolution], start, end
             )
 
+        wire_windows = (
+            ("car_0_3",)
+            if str(event["id"]).startswith("event:gdelt-")
+            else None
+        )
         results, skips = event_study.compute_effects(
             {"node_id": event["id"], "event_time": event["date"]},
             pack.markets,
             prices=prices,
             other_event_dates=overlap.near(event_date),
+            windows=wire_windows,
         )
         if on_event is not None:
             on_event(event, results, skips)
@@ -411,4 +498,5 @@ def measure(
         "stopped_early": stopped_early,
         "stopped_for": stopped_for,
         "remaining": len(chosen) - measured_events,
+        "graph_effects": mirror,
     }

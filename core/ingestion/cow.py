@@ -25,13 +25,14 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from core import archive as archive_bounds
 from core.classifier import escalation
 from core.classifier import typing as event_typing
 from core.graph import kuzu_store
 
-#: The archive opens in 1905 (build-spec section 3). Deep records that END
-#: before it never touch the graph; windows that straddle it are kept whole.
-ARCHIVE_START_YEAR = 1905
+#: Deep records that END before the archive floor never touch the graph;
+#: windows that straddle it are kept whole. Floor is `core.archive` (1972).
+ARCHIVE_START_YEAR = archive_bounds.START_YEAR
 
 #: states2016.csv right-censors at this date — a state "ending" here is a
 #: state still in the system, and its window stays open.

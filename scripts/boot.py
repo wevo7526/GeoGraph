@@ -1639,29 +1639,16 @@ def _free_reclaimable_files() -> dict[str, Any] | None:
     _log(f"volume has {usage['free'] / 2**20:.0f} MB free — reclaiming what is "
          "not data before touching the graph")
     _log("=" * 68)
-    freed = 0
-    removed: list[str] = []
-    # Quarantined tails first: they are the largest thing here that is purely
-    # evidence, and `connect` writes a new one only when an open crashes.
-    for stale in sorted(db_path.parent.glob(f"{db_path.name}.wal.broken-*")):
-        with contextlib.suppress(OSError):
-            size = stale.stat().st_size
-            stale.unlink()
-            freed += size
-            removed.append(stale.name)
-    for stale in sorted(db_path.parent.glob("*.tmp")):
-        with contextlib.suppress(OSError):
-            size = stale.stat().st_size
-            stale.unlink()
-            freed += size
-            removed.append(stale.name)
-    after = kuzu_store.disk_usage(db_path)
+    result = kuzu_store.reclaim_non_data(db_path)
+    removed = result.get("removed") or []
+    freed = int(result.get("freed_bytes") or 0)
+    after = result.get("disk") or {}
     _log(f"reclaimed {freed / 2**20:.0f} MB from {len(removed)} file(s): "
          f"{', '.join(removed) or 'nothing to remove'}")
     if after:
-        _log(f"volume now: {after['free'] / 2**20:.0f} MB free")
+        _log(f"volume now: {after.get('free', 0) / 2**20:.0f} MB free")
     return {"ok": True, "freed_bytes": freed, "removed": removed,
-            "free_after": (after or {}).get("free")}
+            "free_after": after.get("free")}
 
 
 def _drop_affected_if_asked() -> dict[str, Any] | None:

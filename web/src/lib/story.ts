@@ -112,6 +112,25 @@ export function postureClause(posture?: Posture | null): string | null {
   return `${Math.round(posture.share * 100)}% of their ${count(posture.events)} recent exchanges were coercive`
 }
 
+/** Standing, posture, intensity — three questions, one standfirst.
+ *
+ *  WHAT THE PAIR IS is the curated RELATES_TO web. HOW ITS RECORD READS LATELY
+ *  is the coercive share, with the sample. WHERE IT SITS is a departure from
+ *  its own baseline. A fourth ladder (mean Goldstein, `tensionSentence`) used
+ *  to characterise the pair and contradicted the first. */
+export function relationshipStandfirst(opts: {
+  standing?: string | null
+  posture?: string | null
+  intensity?: string | null
+  span?: [string, string] | null
+}): string | null {
+  const bits = [opts.standing, opts.posture, opts.intensity].filter(Boolean) as string[]
+  if (!bits.length) return null
+  const years = opts.span ? ` Over ${opts.span[0].slice(0, 4)}–${opts.span[1].slice(0, 4)}.` : ''
+  const body = bits.map((b, i) => (i === 0 ? capitalise(b) : b)).join('. ')
+  return `${body.replace(/\.$/, '')}.${years}`
+}
+
 /** The word this family's game may use for its headline number — an alliance's
  *  "escalation probability" is a statement about friction between partners. */
 export function headlineWord(family?: Family | null): string {
@@ -326,7 +345,6 @@ export function dyadCall(sol: DyadSolution, concept: ConceptSolution): Call {
 export function marketsLede(
   story: MarketsStory,
   label: string,
-  book?: { total_return: number; first_quarter?: string; max_drawdown: number } | null,
 ): Lede | null {
   const headlined = story.markets.filter((m) => m.headline)
   if (!headlined.length) return null
@@ -354,13 +372,56 @@ export function marketsLede(
     return `${m.name}, ${signedPct(h.median, 1)} typically, ${signedPct(h.p25, 1)} to ${signedPct(h.p75, 1)} across the middle half`
   })
   const sample = `Across ${count(cell.n)} sharp escalations${sinceYear ? ` since ${sinceYear}` : ''}: ${parts.join('; ')}.`
-  const paper = book
-    ? ` The paper book that trades the frozen call is ${book.total_return >= 0 ? 'up' : 'down'} ${Math.abs(book.total_return * 100).toFixed(1)}%${
-        book.first_quarter ? ` since ${book.first_quarter.slice(0, 4)}` : ''
-      }, with a ${(book.max_drawdown * 100).toFixed(0)}% drawdown on the way.`
-    : ''
 
-  return { headline, support: sample + paper, asOf: story.as_of ?? null }
+  const cov = story.coverage?.summary
+  const coverage =
+    cov && cov.events
+      ? ` The engine has measured ${pctWord(cov.share_measured, 0)} of this region's coded events.`
+      : ''
+
+  return { headline, support: sample + coverage, asOf: story.as_of ?? null }
+}
+
+/** What happened, in a reader's words — never the CAMEO string GDELT ships.
+ *
+ *  `item.name` is machine vocabulary ("Engage in negotiation: Israel → Egypt")
+ *  and the globe already refuses to render it. The act comes from `quad_class`,
+ *  the only named field that is a KIND of interaction rather than a codebook
+ *  label; the actors come from the resolved names. */
+const QUAD_ACT: Record<string, string> = {
+  verbal_cooperation: 'spoke with',
+  material_cooperation: 'cooperated with',
+  verbal_conflict: 'spoke against',
+  material_conflict: 'used force toward',
+}
+
+export function wireHeadline(item: {
+  initiator_name?: string | null
+  target_name?: string | null
+  quad_class?: string | null
+}): string {
+  const left = item.initiator_name?.trim() || null
+  const right = item.target_name?.trim() || null
+  const act = QUAD_ACT[item.quad_class ?? ''] ?? 'interacted with'
+  if (left && right) return `${left} ${act} ${right}`
+  if (left) return `${left} ${act} an unnamed counterpart`
+  return 'A coded event between unnamed actors'
+}
+
+/** The live wire's implied kind, as a noun phrase — not the raw token. */
+export function wireKindWord(kind: string | null | undefined): string {
+  switch (kind) {
+    case 'sharp_escalation':
+      return 'a sharp escalation'
+    case 'escalation':
+      return 'an escalation'
+    case 'de-escalation':
+      return 'a step down'
+    case 'stable':
+      return 'routine traffic'
+    default:
+      return 'coded traffic'
+  }
 }
 
 /** The wire's one-line read of a single event.
@@ -408,7 +469,7 @@ export function wireRead(item: WireItem): string {
   const way =
     item.escalation_direction === 'escalating'
       ? `${off.toFixed(1)} points more hostile than ${theirs} usual`
-      : item.escalation_direction === 'deescalating'
+      : item.escalation_direction === 'deescalating' || item.escalation_direction === 'de-escalating'
         ? `${off.toFixed(1)} points calmer than ${theirs} usual`
         : `${off.toFixed(1)} points from ${theirs} usual level`
   return pair ? `A real departure for ${pair} \u2014 ${way}.` : `A real departure \u2014 ${way}.`
@@ -425,10 +486,14 @@ export function wireLede(feed: WireFeed, label: string): Lede | null {
       : departures === 1
         ? `One pair in ${label} has stepped outside its usual band.`
         : `${count(departures)} pairs in ${label} have stepped outside their usual band.`
+  const cap = feed.truncated
+    ? ' The newest sixty are shown; the archive holds more.'
+    : ''
   const support =
     `The newest ${count(feed.rows.length)} coded events, to ${newest}. ` +
     `A departure means at least ${feed.departure_points} Goldstein points from that ` +
     `pair\u2019s own running baseline \u2014 not from an absolute scale, because a score ` +
-    `that is routine for a rivalry is a rupture for an alliance.`
+    `that is routine for a rivalry is a rupture for an alliance.` +
+    cap
   return { headline, support, asOf: newest }
 }

@@ -32,6 +32,7 @@ from typing import Any
 
 from core import packs
 from core import settings as settings_module
+from core import snapshot
 from core.ingestion import harvest as harvest_module
 from core.transmission import event_study, runner
 from core.wire import corpus
@@ -106,10 +107,10 @@ def _archive(conn: Any) -> tuple[list[dict[str, Any]], dict[str, Any]]:
 
 
 def forget_wire_ids() -> None:
-    """Drop the wire's per-pack "already in the graph" sets — a few hundred
-    thousand strings each, rebuilt by one query. Called under memory
-    pressure."""
-    _wire_seen.clear()
+    """Drop the wire job's process-lifetime flags. Called under memory
+    pressure so the next tick re-merges roster dyads if it has to."""
+    global _dyads_ensured
+    _dyads_ensured = False
 
 
 def forget_archive() -> None:
@@ -193,18 +194,20 @@ def study(conn: Any, deadline: float) -> dict[str, Any]:
     from core.graph import kuzu_store as _store
 
     graph_path = settings_module.load().kuzu_db_path
-    # THE DISK GUARD ONLY BINDS A STUDY THAT WRITES THE GRAPH. With the
-    # AFFECTED mirror off (GEOGRAPH_GRAPH_EFFECTS=0) a slice writes rows to
-    # Postgres and adds essentially nothing to the volume, so refusing to run
-    # on a full disk would stop the archive converging for a reason that no
-    # longer applies — which is exactly the state the volume was in when the
-    # mirror was measured as the thing filling it.
-    if runner.WRITE_GRAPH_EFFECTS and _store.disk_is_tight(graph_path):
-        return {"stopped": "volume nearly full", "disk": _store.disk_usage(graph_path)}
-    if _PREFER_CHILD:
+    # THE 5 GB GRAPH HOLDS THE KNOWLEDGE GRAPH — actors, dyads, RELATES_TO
+    # and the AFFECTED edges already written. New AFFECTED edges are a mirror
+    # of the panel and cost ~2 KB each, which is what filled the volume.
+    # When that volume is at its floor we still MEASURE into the 5 GB
+    # panel; we just stop adding edges. Stopping the study entirely wasted
+    # the panel and froze coverage at whatever AFFECTED already held.
+    write_graph = runner.WRITE_GRAPH_EFFECTS and not _store.disk_is_tight(graph_path)
+    # A child is the AFFECTED-writer fallback. Postgres-only has nothing
+    # for it to do, and a child that still honours WRITE_GRAPH_EFFECTS
+    # would try to grow a full volume.
+    if _PREFER_CHILD and write_graph:
         return _study_child_plan(deadline)
     try:
-        return _study_in_process(conn, deadline)
+        return _study_in_process(conn, deadline, write_graph=write_graph)
     except RuntimeError as exc:
         if _POOL_EXHAUSTED in str(exc):
             # A RESOURCE LIMIT, NOT A BUG. Kuzu could not get a page for the
@@ -285,7 +288,33 @@ def _study_child_plan(deadline: float) -> dict[str, Any]:
     }
 
 
-def _study_in_process(conn: Any, deadline: float) -> dict[str, Any]:
+def _pack_study_events(
+    conn: Any, pack: Any,
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    """Candidates for one pack: graph spine/deep-tier PLUS the corpus wire.
+
+    The graph no longer holds a GDELT copy (that copy is what filled the
+    volume). Forecasts and the wire page already read the corpus; the study
+    has to as well or trimming the graph would freeze measurement at the
+    marquee spine.
+    """
+    curated = runner.curated_event_ids(pack)
+    graph_events, graph_dates = _archive(conn)
+    events = [
+        e for e in graph_events
+        if e["id"] in curated or not str(e["id"]).startswith("event:gdelt-")
+    ]
+    dates = {e["id"]: graph_dates[e["id"]] for e in events if e["id"] in graph_dates}
+    # Frozen: the corpus is weights. Measuring new GDELT 1.0 days into the
+    # panel would grow the transmission map the live overlay is priced against.
+    if not snapshot.frozen():
+        events, dates = runner.add_corpus_wire(events, dates, pack)
+    return runner.select_all(events, curated), dates
+
+
+def _study_in_process(
+    conn: Any, deadline: float, write_graph: bool = True,
+) -> dict[str, Any]:
     from core.graph import kuzu_store as _store
     from core.panel import pg_store
 
@@ -297,27 +326,22 @@ def _study_in_process(conn: Any, deadline: float) -> dict[str, Any]:
     if panel is None:
         return {"skipped": "no panel"}
     try:
-        events, all_dates = _archive(conn)
-        if not events:
-            return {"skipped": "empty graph"}
-
-        backlog: list[tuple[int, str, list[dict[str, Any]], Any]] = []
+        backlog: list[tuple[int, str, list[dict[str, Any]], Any, dict[str, Any]]] = []
         for name in names:
             pack = packs.load(name)
-            curated = runner.curated_event_ids(pack)
-            candidates = runner.select_all(events, curated)
+            candidates, dates = _pack_study_events(conn, pack)
             measured = pg_store.measured_events(
                 panel, [m["ticker"] for m in pack.markets]
             )
             left = [e for e in candidates if e["id"] not in measured]
-            backlog.append((len(left), name, left, pack))
+            backlog.append((len(left), name, left, pack, dates))
         backlog.sort(key=lambda item: -item[0])
 
         remaining_total = sum(item[0] for item in backlog)
         if not remaining_total:
             return {"measured": 0, "remaining": 0, "note": "archive fully measured"}
 
-        count, name, left, pack = backlog[0]
+        count, name, left, pack, dates = backlog[0]
         if time.monotonic() >= deadline:
             return {"skipped": "no time in this slice", "remaining": remaining_total}
         from core.api.jobs import memory_is_tight as jobs_tight
@@ -329,22 +353,21 @@ def _study_in_process(conn: Any, deadline: float) -> dict[str, Any]:
             killed on 2026-08-17, and the kill is what left the graph
             unopenable.
 
-            Disk: `disk_is_tight` was checked only at job ENTRY, so a slice
-            that started above the 400 MB floor could cross it and keep going
-            — which is how the study filled a 5 GB volume to ZERO bytes free.
-            At zero, Kuzu cannot write a twelve-byte log record, which means it
-            cannot even DROP a table to free itself; the only ways out are a
-            plan upgrade or a full rebuild. Checking it per event boundary
-            costs one statvfs and removes the whole failure mode.
+            Disk: when this slice is still mirroring AFFECTED into the graph,
+            stop at the 400 MB floor rather than filling to zero. A later tick
+            continues into Postgres with `write_graph=False`. Memory still
+            always stops the slice — that kill is uncatchable.
             """
             if jobs_tight():
                 return True
-            return runner.WRITE_GRAPH_EFFECTS and _store.disk_is_tight(graph_path)
+            return write_graph and _store.disk_is_tight(graph_path)
 
+        slice_events = left[:_events_per_tick]
         outcome = runner.measure(
-            conn, panel, pack, left[:_events_per_tick],
-            all_dates=all_dates, deadline=deadline,
-            stop_when=out_of_room,
+            conn, panel, pack, slice_events,
+            all_dates=dates, deadline=deadline,
+            stop_when=out_of_room, write_graph=write_graph,
+            graph_event_ids=runner.graph_mirror_ids(slice_events),
         )
         return {
             "pack": name,
@@ -353,7 +376,8 @@ def _study_in_process(conn: Any, deadline: float) -> dict[str, Any]:
             "stopped_for": outcome.get("stopped_for"),
             "remaining_in_pack": count - outcome["events"],
             "remaining_total": remaining_total - outcome["events"],
-            "backlog": {n: c for c, n, _, _ in backlog},
+            "backlog": {n: c for c, n, *_ in backlog},
+            "graph_effects": write_graph,
         }
     finally:
         panel.close()
@@ -368,7 +392,8 @@ def _study_in_process(conn: Any, deadline: float) -> dict[str, Any]:
 REFILL_CHUNK_EVENTS = 200
 
 #: Left beside the graph by a reset: "this graph needs its measured effects
-#: projected back from the panel once the wire's lean copy is in".
+#: projected back from the panel once the wire job has marked the roster
+#: ready (GDELT Event nodes are no longer copied into the graph).
 REFILL_PENDING = ".affected-refill-pending"
 
 #: Panel rows a refill tick may hold at once. The projection writes ~200
@@ -399,13 +424,13 @@ def refill(conn: Any, deadline: float) -> dict[str, Any]:
     pending_path = graph_path.with_name(REFILL_PENDING)
     if not marker_path.exists():
         # A rebuilt graph asks for a refill by leaving `REFILL_PENDING`; it
-        # can only start once the wire's lean copy is in, because the panel's
-        # rows project onto Event nodes and an event that is not there yet
-        # would be dropped as "no longer in the graph".
+        # can only start once roster dyads exist and the wire job has marked
+        # complete (it no longer copies GDELT into Kuzu — refill projects
+        # onto spine/deep-tier Event nodes only).
         if not pending_path.exists():
             return {"note": "no refill pending"}
         if not wire_complete():
-            return {"waiting": "the wire's lean copy is still loading"}
+            return {"waiting": "waiting for the wire job to mark the roster ready"}
         rebuild.Marker(marker_path).save()
         with contextlib.suppress(OSError):
             pending_path.unlink()
@@ -447,29 +472,40 @@ def refill(conn: Any, deadline: float) -> dict[str, Any]:
 GAMES_REPRICE_GROWTH = 0.05
 
 
-def games_inputs(conn: Any) -> dict[str, Any]:
-    """What a region solve READS from the graph, as cheap facets.
+def games_inputs(conn: Any, panel: Any | None = None) -> dict[str, Any]:
+    """What a region solve READS, as cheap facets.
 
     THE FINGERPRINT COVERS WHAT THE SOLVE READS — the lesson the deep-tier
     guard taught on 2026-08-16. The persisted maps were re-solved on a
     PAYLOAD_VERSION change and on nothing else, so correcting a relationship
     (US-Israel re-dated, US-Iran declared) reached the game page only through
     a code deploy that bumped the version by hand. Now: the RELATES_TO web
-    (the standing every classification and chip reads), the AFFECTED count
-    (the pricing), and the frozen model (the tilt).
+    (the standing every classification and chip reads), the measured-run
+    count (the pricing — panel first, graph AFFECTED as fallback), and the
+    frozen model (the tilt).
     """
     from core.games import scenarios
     from core.graph import kuzu_store
+    from core.panel import pg_store
 
     def _one(query: str) -> Any:
         rows = kuzu_store.query(conn, query)
         return rows[0]["n"] if rows else None
 
+    affected: Any = None
+    if panel is not None:
+        try:
+            affected = pg_store.computed_run_count(panel)
+        except Exception:  # noqa: BLE001 - fall back to the graph copy
+            affected = None
+    if affected is None:
+        affected = _one("MATCH ()-[a:AFFECTED]->() RETURN count(a) AS n")
+
     return {
         "version": str(scenarios.PAYLOAD_VERSION),
         "relates": _one("MATCH ()-[r:RELATES_TO]->() RETURN count(r) AS n"),
         "relates_latest": _one("MATCH ()-[r:RELATES_TO]->() RETURN max(r.valid_from) AS n"),
-        "affected": _one("MATCH ()-[a:AFFECTED]->() RETURN count(a) AS n"),
+        "affected": affected,
         "model_frozen": _one(
             "MATCH (f:Forecast) WHERE f.mode = 'model' RETURN max(f.generated_at) AS n"
         ),
@@ -492,6 +528,11 @@ def games_stale(stored: dict[str, Any] | None, current: dict[str, Any]) -> str |
     for key in ("version", "relates", "relates_latest", "model_frozen"):
         if was.get(key) != current.get(key):
             return f"{key} moved ({was.get(key)!r} -> {current.get(key)!r})"
+    if snapshot.frozen():
+        before_live, now_live = was.get("live"), current.get("live")
+        if now_live and before_live != now_live:
+            return f"live export moved {before_live!r} -> {now_live!r}"
+        return None
     before, now = was.get("affected"), current.get("affected")
     if (isinstance(before, int) and isinstance(now, int) and before > 0
             and abs(now - before) / before >= GAMES_REPRICE_GROWTH):
@@ -505,13 +546,14 @@ def games(conn: Any, deadline: float) -> dict[str, Any]:
     STALE is decided by `games_stale` over `games_inputs`: no row, a different
     `PAYLOAD_VERSION` (the reader would reject it and the endpoint would solve
     live on every request), a moved RELATES_TO web, a re-frozen model, or
-    AFFECTED grown past the re-price threshold. Nothing else triggers a solve
-    — a re-solve costs ~70s and produces the same numbers from the same inputs.
+    AFFECTED grown past the re-price threshold. When the snapshot is frozen,
+    AFFECTED is weights and the 15-minute export stamp is what moved.
     """
     from core.games import context as context_module
     from core.games import scenarios
     from core.games import solve as solve_module
     from core.panel import pg_store
+    from core.wire import live as live_overlay
 
     panel = _panel()
     if panel is None:
@@ -519,7 +561,15 @@ def games(conn: Any, deadline: float) -> dict[str, Any]:
     solved_now: list[dict[str, Any]] = []
     try:
         pg_store.apply_schema(panel)
-        current = games_inputs(conn)
+        current = games_inputs(conn, panel)
+        if snapshot.frozen():
+            try:
+                live_overlay.refresh_all()
+            except Exception:  # noqa: BLE001 - a down feed must not skip the job
+                pass
+            stamp = live_overlay.cached_published()
+            if stamp:
+                current = {**current, "live": stamp}
         for name in _pack_names():
             if time.monotonic() >= deadline:
                 return {"solved": solved_now, "skipped": "slice spent"}
@@ -559,235 +609,105 @@ def games(conn: Any, deadline: float) -> dict[str, Any]:
         panel.close()
 
 
-# ── the wire, into the graph — the LEAN copy ───────────────────────────────
+# ── the wire: corpus is the store; the graph keeps the roster ──────────────
 
 
-#: The materiality bar for the GRAPH's copy of the wire — the same bar the
-#: transmission engine measures at (`runner.DEFAULT_MIN_GDELT_GOLDSTEIN`). An
-#: event under it is never measured, so it carries no AFFECTED edge and no
-#: surface reads it off the graph: the explorer, the panel, the games and the
-#: forecasts all read the CORPUS. It stays in the corpus; it does not need a
-#: node. Measured 2026-08-16: 1.07M wire events in the graph took the Kuzu
-#: file to 4.75 GB of a 5 GB volume and every write died on "No space left on
-#: device"; ~a third of them clear the bar.
+#: The materiality bar the study uses for corpus wire events — the same bar
+#: the transmission engine always measured at. An event under it is never
+#: measured. The GRAPH no longer holds a copy of these events: putting them
+#: in Kuzu (then AFFECTED onto them at ~2 KB/edge) is what filled the 5 GB
+#: volume. Forecasts, games, hostility and the wire page already read the
+#: corpus; the study writes measurements into Postgres.
 GRAPH_MIN_GOLDSTEIN = float(os.getenv("GEOGRAPH_GRAPH_MIN_GOLDSTEIN", "7.0"))
 
-#: Events per write inside the API. Small — every statement is one a reader
-#: waits behind — and the CREATE fast path makes small batches cheap.
-WIRE_BATCH_EVENTS = int(os.getenv("GEOGRAPH_WIRE_BATCH_EVENTS", "500"))
-
-#: Per (pack) memo of the wire event ids the graph already holds. Built once
-#: per pack — a set of a few hundred thousand strings — and grown as this
-#: process writes, because rebuilding it per tick would cost more than the
-#: loading.
-_wire_seen: dict[str, set[str]] = {}
 _wire_done: set[str] = set()
+_dyads_ensured: bool = False
 
 
 def _lean_marker(pack_name: str) -> Any:
-    """THE PACK IS THE UNIT OF COMPLETENESS for the lean copy: one marker per
-    lens beside the graph, so a rebuilt volume loses both together."""
+    """Per-pack marker the refill used to wait on.
+
+    Kept so a volume that already has these files still reads as complete,
+    and so a reset's `.affected-refill-pending` is not blocked forever now
+    that the wire job no longer copies GDELT into Kuzu.
+    """
     root = settings_module.load().kuzu_db_path.parent / ".gdelt-loaded"
     return root / f"{pack_name}-lean.done"
 
 
 def wire_complete() -> bool:
-    """Every installed lens's lean copy is in the graph — what the refill
-    waits for, because it can only project effects onto events that exist."""
+    """Roster dyads are in and the refill is allowed to project onto the
+    spine. The corpus is the wire; there is no graph copy to wait for."""
     from core.wire import corpus
 
     return all(_lean_marker(name).exists() for name in corpus.installed())
 
 
 def measurable(row: dict[str, Any]) -> bool:
-    """Does this wire event clear the graph's bar?"""
+    """Does this wire event clear the study's bar and the archive floor?"""
+    from core import archive as archive_bounds
+
     goldstein = row.get("goldstein")
-    return goldstein is not None and abs(float(goldstein)) >= GRAPH_MIN_GOLDSTEIN
+    return (
+        archive_bounds.covers(row.get("event_time"))
+        and goldstein is not None
+        and abs(float(goldstein)) >= GRAPH_MIN_GOLDSTEIN
+    )
 
 
 def wire(conn: Any, deadline: float) -> dict[str, Any]:
-    """Project the SCORED corpus onto the graph — measurable events only.
+    """Keep roster Dyad nodes current. The corpus IS the wire.
 
-    THE GRAPH COPY OF THE WIRE IS A PROJECTION OF THE CORPUS, not a second
-    load. The corpus is the wire, parsed once per process and scored by Head B
-    over every dyad's COMPLETE record; the graph needs a node only for an
-    event the transmission engine can measure (the materiality bar), and it
-    needs that node to carry the escalation coding the corpus already
-    computed — re-folding Head B over the graph's filtered record would give
-    a different, wrong baseline. So each event lands with its
-    `escalation_direction / magnitude / baseline` from the corpus row, its
-    Dyad node and OF_DYAD edge (the rescore job never has to touch it), and
-    its INITIATED_BY / DIRECTED_AT / DERIVED_FROM edges CREATEd (the ids are
-    read off the graph first, so nothing merges against an actor's or the
-    source's adjacency list — the scan that made the old loader 145 events/s).
-
-    Idempotent and resumable: ids already in the graph are skipped; a pack is
-    marked done when every measurable id is held. Stops at its deadline, on
-    memory pressure, and on a full volume — a write that meets a full disk
-    dies mid-transaction, which is how the container restart-looped on
-    2026-08-16.
+    Projecting GDELT Event nodes into Kuzu — and then AFFECTED onto them —
+    is what filled the 5 GB volume with a 2 KB/edge duplicate of
+    `event_study_runs`. Forecasts, games, hostility and the wire page
+    already read the corpus. The study measures corpus rows into Postgres;
+    only spine and deep-tier events keep a graph node and an AFFECTED
+    mirror. This job still MERGEs the declared pairs (tens of nodes) and
+    writes the lean-complete markers so a pending refill is not stranded.
     """
-    from core.api.jobs import memory_is_tight as jobs_tight
-    from core.classifier import escalation
-    from core.graph import kuzu_store
-    from core.ingestion import gdelt
-    from core.wire import corpus, serving
+    del deadline
+    from core.wire import corpus
 
-    graph_path = settings_module.load().kuzu_db_path
-    names = [n for n in corpus.installed() if n not in _wire_done]
-    if not names:
-        return {"note": "every pack's lean wire is in the graph"}
-
-    for name in names:
-        if _lean_marker(name).exists():
-            _wire_done.add(name)
-            continue
-        # CHECKED BEFORE THE SETUP, not only inside the write loop. Loading a
-        # pack's corpus lens and reading back the ids it already holds is the
-        # peak of this job, and it happens before the first batch — so a guard
-        # that only runs between batches watches the cheap half.
-        if jobs_tight():
-            return {"pack": name, "skipped": "paused for memory"}
-        pack = packs.load(name)
-        seen = _wire_seen.get(name)
-        if seen is None:
-            # AS A SET, NEVER AS ROWS. This asks for every gdelt event id the
-            # pack already holds — hundreds of thousands — and `query` would
-            # build a dict for each one on the way to a set of strings. That
-            # transient is a large part of what took the container over its
-            # 8 GB limit on 2026-08-17: the kill landed as this job started,
-            # twice, and the WAL it left behind made the graph unopenable.
-            seen = kuzu_store.query_id_set(
-                conn,
-                "MATCH (e:Event) WHERE e.region_pack = $pack "
-                "AND starts_with(e.node_id, 'event:gdelt-') "
-                "RETURN e.node_id AS id",
-                {"pack": name},
-            )
-            _wire_seen[name] = seen
-
-        names_by_id = {str(a["id"]): str(a["name"]) for a in pack.actors}
-        kuzu_store.merge_nodes(conn, "Source", [gdelt._SOURCE_META])
-        written = 0
-        measured = 0
-        batch: list[dict[str, Any]] = []
-
-        # STREAMED, NOT MATERIALISED. This used to build the pack's whole lens
-        # as dicts, filter it into a second list, and only then start writing —
-        # and on 2026-08-17 that took the container from ~4 GB to its 8 GB
-        # ceiling within four seconds of "job: wire starting", four lives in a
-        # row, ending in a CRASHED deployment. Only a batch is ever resident
-        # now, so this job's cost is its batch size rather than its pack's size.
-        for row in serving.iter_rows_of(name):
-            if not measurable(row):
-                continue
-            measured += 1
-            if str(row["node_id"]) in seen:
-                continue
-            batch.append(row)
-            if len(batch) < WIRE_BATCH_EVENTS:
-                continue
-            if kuzu_store.disk_is_tight(graph_path):
-                return {"pack": name, "written": written, "held": len(seen),
-                        "stopped": "volume nearly full",
-                        "disk": kuzu_store.disk_usage(graph_path)}
-            written += _write_lean_batch(conn, batch, name, names_by_id, escalation)
-            for row in batch:
-                seen.add(str(row["node_id"]))
-            batch = []
-            # Checked AFTER the write, so a stop never strands a written batch
-            # outside `seen` — the ids are this job's resume point.
-            if time.monotonic() >= deadline or jobs_tight():
-                return {"pack": name, "written": written, "held": len(seen),
-                        "stopped_early": True}
-        if batch:
-            # The trailing partial batch takes the same guard as every full
-            # one — and it matters more, because the line after it MARKS THE
-            # PACK COMPLETE. A batch lost to a full volume here would be a
-            # pack recorded as fully loaded while short of its last rows.
-            if kuzu_store.disk_is_tight(graph_path):
-                return {"pack": name, "written": written, "held": len(seen),
-                        "stopped": "volume nearly full",
-                        "disk": kuzu_store.disk_usage(graph_path)}
-            written += _write_lean_batch(conn, batch, name, names_by_id, escalation)
-            for row in batch:
-                seen.add(str(row["node_id"]))
-        _mark(_lean_marker(name))
+    written = _ensure_roster_dyads(conn)
+    marked: list[str] = []
+    for name in corpus.installed():
+        if not _lean_marker(name).exists():
+            _mark(_lean_marker(name))
+            marked.append(name)
         _wire_done.add(name)
-        return {"pack": name, "written": written, "held": len(seen),
-                "measurable": measured, "complete": True}
-    return {"note": "every pack's lean wire is in the graph"}
+    if not written and not marked:
+        return {"note": "roster dyads current; wire lives in the corpus"}
+    return {"dyads": written, "marked_complete": marked}
+
+
+def _ensure_roster_dyads(conn: Any) -> int:
+    """Merge a Dyad node for every declared pack pair. Once per process.
+
+    MERGE by node_id, and the skeleton omits EWMA slots so a re-merge cannot
+    wipe Head B's baseline.
+    """
+    global _dyads_ensured
+    from core.graph import kuzu_store
+    from core.wire import corpus
+
+    if _dyads_ensured:
+        return 0
+    written = 0
+    for name in corpus.installed():
+        rows = packs.load(name).dyad_nodes()
+        if rows:
+            written += kuzu_store.merge_nodes(conn, "Dyad", rows)
+    _dyads_ensured = True
+    return written
 
 
 def _mark(marker: Any) -> None:
     try:
         marker.parent.mkdir(parents=True, exist_ok=True)
-        marker.write_text("lean", encoding="utf-8")
+        marker.write_text("corpus", encoding="utf-8")
     except OSError:  # a read-only volume must not fail the loop
         pass
-
-
-def _write_lean_batch(
-    conn: Any, batch: list[dict[str, Any]], pack_name: str,
-    names_by_id: dict[str, str], escalation: Any,
-) -> int:
-    """One batch of scored corpus rows → Event + Dyad nodes, four edge kinds."""
-    from core.graph import kuzu_store
-    from core.ingestion import gdelt
-
-    events: list[dict[str, Any]] = []
-    dyads: dict[str, dict[str, Any]] = {}
-    initiated: list[dict[str, Any]] = []
-    directed: list[dict[str, Any]] = []
-    derived: list[dict[str, Any]] = []
-    of_dyad: list[dict[str, Any]] = []
-    for row in batch:
-        event_id = str(row["node_id"])
-        events.append({
-            "node_id": event_id,
-            "name": row.get("name") or "",
-            "event_time": row["event_time"],
-            "action_cameo_code": row.get("cameo_code") or "",
-            "goldstein": row.get("goldstein"),
-            "quad_class": row.get("quad_class") or "",
-            "region_pack": pack_name,
-            "fidelity_tier": row.get("fidelity_tier") or "modern_coded",
-            "temporal_resolution": row.get("temporal_resolution") or "day",
-            "source_scale": row.get("source_scale") or "goldstein",
-            "escalation_direction": row.get("escalation_direction") or "",
-            "escalation_magnitude": row.get("escalation_magnitude"),
-            "escalation_baseline": row.get("escalation_baseline"),
-        })
-        dyad_id = str(row["dyad_id"])
-        a, b = sorted((str(row["initiator_id"]), str(row["target_id"])))
-        # The Dyad's standing baseline: the tracker's state after THIS row —
-        # the last row of the batch wins, in time order, so it is the standing
-        # baseline as of the newest event written.
-        dyads[dyad_id] = {
-            "node_id": dyad_id,
-            "name": f"{names_by_id.get(a, a)}–{names_by_id.get(b, b)}",
-            "actor_a_id": a, "actor_b_id": b,
-            "ewma_baseline": (
-                escalation.update_baseline(row["escalation_baseline"], float(row["goldstein"]))
-                if row.get("escalation_baseline") is not None and row.get("goldstein") is not None
-                else None
-            ),
-            "ewma_as_of": row["event_time"],
-        }
-        initiated.append({"src": event_id, "dst": str(row["initiator_id"]),
-                          "source_id": gdelt.SOURCE_GDELT})
-        directed.append({"src": event_id, "dst": str(row["target_id"]),
-                         "source_id": gdelt.SOURCE_GDELT})
-        derived.append({"src": event_id, "dst": gdelt.SOURCE_GDELT})
-        of_dyad.append({"src": event_id, "dst": dyad_id})
-    kuzu_store.merge_nodes(conn, "Event", events)
-    # A Dyad node the rescore or an earlier batch already wrote keeps its
-    # newer standing: MERGE by id, SET what this batch knows.
-    kuzu_store.merge_nodes(conn, "Dyad", list(dyads.values()))
-    for rel, rows in (("INITIATED_BY", initiated), ("DIRECTED_AT", directed),
-                      ("DERIVED_FROM", derived), ("OF_DYAD", of_dyad)):
-        kuzu_store.write_edges(conn, rel, rows, check_existing=False)
-    return len(events)
 
 
 # ── the scoreboard, warmed ─────────────────────────────────────────────────
@@ -1115,7 +1035,8 @@ _markets_at: dict[str, int] = {}
 
 def markets(conn: Any, deadline: float) -> dict[str, Any]:
     """Rebuild each region's markets story (core/reasoning/markets.py) and
-    persist it, when AFFECTED has moved enough since the last build."""
+    persist it, when the panel's measured-run count has moved enough since
+    the last build."""
     from core.games import context as context_module
     from core.games import duration as duration_module
     from core.games import pricing as pricing_module
@@ -1126,11 +1047,14 @@ def markets(conn: Any, deadline: float) -> dict[str, Any]:
     from core.reasoning import impact
     from core.reasoning import markets as markets_module
 
-    rows = kuzu_store.query(conn, "MATCH ()-[a:AFFECTED]->() RETURN count(a) AS n")
-    affected = int(rows[0]["n"]) if rows else 0
     panel = _panel()
     if panel is None:
         return {"skipped": "no panel"}
+    try:
+        affected = pg_store.computed_run_count(panel)
+    except Exception:  # noqa: BLE001 - fall back to the graph copy
+        rows = kuzu_store.query(conn, "MATCH ()-[a:AFFECTED]->() RETURN count(a) AS n")
+        affected = int(rows[0]["n"]) if rows else 0
     done: list[str] = []
     try:
         pg_store.apply_schema(panel)
@@ -1169,6 +1093,7 @@ def markets(conn: Any, deadline: float) -> dict[str, Any]:
                 conn, pack, game_map=game_map, duration=duration,
                 flows=[f for f in flows if str(f["actor_id"]) in fund_ids],
                 coverage=coverage, as_of=as_of, dyad_names=dyad_names,
+                panel=panel,
             )
             pg_store.record_market_story(panel, name, payload)
             _markets_at[name] = affected
@@ -1269,6 +1194,11 @@ def harvest(conn: Any, deadline: float) -> dict[str, Any]:
     day it was in.
     """
     del conn  # deliberately no graph access
+    if snapshot.frozen():
+        return {
+            "skipped": "snapshot frozen — live intake is GDELT 2.0",
+            "weights": "corpus",
+        }
     out = harvest_module.harvest_dir()
     if out is None:
         return {"skipped": "GEOGRAPH_HARVEST_DIR is not set — harvesting is off"}
@@ -1433,3 +1363,162 @@ def counts(conn: Any, deadline: float) -> dict[str, Any]:
         "events": out["nodes"].get("Event"),
         "affected": out["edges"].get("AFFECTED"),
     }
+
+
+#: Events a sensor tick may update. Each call is several graph statements
+#: (effects, actors, prior estimate, write) so the cap is small; the watermark
+#: makes the next tick resume.
+SENSOR_EVENTS_PER_TICK = int(os.getenv("GEOGRAPH_SENSOR_EVENTS_PER_TICK", "20"))
+SENSOR_WATERMARK = ".sensor-watermark"
+
+
+def sensor(conn: Any, deadline: float) -> dict[str, Any]:
+    """Update resolve estimates from REALIZED AFFECTED edges only.
+
+    Spec §4: the market-as-sensor loop is powered only by measured outcomes,
+    never by the model's own predictions. The library existed and was tested;
+    nothing in the job loop called it, so production resolve estimates never
+    moved after seeding. Watermarked by event_time so a slice is resumable
+    and a re-run does not double-count (each update reads the prior mean).
+    """
+    from core import archive as archive_bounds
+    from core.graph import kuzu_store
+    from core.reasoning import sensor_loop
+
+    graph_path = settings_module.load().kuzu_db_path
+    if kuzu_store.disk_is_tight(graph_path):
+        return {"stopped": "volume nearly full", "disk": kuzu_store.disk_usage(graph_path)}
+
+    mark_path = graph_path.parent / SENSOR_WATERMARK
+    last = archive_bounds.START
+    if mark_path.exists():
+        last = mark_path.read_text(encoding="utf-8").strip() or last
+
+    # Spine events still carry AFFECTED. GDELT measurements live in the panel
+    # after the graph copy of the wire is retired, so the corpus window after
+    # the watermark is the other half of the candidate set.
+    rows = kuzu_store.query(
+        conn,
+        "MATCH (e:Event)-[:AFFECTED]->(:Market) "
+        "WHERE e.quad_class = $quad AND e.event_time > $last "
+        "RETURN e.node_id AS node_id, e.event_time AS event_time "
+        "ORDER BY e.event_time, e.node_id LIMIT $limit",
+        {
+            "quad": "material_conflict",
+            "last": last,
+            "limit": SENSOR_EVENTS_PER_TICK * 12,
+        },
+    )
+    seen: set[str] = set()
+    unique: list[dict[str, Any]] = []
+    for row in rows:
+        node_id = str(row["node_id"])
+        if node_id in seen:
+            continue
+        seen.add(node_id)
+        unique.append({"node_id": node_id, "event_time": row["event_time"]})
+        if len(unique) >= SENSOR_EVENTS_PER_TICK:
+            break
+    panel = _panel()
+    try:
+        if panel is not None and len(unique) < SENSOR_EVENTS_PER_TICK:
+            from core.wire import corpus as corpus_mod
+            from core.wire import serving
+
+            for name in corpus_mod.installed():
+                window, _ = serving.events_window(
+                    name, last, None, SENSOR_EVENTS_PER_TICK * 4,
+                )
+                for row in window:
+                    if len(unique) >= SENSOR_EVENTS_PER_TICK:
+                        break
+                    if str(row.get("event_time") or "") <= last:
+                        continue
+                    if row.get("quad_class") != "material_conflict":
+                        continue
+                    node_id = str(row["node_id"])
+                    if node_id in seen:
+                        continue
+                    seen.add(node_id)
+                    unique.append({
+                        "node_id": node_id, "event_time": row["event_time"],
+                    })
+                if len(unique) >= SENSOR_EVENTS_PER_TICK:
+                    break
+        unique.sort(key=lambda r: (str(r["event_time"]), str(r["node_id"])))
+        unique = unique[:SENSOR_EVENTS_PER_TICK]
+        if not unique:
+            return {"note": "sensor loop is current", "as_of": last}
+
+        written = 0
+        scanned = 0
+        newest = last
+        for row in unique:
+            if time.monotonic() >= deadline:
+                break
+            scanned += 1
+            try:
+                out = sensor_loop.update_from_effect(
+                    conn, str(row["node_id"]), panel=panel,
+                )
+            except ValueError:
+                out = []
+            written += len(out)
+            newest = str(row["event_time"])
+        mark_path.write_text(newest, encoding="utf-8")
+        return {"scanned": scanned, "estimates_written": written, "as_of": newest}
+    finally:
+        if panel is not None:
+            panel.close()
+
+
+#: GDELT Event nodes to DETACH DELETE per trim tick. Bound so a reader waits
+#: at most one batched delete; the volume's internal pages become reusable
+#: for spine writes. OS free space does not grow (Kuzu reuses pages in-file).
+TRIM_EVENTS_PER_TICK = int(os.getenv("GEOGRAPH_TRIM_EVENTS", "400"))
+
+
+def trim(conn: Any, deadline: float) -> dict[str, Any]:
+    """Delete the graph's GDELT Event copy, a slice per tick.
+
+    The corpus is the wire. `event_study_runs` holds the measurements.
+    DETACH DELETE takes AFFECTED with the event. Spine, dyads and RELATES_TO
+    stay. Deleting still needs WAL room, so a tight volume waits for reclaim.
+    """
+    del deadline
+    from core import archive as archive_bounds
+    from core.graph import kuzu_store
+
+    path = settings_module.load().kuzu_db_path
+    if kuzu_store.disk_is_tight(path):
+        return {
+            "skipped": "volume nearly full — reclaim first",
+            "disk": kuzu_store.disk_usage(path),
+        }
+    deleted = archive_bounds.drop_gdelt_events(conn, limit=TRIM_EVENTS_PER_TICK)
+    remaining = kuzu_store.query(
+        conn,
+        "MATCH (e:Event) WHERE starts_with(e.node_id, 'event:gdelt-') "
+        "RETURN count(e) AS n",
+    )
+    left = int(remaining[0]["n"]) if remaining else 0
+    if deleted:
+        forget_archive()
+    return {"deleted": deleted, "gdelt_events_left": left}
+
+
+def reclaim(conn: Any, deadline: float) -> dict[str, Any]:
+    """Delete quarantined WAL tails when the volume is approaching the floor.
+
+    The study pauses at 400 MB free. Acting at 512 MB means the tails are
+    gone before writers stop — the boot's reclaim only fires below 64 MB,
+    which is already the crash-loop zone. Takes no graph lock.
+    """
+    del conn, deadline
+    from core.graph import kuzu_store
+
+    path = settings_module.load().kuzu_db_path
+    usage = kuzu_store.disk_usage(path)
+    if usage is not None and usage["free"] > (512 << 20):
+        return {"skipped": "volume has headroom", "disk": usage}
+    return kuzu_store.reclaim_non_data(path)

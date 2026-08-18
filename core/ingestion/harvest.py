@@ -1,11 +1,5 @@
 """Fetching GDELT's daily exports — the library both the CLI and the job use.
 
-WHY THIS EXISTS. Twelve jobs keep the platform current without a deploy, and
-not one of them could fetch a new EVENT: `work.wire` projects artifacts that
-ship inside the image, so the archive was permanently frozen at whatever was
-last committed. Every other job re-derives from that frozen corpus, which
-means the whole convergence loop was converging on a snapshot.
-
 The shape follows `transmission/runner.py`: the driver is a library so the CLI
 and the background job run the SAME code, rather than a script and a
 re-implementation that drift.
@@ -18,6 +12,12 @@ would still be present and still parse. Harvested days therefore go to a
 SEPARATE directory on the volume (`GEOGRAPH_HARVEST_DIR`), and `corpus`
 globs both. The committed artifacts are the base; the volume holds only what
 was learned after the image was built.
+
+WHY THIS EXISTS. Twelve jobs keep the platform current without a deploy, and
+not one of them could fetch a new EVENT: the study measures the corpus, so
+without a harvest the archive was frozen at whatever was last committed.
+Every other job re-derives from that corpus; harvest is the only one that
+learns a new fact.
 
 Ordering is not a concern: `corpus.score` sorts by `(event_time, node_id)`
 before folding Head B, so an overlay file read after the base is still scored

@@ -357,15 +357,11 @@ class Scheduler:
         from core.wire import corpus
 
         corpus.evict()
-        # The study's archive cache: ~1.07M lean event rows plus their parsed
-        # dates, held between ticks so a tick does not re-scan the graph. It is
-        # the largest rebuildable thing this process owns after the corpus, and
-        # a tick that has to rebuild it costs seconds, not correctness.
+        # The study's archive cache: lean event rows plus their parsed dates,
+        # held between ticks so a tick does not re-scan the graph.
         work.forget_archive()
-        # And the wire's "already in the graph" id sets — hundreds of thousands
-        # of strings per pack, held for the process's life. `forget_wire_ids`
-        # documented itself as "called under memory pressure" and was called by
-        # nothing (2026-08-17); one query rebuilds each.
+        # Roster-dyad once-per-process flag; a reclaim must not leave the next
+        # wire tick thinking it already merged them.
         work.forget_wire_ids()
         _forget_region_contexts()
         gc.collect()

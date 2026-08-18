@@ -97,6 +97,59 @@ def rank_candidates(
     return scored[:k]
 
 
+def rank_from_conn(
+    conn: Any,
+    query_ref: str,
+    *,
+    regime_kind: str = "monetary_order",
+    k: int = 5,
+    persist: bool = False,
+) -> list[dict[str, Any]]:
+    """Top-k regime-admissible analogues over an already-open connection.
+
+    THE MCP PATH IS READ-ONLY, so `persist=False` ranks without writing
+    Analogue nodes — a second `kuzu.Database` inside the API process would
+    fail the single-writer lock, and the MCP server already holds a reader.
+    `find_analogues` still persists: that is the batch/offline path.
+    """
+    rows = kuzu_store.query(conn, EVENT_QUERY)
+    by_id = {row["node_id"]: row for row in rows}
+    query = by_id.get(query_ref)
+    if query is None:
+        raise KeyError(f"no such event in the graph: {query_ref}")
+
+    top = rank_candidates(
+        query, rows,
+        query_date=str(query["event_time"]),
+        regime_kind=regime_kind,
+        k=k,
+    )
+
+    analogues: list[dict[str, Any]] = []
+    for similarity, row in top:
+        suffix = f"{query_ref.split(':', 1)[1]}--{row['node_id'].split(':', 1)[1]}"
+        analogues.append({
+            "node_id": f"analogue:{suffix}",
+            "query_ref": query_ref,
+            "event_id": row["node_id"],
+            "similarity": similarity,
+            "regime_matched": regime_kind,
+            "rationale": (
+                f"{row['name']} ({row['event_time']}): structural match "
+                f"{similarity:.2f} — goldstein {row['goldstein']} vs "
+                f"{query['goldstein']}, escalation "
+                f"{row['escalation_direction']}/{row['escalation_magnitude']} vs "
+                f"{query['escalation_direction']}/{query['escalation_magnitude']}, "
+                f"quad {row['quad_class']}; admissible within {regime_kind}. "
+                "Formula: mean of goldstein/magnitude/baseline proximities and "
+                "the role term."
+            ),
+        })
+    if persist and analogues:
+        kuzu_store.merge_nodes(conn, "Analogue", analogues)
+    return analogues
+
+
 def find_analogues(
     db_path: Path,
     query_ref: str,
@@ -112,43 +165,11 @@ def find_analogues(
     aftermath is NOT retrievable for a 2025 question however similar its
     shape — `regimes.comparable` refuses the pair and no score is computed.
     """
+    del region_pack  # pack-scoped queries live at the call site
     conn = kuzu_store.connect(db_path)
     try:
-        rows = kuzu_store.query(conn, EVENT_QUERY)
-        by_id = {row["node_id"]: row for row in rows}
-        query = by_id.get(query_ref)
-        if query is None:
-            raise KeyError(f"no such event in the graph: {query_ref}")
-
-        top = rank_candidates(
-            query, rows,
-            query_date=str(query["event_time"]),
-            regime_kind=regime_kind,
-            k=k,
+        return rank_from_conn(
+            conn, query_ref, regime_kind=regime_kind, k=k, persist=True,
         )
-
-        analogues: list[dict[str, Any]] = []
-        for similarity, row in top:
-            suffix = f"{query_ref.split(':', 1)[1]}--{row['node_id'].split(':', 1)[1]}"
-            analogues.append({
-                "node_id": f"analogue:{suffix}",
-                "query_ref": query_ref,
-                "event_id": row["node_id"],
-                "similarity": similarity,
-                "regime_matched": regime_kind,
-                "rationale": (
-                    f"{row['name']} ({row['event_time']}): structural match "
-                    f"{similarity:.2f} — goldstein {row['goldstein']} vs "
-                    f"{query['goldstein']}, escalation "
-                    f"{row['escalation_direction']}/{row['escalation_magnitude']} vs "
-                    f"{query['escalation_direction']}/{query['escalation_magnitude']}, "
-                    f"quad {row['quad_class']}; admissible within {regime_kind}. "
-                    "Formula: mean of goldstein/magnitude/baseline proximities and "
-                    "the role term."
-                ),
-            })
-        if analogues:
-            kuzu_store.merge_nodes(conn, "Analogue", analogues)
-        return analogues
     finally:
         kuzu_store.close(conn)

@@ -76,7 +76,12 @@ REGION_DYADS = 12
 #: probability counts above, without which a page cannot tell "breaks above"
 #: from "is still above") and `kind_sentence` (what a course kind MEANS, which
 #: `family.kind_words` had always carried and only the label ever left with).
-PAYLOAD_VERSION = "2026-08-17.2"
+#:
+#: `2026-08-18.1` is the live overlay: opening intensity/posture/beliefs can
+#: move with GDELT 2.0 while the kernel, payoffs and transmission map stay
+#: the frozen snapshot. Persisted maps without `live` in their fingerprint
+#: re-solve once.
+PAYLOAD_VERSION = "2026-08-18.1"
 
 #: A step's market row needs this many measurements before the scenario
 #: names it as an implication (the pricing module's own thinness bar).
@@ -517,6 +522,16 @@ def solve_dyad(
     own = [r for r in context["table"] if r["dyad_id"] == dyad_id]
     if not own:
         return None
+    # LIVE OVERLAY ON OPENING ONLY. The kernel, payoffs, CINC and measured
+    # effects stay the snapshot; a 15-minute file can move the current
+    # quarter's intensity, posture and beliefs. Cache miss → snapshot stands
+    # (tests never poll GDELT).
+    from core.wire import live as live_overlay
+
+    live_rows = live_overlay.rows_for(region, dyad_id)
+    live_meta = live_overlay.meta_for(region) if live_rows else {}
+    if live_rows:
+        own = live_overlay.apply_to_own(own, live_rows)
     dyad_name = str(own[0]["dyad_name"])
     bands = len(state_module.INTENSITY_EDGES)
 
@@ -554,7 +569,9 @@ def solve_dyad(
         payoffs = rival_payoffs or solve_module.Payoffs(
             **context_module.fitted_payoffs(region, "rival")
         )
-    joint = context_module.joint_for(context, space)
+    joint = dict(context_module.joint_for(context, space))
+    if live_rows:
+        joint.update(live_overlay.joints(live_rows, space))
     beliefs = opening_module.filtered_beliefs(joint, dyad_id, payoffs, space=space)
 
     kernel, tilt = context_module.kernel_for(context, dyad_id, space)
@@ -613,6 +630,7 @@ def solve_dyad(
         "dyad_name": dyad_name,
         "sides": list(split_sides(dyad_name)),
         "as_of": context["as_of"],
+        "live_as_of": live_meta.get("published") or live_meta.get("fetched_at"),
         "horizon": horizon,
         "bands": bands,
         "band_labels": [band_label(b, bands) for b in range(bands)],
@@ -650,6 +668,10 @@ def solve_dyad(
             "capability": capability,
             "beliefs": beliefs,
             "tilt": tilt,
+            "live": (
+                {"published": live_meta.get("published"), "events": len(live_rows)}
+                if live_rows else None
+            ),
         },
         "payoffs": {
             "discount": payoffs.discount, "cost_resolute": payoffs.cost_resolute,
@@ -882,10 +904,10 @@ def explain(solution: dict[str, Any]) -> list[str]:
             f"of them (mean nash_gap {float(gap.get('mean', 0)):.3f}, worst "
             f"{float(gap.get('max', 0)):.3f}) — "
             + (
-                "the correlated play is essentially a Bayesian Nash equilibrium here."
+                "mean nash_gap near 0: the CE sat on a Nash point in those stage games."
                 if float(gap.get("mean", 0)) < 0.02
                 else "some states need a coordinating signal the archive does not "
-                "model; read those cells as a direction."
+                "model; read those cells as a direction, not as Nash play."
             )
         )
     if qre and lp:
@@ -900,8 +922,8 @@ def explain(solution: dict[str, Any]) -> list[str]:
             f"{horizon} quarters is "
             f"{_pct(qre['escalation_probability'])} "
             f"against the LP's {_pct(lp['escalation_probability'])}. Where they diverge, "
-            "the QRE is "
-            "the estimator's own play and the LP is the exact benchmark."
+            "the QRE is the play; the LP's nash_gap is the audit of how far the "
+            "correlated equilibrium sits from a Nash point (0 sat on one)."
         )
 
     concept = solution["concepts"][primary]
@@ -1274,10 +1296,10 @@ def explain_region(aggregate: dict[str, Any]) -> list[str]:
             f"Across the region the LP's mean nash_gap is {gap['mean']:.3f} (worst dyad "
             f"{gap['max']:.3f}): "
             + (
-                "the welfare-maximal correlated play is, in effect, Bayesian Nash play."
+                "mean nash_gap near 0: the CE sat on a Nash point."
                 if gap["mean"] < 0.02
                 else "several dyads' stage games call for coordination the archive "
-                "does not model."
+                "does not model — that is the audit, not a claim they play Nash."
             )
         )
     k = aggregate["kernel"]

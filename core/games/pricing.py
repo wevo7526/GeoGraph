@@ -33,13 +33,37 @@ from core.reasoning import regimes
 MIN_MEASUREMENTS = 8
 
 
-def measured_effects(conn: Any, *, region_pack: str | None = None) -> list[dict[str, Any]]:
+def measured_effects(
+    conn: Any, *, region_pack: str | None = None, panel: Any | None = None,
+) -> list[dict[str, Any]]:
     """Every measured event→market effect, with the event's coded shape.
 
     One query. The alternative — fetching effects per predicted step — would
     hit the graph once per path per step per market, which for a distribution
     over eight paths is hundreds of round trips for data that fits in memory.
+
+    Panel-first when Postgres is available: GDELT measurements live there
+    after the graph copy of the wire is gone. Graph AFFECTED remains the
+    fallback for tests and for spine/deep-tier edges.
     """
+    own_panel = False
+    if panel is None:
+        try:
+            from core import settings as settings_module
+            from core.panel import pg_store
+
+            panel = pg_store.connect(settings_module.load())
+            own_panel = True
+        except Exception:  # noqa: BLE001 - graph fallback
+            panel = None
+    try:
+        if panel is not None and region_pack:
+            rows = _from_panel(conn, panel, region_pack)
+            if rows:
+                return _compact(rows)
+    finally:
+        if own_panel and panel is not None:
+            panel.close()
     # The region predicate binds to the clause it FOLLOWS: placed after the
     # OPTIONAL MATCH it filters the optional pattern (which cannot drop rows)
     # and every region's effects flow into every game's pricing. It must sit
@@ -70,6 +94,56 @@ def measured_effects(conn: Any, *, region_pack: str | None = None) -> list[dict[
         {"pack": region_pack} if region_pack else {},
     )
     return _compact(rows)
+
+
+def _from_panel(
+    conn: Any, panel: Any, region_pack: str,
+) -> list[dict[str, Any]]:
+    """Join panel measurements to Head B coding. GDELT keeps the headline
+    window only — extra windows of the same event were correlated copies."""
+    from core.classifier import escalation
+    from core.panel import pg_store
+    from core.reasoning.markets import HEADLINE_WINDOW, coding_for
+
+    coding = coding_for(conn, region_pack)
+    markets = {
+        str(r["ticker"]): (str(r["id"]), str(r["name"]))
+        for r in kuzu_store.query(
+            conn,
+            "MATCH (m:Market) RETURN m.node_id AS id, m.name AS name, m.ticker AS ticker",
+        )
+    }
+    out: list[dict[str, Any]] = []
+    for run in pg_store.computed_runs(panel):
+        event_id = str(run["event_node_id"])
+        meta = coding.get(event_id)
+        if meta is None:
+            continue
+        pack = meta.get("region_pack") or ""
+        if pack not in (region_pack, ""):
+            continue
+        if event_id.startswith("event:gdelt-") and str(run["window"]) != HEADLINE_WINDOW:
+            continue
+        ticker = str(run["market_ticker"])
+        market_id, market_name = markets.get(ticker, (f"market:{ticker}", ticker))
+        initiator = meta.get("initiator_id")
+        target = meta.get("target_id")
+        dyad = None
+        if initiator and target:
+            dyad = escalation.dyad_id(initiator, target)
+        out.append({
+            "event_id": event_id,
+            "event_time": meta.get("date"),
+            "quad_class": meta.get("quad_class"),
+            "magnitude": meta.get("magnitude"),
+            "dyad_id": dyad,
+            "initiator_id": initiator,
+            "target_id": target,
+            "market_id": market_id,
+            "market_name": market_name,
+            "abnormal_return": run["abnormal_return"],
+        })
+    return out
 
 
 #: Columns whose distinct values are few beside the number of rows. AFFECTED

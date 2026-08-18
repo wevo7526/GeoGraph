@@ -225,8 +225,8 @@ def iter_rows_of(pack: str) -> Iterator[dict[str, Any]]:
     """Every scored row of one lens, ONE AT A TIME, from the retained slim view
     — the wire's events with Head B's coding, in (event_time, node_id) order.
     `dyad_id`, `initiator_id`, `target_id`, `escalation_*` and `goldstein` all
-    ride on it, which is everything the graph's lean copy of the wire needs
-    (see `core.api.work.wire`).
+    ride on it, which is everything the study and the wire page need
+    (the graph no longer holds a GDELT copy — see `core.api.work.wire`).
 
     AN ITERATOR, BECAUSE THE LIST WAS A THREE-GIGABYTE SPIKE. This module's own
     docstring is the promise it broke: "what is kept is the small derived

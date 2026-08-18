@@ -345,6 +345,73 @@ def measured_events(conn: Any, market_tickers: list[str] | None = None) -> set[s
         return {row[0] for row in cur.fetchall()}
 
 
+def computed_runs(
+    conn: Any,
+    *,
+    ticker: str | None = None,
+    event_id: str | None = None,
+    window: str | None = None,
+) -> list[dict[str, Any]]:
+    """Measured (non-skip) event-study rows — the panel's AFFECTED.
+
+    The graph copy of these numbers is optional. Markets, game pricing and
+    `/api/events/{id}/effects` read here so the 5 GB graph can keep dyads
+    and the spine instead of a 2 KB/edge mirror of the wire.
+    """
+    clauses = ["status IN ('computed', 'overlapping')", "abnormal_return IS NOT NULL"]
+    params: list[Any] = []
+    if ticker:
+        clauses.append("market_ticker = %s")
+        params.append(ticker)
+    if event_id:
+        clauses.append("event_node_id = %s")
+        params.append(event_id)
+    if window:
+        clauses.append("effect_window = %s")
+        params.append(window)
+    sql = (
+        "SELECT event_node_id, market_ticker, effect_window AS window, "
+        "resolution, abnormal_return, raw_return, expected_return, "
+        "t_stat, p_value, method, source_id, first_mover, status "
+        f"FROM event_study_runs WHERE {' AND '.join(clauses)}"
+    )
+    with conn.cursor() as cur:
+        cur.execute(sql, params)
+        cols = [d[0] for d in cur.description]
+        return [dict(zip(cols, row, strict=True)) for row in cur.fetchall()]
+
+
+def computed_run_count(conn: Any) -> int:
+    """How many measured (non-skip) event-study rows the panel holds.
+
+    The markets and games fingerprints used to count graph AFFECTED edges.
+    Those edges are an optional mirror; this is the number that actually
+    grows as the study converges.
+    """
+    with conn.cursor() as cur:
+        cur.execute(
+            "SELECT COUNT(*) FROM event_study_runs "
+            "WHERE status IN ('computed', 'overlapping') "
+            "AND abnormal_return IS NOT NULL"
+        )
+        return int(cur.fetchone()[0])
+
+
+def computed_event_ids(conn: Any, *, ticker: str | None = None) -> set[str]:
+    """Event ids that carry at least one measured (non-skip) run."""
+    sql = (
+        "SELECT DISTINCT event_node_id FROM event_study_runs "
+        "WHERE status IN ('computed', 'overlapping') AND abnormal_return IS NOT NULL"
+    )
+    params: list[Any] = []
+    if ticker:
+        sql += " AND market_ticker = %s"
+        params.append(ticker)
+    with conn.cursor() as cur:
+        cur.execute(sql, params)
+        return {row[0] for row in cur.fetchall()}
+
+
 def record_backtest(conn: Any, region_pack: str, result: dict[str, Any]) -> int:
     """Persist a walk-forward run's ledger, replacing the region's previous
     one whole. A backtest is a FUNCTION of (archive, panel, books) — when any

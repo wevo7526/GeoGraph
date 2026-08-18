@@ -37,11 +37,16 @@ import {
   BandHeat, Bars, CourseStrip, FanRibbon, Matchup, MultiLine, PayoffMatrix, Tiles, pct,
 } from './charts/Kit'
 
-/** The two concepts, in a reader's words. The names QRE and LP are the
- *  estimator's; they stay on the audit line under "How this was solved". */
+/** The two concepts, in a reader's words.
+ *
+ *  QRE IS THE PLAY — the fitted quantal response, the default for the region
+ *  ranking and the pair's call. The LP is an entropy-regularised correlated
+ *  equilibrium; its `nash_gap` is the AUDIT of how far that joint sits from a
+ *  Nash point (0 means it sat on one). Calling the LP "the exact benchmark"
+ *  overclaims the selection. The names QRE and LP stay on the method line. */
 const CONCEPT_WORD: Record<string, string> = {
-  qre: 'the fitted game',
-  lp: 'the exact benchmark',
+  qre: 'the play',
+  lp: 'the CE audit',
 }
 
 function dyadFromRoute(): string | null {
@@ -236,7 +241,7 @@ function RegionGames({ region, onPick }: { region: string; onPick: (dyad: string
             <Tiles items={[
               { label: 'pairs solved', value: String(map.dyads_solved), sub: `${map.dyads_cinc} with a capability estimate` },
               { label: 'on their own kernel', value: String(map.dyads_tilted), sub: map.model ? `${map.model.name}` : 'no frozen model' },
-              { label: 'distance from Nash', value: map.nash_gap.mean !== null ? map.nash_gap.mean.toFixed(3) : '—', sub: map.nash_gap.max !== null ? `worst pair ${map.nash_gap.max.toFixed(3)}` : undefined },
+              { label: 'nash gap (audit)', value: map.nash_gap.mean !== null ? map.nash_gap.mean.toFixed(3) : '—', sub: map.nash_gap.max !== null ? `0 sat on a Nash point · worst ${map.nash_gap.max.toFixed(3)}` : '0 sat on a Nash point; the play is the fitted QRE' },
               { label: 'kernel measured', value: pct(map.kernel.share_measured, 0), sub: `${count(map.kernel.observations)} dyad-quarters` },
             ]} />
           </div>
@@ -506,8 +511,8 @@ function DyadGame({
           ))}
           {lp && qre && (
             <span className="text-xs" style={{ color: 'var(--muted)', marginLeft: 'auto' }}>
-              {word} above the usual band: {pct(qre.sharp_departure_probability, 0)} fitted,{' '}
-              {pct(lp.sharp_departure_probability, 0)} benchmark
+              {word} above the usual band: {pct(qre.sharp_departure_probability, 0)} play,{' '}
+              {pct(lp.sharp_departure_probability, 0)} CE audit
             </span>
           )}
         </div>
@@ -612,6 +617,11 @@ function DyadGame({
             {sol.opening.tilt ? ` · ${sol.opening.tilt.model}` : ''}
           </p>
           <p className="mono text-[11px] mt-1" style={{ color: 'var(--muted)' }}>{concept.concept}</p>
+          {lp?.nash_gap && (
+            <p className="mono text-[11px] mt-1" style={{ color: 'var(--muted)' }}>
+              nash gap {lp.nash_gap.mean.toFixed(3)} (worst {lp.nash_gap.max.toFixed(3)}) — 0 sat on a Nash point; the play is the fitted QRE
+            </p>
+          )}
           <p className="mono text-[11px] mt-1" style={{ color: 'var(--muted)' }}>
             {sol.persisted ? `solved ${sol.computed_at?.slice(0, 16).replace('T', ' ')} UTC` : 'solved on request'} · archive to {sol.as_of}
           </p>

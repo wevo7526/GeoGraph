@@ -132,8 +132,12 @@ def main() -> None:
                 for actor in packs_module.load(name).actors
             }
             pruned = cow.prune_off_roster_actors(conn, roster)
+            from core import archive as archive_bounds
+            trimmed = archive_bounds.drop_events_before(conn)
             print("pruned off-roster: " + (", ".join(
                 f"{table} {count}" for table, count in pruned.items() if count) or "nothing"))
+            print("trimmed before archive floor: " + (", ".join(
+                f"{table} {count}" for table, count in trimmed.items() if count) or "nothing"))
         finally:
             kuzu_store.close(conn)
         return
@@ -165,6 +169,11 @@ def main() -> None:
         if any(pruned.values()):
             print("pruned off-roster: " + ", ".join(
                 f"{table} {count}" for table, count in pruned.items() if count))
+        from core import archive as archive_bounds
+        trimmed = archive_bounds.drop_events_before(conn)
+        if any(trimmed.values()):
+            print("trimmed before archive floor: " + ", ".join(
+                f"{table} {count}" for table, count in trimmed.items() if count))
         steps: list[tuple[str, Callable[[], cow.LoadResult]]] = [
             ("state system", lambda: cow.load_state_system(conn, _RAW / "states2016.csv")),
             ("cinc clout", lambda: cow.load_cinc(conn, _RAW / "NMC-70-wsupplementary.csv")),

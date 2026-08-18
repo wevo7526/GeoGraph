@@ -207,6 +207,7 @@ def compute_effects(
     *,
     prices: dict[str, list[dict[str, Any]]],
     other_event_dates: dict[str, dt.date] | None = None,
+    windows: tuple[str, ...] | None = None,
 ) -> tuple[list[EffectResult], list[Skip]]:
     """Run the study for one event across every market alive at its date.
 
@@ -278,7 +279,7 @@ def compute_effects(
                 reason=str(exc),
             ))
             continue
-        window_names = WINDOWS_BY_RESOLUTION.get(resolution, ("car_0_1",))
+        window_names = windows or WINDOWS_BY_RESOLUTION.get(resolution, ("car_0_1",))
         series = prices.get(ticker) or []
         # Daily, monthly and annual all measure through the same constant-mean
         # machinery below; intraday_open_close alone waits for Phase 4's
