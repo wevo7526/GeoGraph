@@ -743,9 +743,9 @@ def test_a_persisted_game_map_goes_stale_when_what_it_read_moves(monkeypatch):
         work.games_stale({"inputs": {**current, "version": "v0"}}, current) or "")
 
 
-def test_a_frozen_snapshot_re_solves_on_the_live_export_not_affected(monkeypatch):
-    """The snapshot is weights. AFFECTED growth is not new information; the
-    15-minute export stamp is."""
+def test_a_frozen_snapshot_does_not_re_solve_on_live_or_affected(monkeypatch):
+    """The snapshot is weights. Live GDELT 2.0 overlays at read time;
+    re-solving the region because a 15-minute file arrived OOM-killed boot."""
     from core.api import work
 
     monkeypatch.setenv("GEOGRAPH_SNAPSHOT_FROZEN", "1")
@@ -753,9 +753,19 @@ def test_a_frozen_snapshot_re_solves_on_the_live_export_not_affected(monkeypatch
                "affected": 1_000_000, "model_frozen": "2026-08-16T18:27:01",
                "live": "20260817181500"}
     assert work.games_stale({"inputs": {**current, "affected": 100}}, current) is None
-    assert "live export moved" in (
-        work.games_stale({"inputs": {**current, "live": "older"}}, current) or "")
+    assert work.games_stale({"inputs": {**current, "live": "older"}}, current) is None
     assert work.games_stale({"inputs": dict(current)}, current) is None
+
+
+def test_the_games_job_does_not_refresh_live_or_solve_every_region():
+    """refresh_all plus three region solves is what peaked at 7.76 GB."""
+    import inspect
+
+    from core.api import work
+
+    src = inspect.getsource(work.games)
+    assert "refresh_all" not in src
+    assert "one region per tick" in src.lower() or "ONE REGION PER TICK" in src
 
 
 def test_harvest_is_a_noop_while_the_snapshot_is_frozen(monkeypatch, tmp_path):

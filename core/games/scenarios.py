@@ -77,11 +77,11 @@ REGION_DYADS = 12
 #: from "is still above") and `kind_sentence` (what a course kind MEANS, which
 #: `family.kind_words` had always carried and only the label ever left with).
 #:
-#: `2026-08-18.1` is the live overlay: opening intensity/posture/beliefs can
-#: move with GDELT 2.0 while the kernel, payoffs and transmission map stay
-#: the frozen snapshot. Persisted maps without `live` in their fingerprint
-#: re-solve once.
-PAYLOAD_VERSION = "2026-08-18.1"
+#: Live overlay (GDELT 2.0) is applied at READ TIME onto a persisted map. It
+#: does not change this shape and must not bump the version: a bump makes
+#: every region stale and the games job re-solves them on boot, which is
+#: what OOM-killed the 8 GB container on 2026-08-18 (peak 7.76 GB).
+PAYLOAD_VERSION = "2026-08-17.2"
 
 #: A step's market row needs this many measurements before the scenario
 #: names it as an implication (the pricing module's own thinness bar).

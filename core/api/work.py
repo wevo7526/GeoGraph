@@ -528,9 +528,10 @@ def games_stale(stored: dict[str, Any] | None, current: dict[str, Any]) -> str |
         if was.get(key) != current.get(key):
             return f"{key} moved ({was.get(key)!r} -> {current.get(key)!r})"
     if snapshot.frozen():
-        before_live, now_live = was.get("live"), current.get("live")
-        if now_live and before_live != now_live:
-            return f"live export moved {before_live!r} -> {now_live!r}"
+        # Live GDELT 2.0 is an overlay at read time. Re-solving the region
+        # because a 15-minute file arrived is what OOM-killed the boot:
+        # three region solves plus refresh_all on top of the warmed corpus
+        # peaked at 7.76 GB of 8 GB, then the kernel took the process.
         return None
     before, now = was.get("affected"), current.get("affected")
     if (isinstance(before, int) and isinstance(now, int) and before > 0
@@ -546,13 +547,14 @@ def games(conn: Any, deadline: float) -> dict[str, Any]:
     `PAYLOAD_VERSION` (the reader would reject it and the endpoint would solve
     live on every request), a moved RELATES_TO web, a re-frozen model, or
     AFFECTED grown past the re-price threshold. When the snapshot is frozen,
-    AFFECTED is weights and the 15-minute export stamp is what moved.
+    the map is weights; live GDELT 2.0 overlays at read time and does not
+    re-solve.
     """
     from core.games import context as context_module
     from core.games import scenarios
     from core.games import solve as solve_module
+    from core.graph import kuzu_store
     from core.panel import pg_store
-    from core.wire import live as live_overlay
 
     panel = _panel()
     if panel is None:
@@ -561,14 +563,6 @@ def games(conn: Any, deadline: float) -> dict[str, Any]:
     try:
         pg_store.apply_schema(panel)
         current = games_inputs(conn, panel)
-        if snapshot.frozen():
-            try:
-                live_overlay.refresh_all()
-            except Exception:  # noqa: BLE001 - a down feed must not skip the job
-                pass
-            stamp = live_overlay.cached_published()
-            if stamp:
-                current = {**current, "live": stamp}
         for name in _pack_names():
             if time.monotonic() >= deadline:
                 return {"solved": solved_now, "skipped": "slice spent"}
@@ -578,6 +572,20 @@ def games(conn: Any, deadline: float) -> dict[str, Any]:
             why = games_stale(stored, current)
             if why is None:
                 continue
+            # ONE REGION PER TICK. A version bump used to KEEP GOING through
+            # all three (~3 min, several GB) inside the serving process;
+            # 2026-08-18 that peaked at 7.76 GB of 8 GB and the kernel killed
+            # the container on boot. A stale region answers `resolving: true`
+            # until its turn — that is the honest fallback, not a live solve.
+            limit = kuzu_store.container_memory_bytes()
+            used = kuzu_store.memory_in_use_bytes()
+            if limit and used is not None and (1.0 - used / limit) < 0.30:
+                return {
+                    "solved": solved_now,
+                    "skipped": "memory tight",
+                    "waiting": name,
+                    "why": why,
+                }
             try:
                 context = context_module.build(conn, name)
             except (context_module.GraphNeeded, context_module.NothingToSolve) as exc:
@@ -594,13 +602,11 @@ def games(conn: Any, deadline: float) -> dict[str, Any]:
             written = pg_store.record_game_solutions(
                 panel, name, solved, solver=solved["region"]["primary_solver"]
             )
-            # KEEP GOING while the slice allows: a version bump leaves EVERY
-            # region stale at once, and one region per tick meant the rest
-            # answered "being re-solved" for as long as it took to come round.
             solved_now.append({
                 "region": name, "rows": written,
                 "dyads": solved["region"]["dyads_solved"], "why": why,
             })
+            return {"solved": solved_now, "version": scenarios.PAYLOAD_VERSION}
         if solved_now:
             return {"solved": solved_now, "version": scenarios.PAYLOAD_VERSION}
         return {"note": "every region's map is current"}
