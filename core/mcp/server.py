@@ -132,6 +132,15 @@ def build_server() -> Any:
         is quiet. Rows are capped; `truncated` says when."""
         return tools.wire_live(region, limit)
 
+    @server.tool()
+    def situation(region: str = "mena") -> dict[str, Any]:
+        """Compact situation briefing for a region pack: wire departures,
+        live overlay if cached, persisted region-game ranking, packed market
+        headlines, globe coverage, frozen forecasts. Same object POST
+        /api/reasoning/assess narrates. Numbers only — this tool does not
+        call a model. Cite node_id / dyad_id; never originate a figure."""
+        return tools.situation(conn, region)
+
     return server
 
 

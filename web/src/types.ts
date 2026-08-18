@@ -861,6 +861,42 @@ export interface WhatIfResult {
   method: string
 }
 
+export interface SituationBriefing {
+  region: string
+  region_label?: string
+  note?: string
+  wire?: {
+    departures: Array<{
+      node_id?: string
+      event_time?: string
+      initiator_name?: string | null
+      target_name?: string | null
+      dyad_id?: string | null
+      points_from_baseline?: number | null
+    }>
+    as_of?: string | null
+    note?: string | null
+  }
+  live?: { rows: Array<{ node_id?: string }>; note?: string | null }
+  region_games?: {
+    pending?: boolean
+    resolving?: boolean
+    lead?: { dyad_id?: string; dyad_name?: string } | null
+    ranking?: Array<{ dyad_id?: string; dyad_name?: string }>
+    note?: string | null
+  }
+  markets?: {
+    pending?: boolean
+    headlines?: Array<{ ticker?: string; name?: string; median?: number; n?: number }>
+    note?: string | null
+  }
+  globe?: { placed?: number; unplaced?: number }
+  forecasts?: {
+    rows?: Array<{ node_id?: string; mode?: string; question?: string }>
+    note?: string | null
+  }
+}
+
 export interface Assessment {
   question: string
   region_pack: string
@@ -869,11 +905,7 @@ export interface Assessment {
   method: string
   /** Exactly what the agent was handed. Returned so section 17 — the agent
    *  never originates a number — is checkable by the reader, not just stated. */
-  context?: {
-    frozen_forecasts?: Array<{ node_id: string; mode: string; question: string }>
-    most_conflictual_dyads?: Array<{ node_id: string; name: string; baseline: number | null }>
-    note?: string
-  }
+  context?: SituationBriefing
 }
 
 export interface CaseStudyIndexEntry {

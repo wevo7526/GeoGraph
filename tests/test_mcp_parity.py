@@ -27,6 +27,13 @@ def test_wire_live_tool_does_not_invent_rows():
     assert len(body["rows"]) <= 3
 
 
+def test_situation_tool_covers_a_missing_graph():
+    body = mcp_tools.situation(None, "mena")
+    assert "coverage" in body
+    assert body["region"] == "mena"
+    assert "wire" in body
+
+
 def test_event_impact_tool_unknown_event_is_empty_not_zero(monkeypatch):
     monkeypatch.setattr(
         "core.reasoning.impact.event_impact",

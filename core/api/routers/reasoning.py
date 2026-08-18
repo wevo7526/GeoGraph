@@ -11,9 +11,11 @@ The page has two halves and they degrade honestly:
   Nothing is persisted: a hypothetical writes nothing into an archive of
   things that happened.
 
-- The ASSESS half is the LLM agent narrating around deterministic context.
-  Without ANTHROPIC_API_KEY it is a 503 that names the key and what still
-  works; it never fakes an assessment.
+- The ASSESS half is the LLM agent narrating around the situation briefing
+  (wire, region games, markets, globe, frozen forecasts). GET
+  /reasoning/situation serves that briefing with no model. Without
+  ANTHROPIC_API_KEY, POST /reasoning/assess is a 503 that names the key
+  and what still works; it never fakes an assessment.
 """
 
 from __future__ import annotations
@@ -28,6 +30,7 @@ from core.classifier import escalation
 from core.classifier import typing as event_typing
 from core.graph import kuzu_store
 from core.reasoning import agent, analogy
+from core.reasoning import situation as situation_briefing
 
 router = APIRouter(tags=["reasoning"])
 
@@ -234,44 +237,45 @@ def what_if(
 
 
 class AssessRequest(BaseModel):
-    question: str
+    question: str = "What is the situation?"
     region: str = "mena"
+
+
+def _briefing(request: Request, region: str) -> dict[str, Any]:
+    """The situation object — graph optional, pack required."""
+    try:
+        packs.load(region)
+    except packs.PackError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return situation_briefing.assemble(request.app.state.graph, region)
+
+
+@router.get("/reasoning/situation")
+def situation(request: Request, region: str = "mena") -> dict[str, Any]:
+    """The compact briefing the agent is handed — numbers only, no LLM.
+
+    Same object POST /reasoning/assess wraps in a narration. External agents
+    (MCP `situation`) and tests read it here so a dark key still shows what
+    would have been argued over.
+    """
+    return _briefing(request, region)
 
 
 @router.post("/reasoning/assess")
 def assess(request: Request, body: AssessRequest) -> dict[str, Any]:
     """The agent's narrated assessment — key-gated, honest when dark.
 
-    The context handed to the agent is assembled HERE, deterministically:
-    the region's frozen forecasts and most conflictual dyads, each with its
-    node id, so every number the agent cites pre-exists the call.
+    The context handed to the agent is the situation briefing assembled
+    HERE, deterministically, from the same stores the Situation page reads:
+    wire departures, live overlay, persisted region games, packed markets,
+    globe coverage, frozen forecasts. Every number the agent cites
+    pre-exists the call. A missing key is a 503 that names it; the
+    briefing itself is still at GET /reasoning/situation.
     """
-    conn = _conn(request)
-    forecasts = kuzu_store.query(
-        conn,
-        "MATCH (f:Forecast) WHERE f.region_pack = $region "
-        "RETURN f.node_id AS node_id, f.mode AS mode, f.question AS question, "
-        "f.generated_at AS generated_at, f.scenarios_json AS scenarios_json, "
-        "f.boundary_statement AS boundary_statement "
-        "ORDER BY f.generated_at DESC, f.node_id LIMIT 4",
-        {"region": body.region},
-    )
-    dyads = kuzu_store.query(
-        conn,
-        "MATCH (d:Dyad) RETURN d.node_id AS node_id, d.name AS name, "
-        "d.ewma_baseline AS baseline, d.ewma_as_of AS as_of "
-        "ORDER BY d.ewma_baseline, d.node_id LIMIT 8",
-    )
-    context = {
-        "frozen_forecasts": forecasts,
-        "most_conflictual_dyads": dyads,
-        "note": (
-            "forecast scenario likelihoods are counted base rates; dyad "
-            "baselines are EWMA Goldstein levels (lower = more conflictual)."
-        ),
-    }
+    question = (body.question or "").strip() or "What is the situation?"
+    context = _briefing(request, body.region)
     try:
-        result = agent.assess(body.question, region_pack=body.region, context=context)
+        result = agent.assess(question, region_pack=body.region, context=context)
     except agent.AgentUnavailable as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     # THE CONTEXT COMES BACK WITH THE ANSWER. Section 17 says the agent never

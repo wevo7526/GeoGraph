@@ -8,8 +8,10 @@ coverage caveat so an agent reports "the graph holds no X" narrowly and
 truthfully.
 
 Implemented now: find_actor, regime_at, the graph-backed shells, plus
-markets_story, event_impact, region_call, and wire_live — thin, capped
-wrappers over the same functions the API uses, never a second estimator.
+markets_story, event_impact, region_call, wire_live, and situation — thin,
+capped wrappers over the same functions the API uses, never a second
+estimator. `situation` is the briefing POST /reasoning/assess narrates;
+it returns numbers only. The LLM stays in the API process.
 The rest land with their layers and raise a phase-naming error until then —
 an agent told "Phase 2" reports that; an agent given an empty result invents.
 """
@@ -451,3 +453,20 @@ def wire_live(region: str = "mena", limit: int = 12) -> dict[str, Any]:
         "coverage": _COVERAGE,
         "note": None if compact else "no live batch in this process yet",
     }
+
+
+def situation(conn: Any, region: str = "mena") -> dict[str, Any]:
+    """The compact situation briefing — same object the assess endpoint wraps.
+
+    Numbers only. Does not call a model. A missing panel or live batch is
+    said, never filled. `explanation` never travels.
+    """
+    from core import packs
+    from core.reasoning import situation as situation_briefing
+
+    try:
+        body = situation_briefing.assemble(conn, region)
+    except packs.PackError as exc:
+        return {"region": region, "error": str(exc), "coverage": _COVERAGE}
+    body["coverage"] = _COVERAGE
+    return body

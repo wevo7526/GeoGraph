@@ -1,17 +1,21 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import {
   getGlobe,
+  getHealth,
   getJobs,
   getMarketsStory,
   getRegionMap,
   getWire,
   getWireLive,
   lastFailureFor,
+  postAssess,
 } from '../api'
 import { count, signedPct, situationLede, skillSentence, wireHeadline, wireRead } from '../lib/story'
 import { useRegionLabel } from '../regions'
 import type {
+  Assessment,
   GlobeBoard,
+  Health,
   JobsStatus,
   MarketsStory,
   RegionMap,
@@ -19,8 +23,10 @@ import type {
   WireItem,
   WireLiveFeed,
 } from '../types'
-import { Beat, Empty, StoryHead } from '../ui'
+import { Beat, Disclosure, Empty, StoryHead } from '../ui'
 import SituationPlate from './SituationPlate'
+
+const DEFAULT_QUESTION = 'What is the situation?'
 
 /** Situation is the working home — what just happened, what it means for
  *  markets, what happens next — composed from endpoints that already exist.
@@ -39,20 +45,32 @@ export default function SituationPage({
   const [story, setStory] = useState<MarketsStory | null | undefined>(undefined)
   const [globe, setGlobe] = useState<GlobeBoard | null | undefined>(undefined)
   const [jobs, setJobs] = useState<JobsStatus | null>(null)
+  const [health, setHealth] = useState<Health | null>(null)
+  const [question, setQuestion] = useState(DEFAULT_QUESTION)
+  const [asking, setAsking] = useState(false)
+  const [assessment, setAssessment] = useState<Assessment | null>(null)
+  const [askError, setAskError] = useState<string | null>(null)
+  const askGen = useRef(0)
 
   useEffect(() => {
     let live = true
+    askGen.current += 1
+    setAsking(false)
     setWire(undefined)
     setLiveFeed(undefined)
     setMap(undefined)
     setStory(undefined)
     setGlobe(undefined)
+    setAssessment(null)
+    setAskError(null)
+    setQuestion(DEFAULT_QUESTION)
     getWire(region).then((r) => live && setWire(r))
     getWireLive(region).then((r) => live && setLiveFeed(r))
     getRegionMap(region).then((r) => live && setMap(r))
     getMarketsStory(region).then((r) => live && setStory(r))
     getGlobe(region, 12).then((r) => live && setGlobe(r))
     getJobs().then((r) => live && setJobs(r))
+    getHealth().then((h) => live && setHealth(h))
     return () => {
       live = false
     }
@@ -91,6 +109,8 @@ export default function SituationPage({
   const skill = skillSentence(story?.transmission_skill, label)
   const unplaced = globe?.counts?.unplaced ?? globe?.unplaced?.length ?? 0
   const studyStopped = jobs?.jobs?.find((j) => j.name === 'study')?.last_result?.stopped
+  const darkReason = health?.disabled?.reasoning
+  const frozenQuestions = assessment?.context?.forecasts?.rows ?? []
   const openPair = (item: WireItem) => {
     if (!item.dyad_id) return
     onNavigate(
@@ -231,6 +251,79 @@ export default function SituationPage({
           </>
         ) : (
           <Empty>The region map has no ranking yet.</Empty>
+        )}
+      </Beat>
+
+      <Beat
+        title="Ask the desk"
+        aside="An argument over the figures already on this page — not a source of them. Called when you ask, not on arrival."
+      >
+        {darkReason ? (
+          <Empty>{darkReason}</Empty>
+        ) : (
+          <form
+            className="desk-ask"
+            onSubmit={(event) => {
+              event.preventDefault()
+              const asked = question.trim() || DEFAULT_QUESTION
+              const gen = ++askGen.current
+              setAsking(true)
+              setAskError(null)
+              postAssess(asked, region).then((response) => {
+                if (gen !== askGen.current) return
+                setAsking(false)
+                if (!response.ok || !response.result) {
+                  setAssessment(null)
+                  setAskError(response.detail ?? 'the desk did not answer')
+                  return
+                }
+                setAssessment(response.result)
+              })
+            }}
+          >
+            <textarea
+              id="desk-question"
+              name="question"
+              rows={3}
+              value={question}
+              onChange={(event) => setQuestion(event.target.value)}
+              disabled={asking}
+              aria-label="Question for the desk"
+            />
+            <button type="submit" className="ink-button" disabled={asking}>
+              {asking ? 'Reading…' : 'Ask'}
+            </button>
+          </form>
+        )}
+        {askError && <Empty>{askError}</Empty>}
+        {assessment && (
+          <>
+            <p className="desk-assessment">{assessment.assessment}</p>
+            <p className="figure-note">
+              An argument, not a measurement. The figures on this page are the
+              source; a number that is not here was invented.
+            </p>
+            <Disclosure label="what the desk was handed">
+              <p className="figure-note">
+                The same briefing already printed above: wire departures, the
+                region map, packed market cells, globe coverage, and the frozen
+                forecasts named below. The method string is the rule, not a
+                second set of figures.
+              </p>
+              {frozenQuestions.length > 0 && (
+                <ul className="mt-3 space-y-1">
+                  {frozenQuestions.map((row) => (
+                    <li key={row.node_id ?? row.question} className="figure-note" style={{ marginTop: 0 }}>
+                      {row.question}
+                    </li>
+                  ))}
+                </ul>
+              )}
+              {assessment.method && (
+                <p className="figure-note mt-3">{assessment.method}</p>
+              )}
+            </Disclosure>
+          </>
         )}
       </Beat>
     </article>

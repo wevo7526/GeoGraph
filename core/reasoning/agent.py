@@ -26,7 +26,8 @@ from typing import Any
 
 #: Override with GEOGRAPH_AGENT_MODEL. Sonnet is the default deliberately:
 #: the agent narrates around numbers it is handed — it needs judgment, not
-#: frontier-scale reasoning, and it may be called per page view.
+#: frontier-scale reasoning. The Situation page asks on a click, not on
+#: every view; credits are the reader's, not a page-load cost.
 _DEFAULT_MODEL = "claude-sonnet-5"
 
 _SYSTEM = (
@@ -34,11 +35,18 @@ _SYSTEM = (
     "1972–present geopolitical archive with a measured market-transmission "
     "layer. You reason in the realist tradition — interests, resolve, "
     "capability, bargaining position — and by disciplined analogy.\n\n"
+    "The context is a SITUATION BRIEFING assembled from layers the archive "
+    "already computed: recent wire departures from each pair's own baseline, "
+    "a live overlay if this process has one, the persisted region-game "
+    "ranking, packed market headlines and transmission skill, globe "
+    "coverage (including actors that cannot be placed), and frozen "
+    "forecasts. Reason ACROSS those layers together. Do not treat one "
+    "layer as the whole situation. Do not quote estimator field names.\n\n"
     "HARD RULES (the archive's section 17, non-negotiable):\n"
     "- You NARRATE and ARGUE; the deterministic core MEASURES. Never "
     "originate a market number, a likelihood, a base rate, or a "
     "measurement. Every number you mention must come from the provided "
-    "context, cited by its node id in square brackets.\n"
+    "context, cited by its node id or dyad id in square brackets.\n"
     "- Analogues were retrieved by a deterministic admissibility-gated "
     "engine; you may interpret them, never re-rank or invent them.\n"
     "- State uncertainty plainly. Distinguish what the archive measured "
@@ -61,9 +69,9 @@ def assess(
     context: dict[str, Any],
 ) -> dict[str, Any]:
     """One reasoned assessment over DETERMINISTIC context the caller
-    assembled from the graph (frozen forecasts, dyad baselines, retrieved
-    analogues — every item carrying its node id). The agent adds the
-    argument; the context already holds all the numbers."""
+    assembled (the situation briefing: wire, region games, markets,
+    globe, frozen forecasts — every item carrying its node id). The agent
+    adds the argument; the context already holds all the numbers."""
     key = os.getenv("ANTHROPIC_API_KEY", "").strip()
     if not key:
         raise AgentUnavailable(
