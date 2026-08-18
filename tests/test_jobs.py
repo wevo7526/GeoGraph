@@ -844,6 +844,8 @@ def test_scores_does_not_reparse_the_corpus_when_nothing_is_due():
     parse = src.rindex("forecasting.rows_from_conn")
     assert gate < parse, "the archive parse must sit behind the scoreable gate"
     assert "_newest_event_time" in src
+    assert "horizon_variant_walks" in src
+    assert "horizon_1y" in src
 
 
 def test_heavy_jobs_do_not_stampede_the_first_tick_after_boot():

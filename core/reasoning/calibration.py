@@ -454,6 +454,32 @@ def walk(
     }
 
 
+def horizon_variant_walks(
+    rows: list[dict[str, Any]],
+    *,
+    region_pack: str,
+    horizons: tuple[int, ...] = (1,),
+) -> dict[str, Any]:
+    """Named Brier walks that do not replace the locked three-year question.
+
+    The frozen near-term call stays `_DEFAULT_HORIZON_YEARS = 3`. A one-year
+    walk is reported beside it because `question_difficulty` already showed
+    that horizon has variance to predict — it is not a silent swap.
+    """
+    variants = {
+        f"{horizon}y": walk(rows, region_pack=region_pack, horizon_years=horizon)
+        for horizon in horizons
+    }
+    return {
+        "locked_horizon_years": 3,
+        "variants": variants,
+        "note": (
+            "parallel named variants; the frozen call and the paper book stay "
+            "three years"
+        ),
+    }
+
+
 # ── how hard the question actually is ───────────────────────────────────────
 
 

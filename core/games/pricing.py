@@ -155,6 +155,8 @@ def _from_panel(
                 "market_id": market_id,
                 "market_name": market_name,
                 "abnormal_return": run["abnormal_return"],
+                "overlapping": str(run.get("status") or "") == "overlapping",
+                "p_value": run.get("p_value"),
             })
     return out
 
@@ -239,12 +241,16 @@ def build_index(
     *,
     as_of: str,
     scale: float,
+    exclude_overlapping: bool = False,
 ) -> dict[tuple[str, int], dict[str, list[float]]]:
     """(quad class, intensity band) → market → the measured abnormal returns.
 
     Regime-gated against `as_of` by the same admissibility test the analogy
     engine uses: a 2026 question is never answered with Bretton Woods
     evidence, however similar the event shape.
+
+    `exclude_overlapping` is the clean cell: contaminated windows stay in the
+    default index so a published game price does not silently move.
     """
     index: dict[tuple[str, int], dict[str, list[float]]] = defaultdict(
         lambda: defaultdict(list)
@@ -253,6 +259,11 @@ def build_index(
         if effect["abnormal_return"] is None or not effect["quad_class"]:
             continue
         if not regimes.comparable(as_of, str(effect["event_time"])):
+            continue
+        if exclude_overlapping and (
+            effect.get("overlapping") is True
+            or str(effect.get("status") or "") == "overlapping"
+        ):
             continue
         magnitude = effect["magnitude"]
         band = state_module.intensity_band(

@@ -41,6 +41,10 @@ HEADLINE_WINDOW = "car_0_3"
 #: number rather than an anecdote.
 MIN_CELL = 8
 
+#: Significance gate already used by the sensor loop. The map used to ignore
+#: p-values; clean cells apply it. Dual with the unfiltered `response`.
+CLEAN_P_GATE = 0.1
+
 
 def kind_of(direction: str | None, magnitude: float | None) -> str:
     """Which reading of the escalation coding an event falls under.
@@ -152,10 +156,11 @@ def market_rows(
         conn,
         "MATCH (e:Event)-[a:AFFECTED]->(m:Market {ticker: $ticker}) "
         "WHERE e.region_pack = $pack OR e.region_pack = '' "
-        "RETURN e.escalation_direction AS direction, e.escalation_magnitude AS magnitude, "
-        "e.event_time AS date, "
+        "RETURN e.node_id AS event_id, e.escalation_direction AS direction, "
+        "e.escalation_magnitude AS magnitude, e.event_time AS date, "
+        "e.quad_class AS quad_class, "
         "a.window AS window, a.abnormal_return AS ar, a.first_mover AS first_mover, "
-        "a.overlapping AS overlapping",
+        "a.overlapping AS overlapping, a.p_value AS p_value, a.t_stat AS t_stat",
         {"ticker": ticker, "pack": region_pack},
     )
 
@@ -172,13 +177,20 @@ def _rows_from_panel(
         if pack not in (region_pack, ""):
             continue
         out.append({
+            "event_id": str(run["event_node_id"]),
             "direction": meta.get("direction"),
             "magnitude": meta.get("magnitude"),
             "date": meta.get("date"),
+            "quad_class": meta.get("quad_class"),
+            "initiator_id": meta.get("initiator_id"),
+            "target_id": meta.get("target_id"),
             "window": run["window"],
             "ar": run["abnormal_return"],
             "first_mover": run.get("first_mover"),
             "overlapping": run.get("status") == "overlapping",
+            "p_value": run.get("p_value"),
+            "t_stat": run.get("t_stat"),
+            "status": run.get("status"),
         })
     return out
 
@@ -362,23 +374,71 @@ def _biggest_from_panel(
     return out
 
 
-def market_response(rows: list[dict[str, Any]]) -> dict[str, Any]:
-    """One market's measured response, cut by kind and window — pure."""
+def _is_gdelt(event_id: Any) -> bool:
+    return str(event_id or "").startswith("event:gdelt-")
+
+
+def _dedup_gdelt(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """One happening, one row — GDELT codes the same day twice as two ids."""
+    seen: set[tuple[str, str, float]] = set()
+    out: list[dict[str, Any]] = []
+    for row in rows:
+        if row.get("ar") is None or not _is_gdelt(row.get("event_id")):
+            out.append(row)
+            continue
+        key = (
+            str(row.get("date") or "")[:10],
+            str(row.get("window") or ""),
+            round(float(row["ar"]), 4),
+        )
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(row)
+    return out
+
+
+def _clean_row(row: dict[str, Any], *, as_of: str | None) -> bool:
+    """Regime-gated, non-overlapping, and (when present) significant."""
+    if row.get("overlapping") is True or str(row.get("status") or "") == "overlapping":
+        return False
+    p_value = row.get("p_value")
+    if p_value is not None:
+        try:
+            if float(p_value) >= CLEAN_P_GATE:
+                return False
+        except (TypeError, ValueError):
+            pass
+    if not as_of or not row.get("date"):
+        return True
+    return regimes_comparable(as_of, str(row["date"]))
+
+
+def regimes_comparable(as_of: str, date: str) -> bool:
+    from core.reasoning import regimes
+
+    return regimes.comparable(as_of, date)
+
+
+def _cells_from(rows: list[dict[str, Any]]) -> tuple[
+    dict[tuple[str, str], list[float]], dict[str, list[bool]], list[str],
+]:
     cells: dict[tuple[str, str], list[float]] = defaultdict(list)
     first: dict[str, list[bool]] = defaultdict(list)
-    for r in rows:
-        if r["ar"] is None:
+    for row in rows:
+        if row["ar"] is None:
             continue
-        kind = kind_of(r["direction"], r["magnitude"])
-        cells[(kind, str(r["window"]))].append(float(r["ar"]))
-        # FIRST MOVER IS ONLY INFORMATION WHEN THE CALENDARS DIVERGE. On a
-        # weekday every market's first session is the same day and all tie
-        # for first — the flag read 100% for every US market. Friday, Saturday
-        # and Sunday events are the ones on which a Sun–Thu exchange and a
-        # Mon–Fri exchange print on different days, so the share is over those.
-        if str(r["window"]) == HEADLINE_WINDOW and _weekend(r.get("date")):
-            first[kind].append(bool(r["first_mover"]))
+        kind = kind_of(row["direction"], row["magnitude"])
+        cells[(kind, str(row["window"]))].append(float(row["ar"]))
+        if str(row["window"]) == HEADLINE_WINDOW and _weekend(row.get("date")):
+            first[kind].append(bool(row["first_mover"]))
     windows = sorted({w for _, w in cells})
+    return cells, first, windows
+
+
+def _response_from_cells(
+    cells: dict[tuple[str, str], list[float]], windows: list[str],
+) -> dict[str, dict[str, Any]]:
     response: dict[str, dict[str, Any]] = {}
     for kind in KINDS:
         by_window: dict[str, Any] = {}
@@ -389,23 +449,64 @@ def market_response(rows: list[dict[str, Any]]) -> dict[str, Any]:
             elif values:
                 by_window[window] = {"n": len(values), "thin": True, **_quantiles(values)}
         response[kind] = by_window
-    headline = None
+    return response
+
+
+def _headline_of(response: dict[str, dict[str, Any]]) -> dict[str, Any] | None:
     for kind in ("sharp_escalation", "escalation"):
         cell = response.get(kind, {}).get(HEADLINE_WINDOW)
         if cell and not cell.get("thin"):
-            headline = {"kind": kind, **cell}
-            break
-    measured = sum(len(v) for v in cells.values())
+            return {"kind": kind, **cell}
+    return None
+
+
+def market_response(
+    rows: list[dict[str, Any]], *, as_of: str | None = None,
+) -> dict[str, Any]:
+    """One market's measured response, cut by kind and window — pure.
+
+    `response` / `headline` keep the historical mix (overlaps in, no regime
+    gate) so a published median does not silently move. `clean_response` /
+    `clean_headline` are the dual: GDELT-deduped, non-overlapping, p-gated,
+    and regime-gated when `as_of` is given.
+    """
+    deduped = _dedup_gdelt(rows)
+    cells, first, windows = _cells_from(deduped)
+    response = _response_from_cells(cells, windows)
+    clean_rows = [row for row in deduped if _clean_row(row, as_of=as_of)]
+    clean_cells, _, clean_windows = _cells_from(clean_rows)
+    clean_response = _response_from_cells(clean_cells, clean_windows or windows)
     return {
-        "measured": measured,
+        "measured": sum(len(v) for v in cells.values()),
         "windows": windows,
         "response": response,
-        "headline": headline,
+        "headline": _headline_of(response),
+        "clean_response": clean_response,
+        "clean_headline": _headline_of(clean_response),
         "first_mover_share": {
             kind: round(sum(1 for f in flags if f) / len(flags), 4)
             for kind, flags in first.items() if flags
         },
     }
+
+
+def _skill_observation(
+    row: dict[str, Any], *, ticker: str, market_type: str, market_id: str, pack: str,
+) -> dict[str, Any] | None:
+    from core.reasoning.transmission_skill import observation_from_row
+
+    return observation_from_row(
+        row, ticker=ticker, market_type=market_type, market_id=market_id, pack=pack,
+    )
+
+
+def _compact_story_skill(observations: list[dict[str, Any]]) -> dict[str, Any] | None:
+    """Cheap in-process walk — the rows are already in memory for the story."""
+    if not observations:
+        return None
+    from core.reasoning import transmission_skill as skill_module
+
+    return skill_module.compact_skill(skill_module.walk(observations, clean=True))
 
 
 def story(
@@ -423,12 +524,13 @@ def story(
     roster = {str(actor["id"]) for actor in pack.actors}
     coding = coding_for(conn, pack.name) if panel is not None else None
     markets: list[dict[str, Any]] = []
+    skill_obs: list[dict[str, Any]] = []
     for market in pack.markets:
         ticker = str(market["ticker"])
         rows = market_rows(
             conn, ticker, pack.name, panel=panel, coding=coding,
         )
-        shape = market_response(rows)
+        shape = market_response(rows, as_of=as_of)
         markets.append({
             "ticker": ticker,
             "name": market.get("name", ticker),
@@ -448,6 +550,17 @@ def story(
                 if shape["measured"] else []
             ),
         })
+        for row in rows:
+            if str(row.get("window") or "") != HEADLINE_WINDOW:
+                continue
+            lifted = _skill_observation(
+                row, ticker=ticker,
+                market_type=str(market.get("market_type") or ""),
+                market_id=str(market.get("id") or ""),
+                pack=pack.name,
+            )
+            if lifted is not None:
+                skill_obs.append(lifted)
     # RANKED BY THE HEADLINE: how far a sharp escalation moves the market at
     # the headline window, largest |median| first — the transmission map's
     # order. Markets without a headline (thin, or unmeasured) go last, and say
@@ -492,6 +605,7 @@ def story(
         ),
         "sovereign_capital": sovereign,
         "coverage": coverage,
+        "transmission_skill": _compact_story_skill(skill_obs),
         "method": (
             "Every number is a quantile of measured event-study rows (the "
             "transmission engine's abnormal returns, calendar-aware, per "
