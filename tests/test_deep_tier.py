@@ -56,6 +56,10 @@ _ROSTER = [
      "cow_ccode": 710, "iso3": "CHN"},
     {"node_id": "actor:cow-630", "name": "Iran", "actor_type": "state",
      "cow_ccode": 630, "iso3": "IRN"},
+    # A state whose window CLOSES inside the 1972 archive, which is what the
+    # censor tests need now that Austria-Hungary sits entirely before the floor.
+    {"node_id": "actor:cow-817", "name": "Republic of Vietnam",
+     "actor_type": "state", "cow_ccode": 817, "iso3": "VNM"},
 ]
 
 
@@ -81,13 +85,16 @@ AUH,300,Austria-Hungary,1816,1,1,1918,11,3,2016
 BAD,267,Baden,1816,1,1,1871,1,18,2016
 EST,366,Estonia,1918,11,11,1940,6,16,2016
 EST,366,Estonia,1991,9,6,2016,12,31,2016
+RVN,817,Republic of Vietnam,1954,6,4,1975,4,30,2016
 """
 
 
 def test_state_system_windows_and_the_censor(conn, tmp_path):
     result = cow.load_state_system(conn, _write(tmp_path, "states.csv", _STATES))
-    assert result.written == 3  # USA, Austria-Hungary, Estonia
-    assert result.reasons == {"left the system before the archive opens": 1}  # Baden
+    assert result.written == 3  # USA, Estonia, South Vietnam
+    # Baden (1871) and Austria-Hungary (1918) both left the system before the
+    # 1972 floor, so the archive has no window for either.
+    assert result.reasons == {"left the system before the archive opens": 2}
 
     rows = {
         r["node_id"]: r
@@ -100,7 +107,10 @@ def test_state_system_windows_and_the_censor(conn, tmp_path):
     # Right-censored membership stays OPEN — the US did not leave the system
     # in 2016; the dataset merely stops there.
     assert rows["actor:cow-2"]["state_to"] == ""
-    assert rows["actor:cow-300"]["state_to"] == "1918-11-03"
+    # A window that closes INSIDE the archive keeps the date it closed on.
+    assert rows["actor:cow-817"]["state_to"] == "1975-04-30"
+    # An empire that dissolved before the floor is never dated at all.
+    assert not rows["actor:cow-300"]["state_from"]
     # Two spells collapse to the envelope; the docstring records the loss.
     assert rows["actor:cow-366"]["state_from"] == "1918-11-11"
     assert rows["actor:cow-366"]["state_to"] == ""
@@ -122,18 +132,18 @@ def test_pack_curation_survives_the_state_loader(conn, tmp_path):
 
 _MIDA = """
 dispnum,stday,stmon,styear,endday,endmon,endyear,outcome,settle,fatality,fatalpre,maxdur,mindur,hiact,hostlev,recip,numa,numb,ongo2014,version
-10,-9,7,1911,1,11,1911,6,1,0,0,120,100,17,4,1,1,1,0,5
-11,5,10,1962,20,11,1962,6,1,0,0,46,46,7,3,0,1,1,0,5
+10,-9,7,1980,1,11,1980,6,1,0,0,120,100,17,4,1,1,1,0,5
+11,5,10,1998,20,11,1998,6,1,0,0,46,46,7,3,0,1,1,0,5
 12,1,1,1880,1,2,1880,6,1,0,0,31,31,17,4,0,1,1,0,5
 13,1,6,1990,3,6,1990,6,1,0,0,2,2,1,1,0,1,1,0,5
 """
 
 _MIDB = """
 dispnum,stabb,ccode,stday,stmon,styear,endday,endmon,endyear,sidea,revstate,revtype1,revtype2,fatality,fatalpre,hiact,hostlev,orig,version
-10,GMY,255,-9,7,1911,1,11,1911,1,1,1,-9,0,0,17,4,1,5
-10,FRN,220,-9,7,1911,1,11,1911,0,0,-9,-9,0,0,7,3,1,5
-11,USA,2,5,10,1962,20,11,1962,1,1,3,-9,0,0,7,3,1,5
-11,CUB,40,5,10,1962,20,11,1962,0,0,-9,-9,0,0,7,3,1,5
+10,GMY,255,-9,7,1980,1,11,1980,1,1,1,-9,0,0,17,4,1,5
+10,FRN,220,-9,7,1980,1,11,1980,0,0,-9,-9,0,0,7,3,1,5
+11,USA,2,5,10,1998,20,11,1998,1,1,3,-9,0,0,7,3,1,5
+11,CUB,40,5,10,1998,20,11,1998,0,0,-9,-9,0,0,7,3,1,5
 12,UKG,200,1,1,1880,1,2,1880,1,1,1,-9,0,0,17,4,1,5
 12,FRN,220,1,1,1880,1,2,1880,0,0,-9,-9,0,0,7,3,1,5
 13,USA,2,1,6,1990,3,6,1990,1,1,1,-9,0,0,1,1,1,5
@@ -153,7 +163,7 @@ UKG,200,United Kingdom,1816,1,1,2016,12,31,2016
         _write(tmp_path, "mida.csv", _MIDA),
         _write(tmp_path, "midb.csv", _MIDB),
     )
-    assert result.written == 2  # Agadir 1911, Cuba 1962
+    assert result.written == 2  # Germany–France 1980, US–Cuba 1998
     assert result.reasons == {
         "before the archive opens": 1,             # 1880
         "hostility 1 — no militarized action, no event": 1,  # 1990
@@ -169,16 +179,16 @@ UKG,200,United Kingdom,1816,1,1,2016,12,31,2016
             "e.fidelity_tier AS fidelity_tier",
         )
     }
-    agadir = rows["event:cow-mid-10"]
+    month_only = rows["event:cow-mid-10"]
     # Day unknown (-9) → month resolution, truncated ISO date; hostility 4 →
     # CAMEO 190 via the crosswalk, harmonized Goldstein-equivalent -9.0.
-    assert agadir["event_time"] == "1911-07"
-    assert agadir["resolution"] == "month"
-    assert agadir["cameo"] == "190"
-    assert agadir["goldstein"] == -9.0
-    assert agadir["source_scale"] == "cow_hostility"
-    assert agadir["fidelity_tier"] == "deep_structured"
-    assert rows["event:cow-mid-11"]["event_time"] == "1962-10-05"
+    assert month_only["event_time"] == "1980-07"
+    assert month_only["resolution"] == "month"
+    assert month_only["cameo"] == "190"
+    assert month_only["goldstein"] == -9.0
+    assert month_only["source_scale"] == "cow_hostility"
+    assert month_only["fidelity_tier"] == "deep_structured"
+    assert rows["event:cow-mid-11"]["event_time"] == "1998-10-05"
 
     initiator = kuzu_store.query(
         conn,
@@ -192,7 +202,7 @@ _ALLIANCES = """
 version4id,ccode1,state_name1,ccode2,state_name2,dyad_st_day,dyad_st_month,dyad_st_year,dyad_end_day,dyad_end_month,dyad_end_year,left_censor,right_censor,defense,neutrality,nonaggression,entente,version
 1,2,"United States",200,"United Kingdom",4,4,1949,,,,0,1,1,0,0,0,4.1
 1,200,"United Kingdom",2,"United States",4,4,1949,,,,0,1,1,0,0,0,4.1
-2,200,"United Kingdom",220,"France",8,4,1904,,8,1912,0,0,0,0,0,1,4.1
+2,200,"United Kingdom",220,"France",8,4,1974,,8,1992,0,0,0,0,0,1,4.1
 3,2,"United States",40,"Cuba",1,1,1830,1,1,1860,0,0,1,0,0,0,4.1
 """
 
@@ -204,7 +214,7 @@ CUB,40,Cuba,1902,5,20,2016,12,31,2016
 UKG,200,United Kingdom,1816,1,1,2016,12,31,2016
 """))
     result = cow.load_alliances(conn, _write(tmp_path, "alliances.csv", _ALLIANCES))
-    # NATO once (mirror row dropped), Entente Cordiale once; the 1830-1860
+    # NATO once (mirror row dropped), the UK–France entente once; the 1830-1860
     # alliance ended before the archive opens.
     assert result.written == 2
     assert result.reasons == {"ended before the archive opens": 1}
@@ -215,25 +225,26 @@ UKG,200,United Kingdom,1816,1,1,2016,12,31,2016
         "RETURN a.node_id AS a, b.node_id AS b, r.valid_from AS valid_from, "
         "r.valid_to AS valid_to ORDER BY valid_from",
     )
-    entente, nato = rows[0], rows[1]
+    # NATO's 1949 start STRADDLES the floor and is kept whole (core/archive.py).
+    nato, entente = rows[0], rows[1]
     assert (entente["a"], entente["b"]) == ("actor:cow-200", "actor:cow-220")
-    assert entente["valid_from"] == "1904-04-08"
-    assert entente["valid_to"] == "1912-08"  # end day missing → month truncation
+    assert entente["valid_from"] == "1974-04-08"
+    assert entente["valid_to"] == "1992-08"  # end day missing → month truncation
     assert nato["valid_to"] == ""  # right-censored: still in force
 
 
 _CINC = """
 statenme,stateabb,ccode,year,milex,milexsource,milexnote,milper,milpersource,milpernote,irst,irstsource,irstnote,irstqualitycode,irstanomalycode,pec,pecsource,pecnote,pecqualitycode,pecanomalycode,tpop,tpopsource,tpopnote,tpopqualitycode,tpopanomalycode,upop,upopsource,upopnote,upopqualitycode,upopanomalycode,upopgrowth,upopgrowthsource,cinc,version
-United States of America,USA,2,1913,244,,,164,,,31300,,,A,,541698,,,A,,97227,,,A,,28453,,,A,,2.1,,0.2223,7
+United States of America,USA,2,1990,244,,,164,,,31300,,,A,,541698,,,A,,97227,,,A,,28453,,,A,,2.1,,0.2223,7
 United States of America,USA,2,1900,191,,,125,,,10188,,,A,,244535,,,A,,76391,,,A,,19016,,,A,,3.5,,0.1867,7
-Ruritania,RUR,999,1913,1,,,1,,,1,,,A,,1,,,A,,1,,,A,,1,,,A,,0.1,,0.0001,7
+Ruritania,RUR,999,1990,1,,,1,,,1,,,A,,1,,,A,,1,,,A,,1,,,A,,0.1,,0.0001,7
 """
 
 
 def test_cinc_seeds_clout_estimates_for_states_the_graph_knows(conn, tmp_path):
     cow.load_state_system(conn, _write(tmp_path, "states.csv", _STATES))
     result = cow.load_cinc(conn, _write(tmp_path, "nmc.csv", _CINC))
-    assert result.written == 1  # USA 1913
+    assert result.written == 1  # USA 1990
     assert result.reasons == {
         "before the archive opens": 1,      # 1900
         "state not in the graph": 1,        # Ruritania
@@ -246,7 +257,7 @@ def test_cinc_seeds_clout_estimates_for_states_the_graph_knows(conn, tmp_path):
     )[0]
     assert row["attribute"] == "clout"
     assert row["mean"] == pytest.approx(0.2223)
-    assert row["as_of"] == "1913-12-31"
+    assert row["as_of"] == "1990-12-31"
     assert row["method"] == "cinc_seed"
 
 
@@ -320,12 +331,12 @@ def test_shiller_a_missing_series_cell_drops_only_that_cell():
 
 _IGO_STATE_YEAR = """
 ccode,year,state,NATO,OPEC,LON
-2,1903,"usa",0,-1,0
-2,1904,"usa",1,-1,0
-2,1948,"usa",0,-1,1
-2,1949,"usa",1,-1,1
-2,1950,"usa",1,-1,1
-2,1951,"usa",1,-1,0
+2,1960,"usa",1,-1,0
+2,1961,"usa",0,-1,0
+2,1988,"usa",0,-1,1
+2,1989,"usa",1,-1,1
+2,1990,"usa",1,-1,1
+2,1991,"usa",1,-1,0
 300,1918,"auh",0,-1,-9
 """
 
@@ -335,8 +346,8 @@ def test_igo_membership_spells_fold_and_censor(conn, tmp_path):
     result = cow.load_igo_memberships(
         conn, _write(tmp_path, "igo.csv", _IGO_STATE_YEAR)
     )
-    # USA-NATO 1949-1951 (censored open: 1951 is the file's last year),
-    # USA-LON 1948-1950; USA-NATO 1904-1904 ended before the archive;
+    # USA-NATO 1989-1991 (censored open: 1991 is the file's last year),
+    # USA-LON 1988-1990; USA-NATO 1960-1960 ended before the archive;
     # Austria-Hungary's row is not membership (value 0/-1) so nothing writes.
     assert result.written == 2
     assert result.reasons == {"membership ended before the archive opens": 1}
@@ -351,10 +362,10 @@ def test_igo_membership_spells_fold_and_censor(conn, tmp_path):
         )
     }
     nato = rows[("actor:cow-2", "actor:igo-nato")]
-    assert nato["valid_from"] == "1949"
+    assert nato["valid_from"] == "1989"
     assert nato["valid_to"] == ""  # reaches the dataset's last year: open
     lon = rows[("actor:cow-2", "actor:igo-lon")]
-    assert (lon["valid_from"], lon["valid_to"]) == ("1948", "1950")
+    assert (lon["valid_from"], lon["valid_to"]) == ("1988", "1990")
     # The IGO node itself is an org actor the graph can traverse through.
     igo = kuzu_store.query(
         conn,

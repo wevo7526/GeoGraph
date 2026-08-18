@@ -430,7 +430,19 @@ def list_dyads(request: Request, region: str | None = None) -> dict[str, Any]:
         "MATCH (d:Dyad) RETURN d.node_id AS node_id, d.name AS name, "
         "d.actor_a_id AS actor_a_id, d.actor_b_id AS actor_b_id, "
         "d.ewma_baseline AS ewma_baseline, d.ewma_as_of AS ewma_as_of "
-        "ORDER BY d.ewma_baseline, d.node_id",
+        "ORDER BY d.node_id",
+    )
+    # A ROSTER DYAD HAS NO BASELINE UNTIL HEAD B CODES IT. `pack.dyad_nodes()`
+    # writes every declared pair so the explorer and the games have something to
+    # hang a measurement on, and Kuzu orders NULL FIRST — so "most conflictual"
+    # opened with the pairs holding no coded record at all. Uncoded pairs sort
+    # last and keep a null baseline: unknown is not zero and not peaceful.
+    rows.sort(
+        key=lambda r: (
+            r["ewma_baseline"] is None,
+            r["ewma_baseline"] if r["ewma_baseline"] is not None else 0.0,
+            r["node_id"],
+        )
     )
     if region:
         from core import packs

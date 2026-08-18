@@ -6,9 +6,11 @@ map are a TRAINING SET. Live GDELT 2.0 is an overlay scored against those
 weights and NEVER written as graph edges.
 
 When frozen (the default), harvest does not append GDELT 1.0 days onto the
-corpus, the study does not grow `event_study_runs` from new wire, and the
-games job re-solves because the 15-minute export moved — not because AFFECTED
-grew. Set `GEOGRAPH_SNAPSHOT_FROZEN=0` to grow the training set again.
+corpus and the study does not grow `event_study_runs` from new wire. The
+overlay is applied at READ time and re-solves nothing: a region solve is
+minutes and gigabytes inside the serving process, so treating a 15-minute
+file as a reason to re-solve OOM-killed the container on 2026-08-18. Set
+`GEOGRAPH_SNAPSHOT_FROZEN=0` to grow the training set again.
 """
 
 from __future__ import annotations

@@ -216,9 +216,21 @@ def test_an_unknown_dyad_is_a_404(client):
 
 
 def test_dyads_are_listed_most_conflictual_first(client):
+    """AND AN UNCODED PAIR IS LAST, not first.
+
+    `pack.dyad_nodes()` writes a Dyad for every declared relation so the
+    explorer and the games have a pair to hang measurements on, and those
+    carry no `ewma_baseline` until Head B codes an event for them. Kuzu orders
+    NULL FIRST, so "most conflictual" opened with the pairs holding no coded
+    record at all.
+    """
     rows = client.get("/api/dyads").json()["rows"]
-    baselines = [r["ewma_baseline"] for r in rows]
-    assert baselines == sorted(baselines)
+    coded = [r["ewma_baseline"] for r in rows if r["ewma_baseline"] is not None]
+    uncoded = [r["ewma_baseline"] for r in rows if r["ewma_baseline"] is None]
+    assert coded == sorted(coded)
+    assert coded, "the mena spine codes at least one dyad"
+    # Every null sits after every number: unknown is not the worst reading.
+    assert [r["ewma_baseline"] for r in rows] == coded + uncoded
 
 
 # ── the case study ───────────────────────────────────────────────────────────

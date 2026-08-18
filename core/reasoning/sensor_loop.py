@@ -137,16 +137,16 @@ def update_from_effect(
         "RETURN i.node_id AS initiator, t.node_id AS target",
         {"id": event_node_id},
     )
-    actors = actors[0] if actors else {"initiator": None, "target": None}
-    if not actors.get("initiator") and not actors.get("target"):
+    pair: dict[str, Any] = actors[0] if actors else {"initiator": None, "target": None}
+    if not pair.get("initiator") and not pair.get("target"):
         from core.wire import serving
 
         row = serving.event(event_node_id) or {}
-        actors = {"initiator": row.get("initiator_id"), "target": row.get("target_id")}
+        pair = {"initiator": row.get("initiator_id"), "target": row.get("target_id")}
     written: list[dict[str, Any]] = []
     edges: list[dict[str, Any]] = []
     for actor_id in dict.fromkeys(
-        a for a in (actors["initiator"], actors["target"]) if a
+        a for a in (pair["initiator"], pair["target"]) if a
     ):
         prior_rows = kuzu_store.query(
             conn,

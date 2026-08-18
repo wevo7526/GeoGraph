@@ -92,10 +92,10 @@ def score(
     out: list[dict[str, Any]] = []
     for row in ordered:
         scored = dict(row)
-        did = row.get("dyad_id")
+        dyad = row.get("dyad_id")
         gold = row.get("goldstein")
-        if did and gold is not None:
-            result = tracker.observe(str(did), float(gold))
+        if dyad and gold is not None:
+            result = tracker.observe(str(dyad), float(gold))
             scored.update(result)
             scored["direction"] = result["escalation_direction"]
             scored["magnitude"] = result["escalation_magnitude"]

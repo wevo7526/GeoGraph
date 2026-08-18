@@ -109,7 +109,8 @@ def _open_graph(app: FastAPI, settings: Any) -> None:
     except Exception as exc:  # noqa: BLE001 - see docstring
         app.state.graph = None
         app.state.graph_error = str(exc)
-    _start_jobs(app, settings)
+    if getattr(app.state, "ready_for_jobs", False):
+        _start_jobs(app, settings)
 
 
 def _start_jobs(app: FastAPI, settings: Any) -> None:
@@ -124,6 +125,14 @@ def _start_jobs(app: FastAPI, settings: Any) -> None:
         app.state.jobs = None
         return
     if getattr(app.state, "jobs", None) is not None or app.state.graph is None:
+        return
+    # NOT WHILE THE CORPUS IS WARMING. The boot thread opens the graph and
+    # calls this, and in API-first mode that happens DURING serving.warm() —
+    # so a region-sized job (markets, games) ran beside the warm's ~1.3 GB.
+    # On 2026-08-18 the container was killed at 7.76 GB of 8 GB, roughly 90
+    # seconds after "markets starting", on every restart. The warm sets the
+    # flag and calls this again; whichever finishes last starts the loop.
+    if not getattr(app.state, "ready_for_jobs", False):
         return
     try:
         from core.api import jobs as jobs_module
@@ -373,6 +382,12 @@ def create_app() -> FastAPI:
             # games and precedent surfaces; its failure must survive to
             # /api/health.
             app.state.corpus_error = f"corpus: {exc}"
+        # Jobs must not start while the corpus is still warming: on 2026-08-18
+        # the markets job overlapped serving.warm() (~1.3 GB) and the kernel
+        # killed the 8 GB container. The boot thread opens the graph; this
+        # flag is what lets it start the scheduler only after the warm.
+        app.state.ready_for_jobs = True
+        _start_jobs(app, settings)
         try:
             yield
         finally:
@@ -396,6 +411,7 @@ def create_app() -> FastAPI:
     app.state.graph = None
     app.state.graph_error = None
     app.state.corpus_error = None
+    app.state.ready_for_jobs = False
     app.state.jobs = None
     app.state.jobs_error = None
 

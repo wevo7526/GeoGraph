@@ -16,6 +16,7 @@ region-wide read over AFFECTED is seconds and grows with the archive.
 from __future__ import annotations
 
 from collections import defaultdict
+from collections.abc import Iterator
 from typing import Any
 
 from core.graph import kuzu_store
@@ -110,9 +111,9 @@ def coding_for(conn: Any, pack_name: str) -> dict[str, dict[str, Any]]:
     except Exception:  # noqa: BLE001 - names are display-only
         names = {}
     try:
-        stream = serving.iter_rows_of(pack_name)
+        stream: Iterator[dict[str, Any]] = serving.iter_rows_of(pack_name)
     except Exception:  # noqa: BLE001 - corpus-less tests stay on the graph
-        stream = []
+        stream = iter(())
     for row in stream:
         event_id = str(row["node_id"])
         if event_id in index:

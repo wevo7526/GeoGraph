@@ -21,8 +21,7 @@ from typing import Any
 from core import packs
 from core import settings as settings_module
 from core.panel import pg_store
-from core.reasoning import backtest, forecasting
-from core.reasoning import strategy
+from core.reasoning import backtest, forecasting, strategy
 
 
 def run(pack_name: str) -> dict[str, Any] | None:

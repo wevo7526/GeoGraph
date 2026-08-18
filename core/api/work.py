@@ -53,6 +53,25 @@ def _pack_names() -> list[str]:
         return []
 
 
+#: Headroom a job wants before it starts a REGION-SIZED read. The scheduler's
+#: own guard asks once, before the job; this is the check inside a job that
+#: loops over regions, because the second region is where the first region's
+#: working set is still resident.
+REGION_HEADROOM = 0.30
+
+
+def _memory_is_tight(floor: float = REGION_HEADROOM) -> bool:
+    """Is the container too close to its limit to load another region?
+
+    An OOM kill is not catchable — the kernel takes the process mid-write. On
+    2026-08-18 the games and markets jobs each walked all three regions in one
+    slice, peaked at 7.76 GB of 8 GB, and the container restart-looped.
+    """
+    from core.api.jobs import memory_is_tight
+
+    return memory_is_tight(floor)
+
+
 # ── the measurement backlog ────────────────────────────────────────────────
 
 
@@ -553,7 +572,6 @@ def games(conn: Any, deadline: float) -> dict[str, Any]:
     from core.games import context as context_module
     from core.games import scenarios
     from core.games import solve as solve_module
-    from core.graph import kuzu_store
     from core.panel import pg_store
 
     panel = _panel()
@@ -577,9 +595,7 @@ def games(conn: Any, deadline: float) -> dict[str, Any]:
             # 2026-08-18 that peaked at 7.76 GB of 8 GB and the kernel killed
             # the container on boot. A stale region answers `resolving: true`
             # until its turn — that is the honest fallback, not a live solve.
-            limit = kuzu_store.container_memory_bytes()
-            used = kuzu_store.memory_in_use_bytes()
-            if limit and used is not None and (1.0 - used / limit) < 0.30:
+            if _memory_is_tight():
                 return {
                     "solved": solved_now,
                     "skipped": "memory tight",
@@ -1071,10 +1087,29 @@ def markets(conn: Any, deadline: float) -> dict[str, Any]:
         )
         for name in _pack_names():
             was = _markets_at.get(name)
+            if was is None:
+                # THE WATERMARK OUTLIVES THE PROCESS. It used to live only in
+                # this dict, so every restart rebuilt all three stories — the
+                # heaviest read in the loop, running while the corpus was
+                # still warming. 2026-08-18: that pair took the container to
+                # 7.76 GB of 8 GB and the kernel killed it on boot.
+                #
+                # A story persisted BEFORE the stamp existed adopts the current
+                # size rather than being rebuilt: a restart-looping container
+                # must not answer "how stale is this?" by paying for all three,
+                # and the next 5% of archive growth rebuilds it anyway.
+                stored = pg_store.market_story(panel, name)
+                if stored is not None:
+                    built_at = stored.get("built_at_affected")
+                    was = _markets_at[name] = (
+                        built_at if isinstance(built_at, int) else affected
+                    )
             if was is not None and was > 0 and abs(affected - was) / was < MARKETS_GROWTH:
                 continue
             if time.monotonic() >= deadline:
                 return {"built": done, "skipped": "slice spent"}
+            if _memory_is_tight():
+                return {"built": done, "skipped": "memory tight", "waiting": name}
             pack = packs.load(name)
             fund_ids = {str(a["id"]) for a in pack.actors if a.get("actor_type") == "swf"}
             game_map = pg_store.game_solution(
@@ -1100,14 +1135,16 @@ def markets(conn: Any, deadline: float) -> dict[str, Any]:
                 coverage=coverage, as_of=as_of, dyad_names=dyad_names,
                 panel=panel,
             )
+            payload["built_at_affected"] = affected
             pg_store.record_market_story(panel, name, payload)
             _markets_at[name] = affected
             done.append(name)
+            # ONE REGION PER TICK, for the reason games is: three region reads
+            # in one slice is several gigabytes inside the serving process.
+            return {"built": done, "affected": affected}
     finally:
         panel.close()
-    if not done:
-        return {"note": "every region's markets story is current", "affected": affected}
-    return {"built": done, "affected": affected}
+    return {"note": "every region's markets story is current", "affected": affected}
 
 
 # ── the counts behind /api/stats ───────────────────────────────────────────

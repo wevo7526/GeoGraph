@@ -768,6 +768,41 @@ def test_the_games_job_does_not_refresh_live_or_solve_every_region():
     assert "one region per tick" in src.lower() or "ONE REGION PER TICK" in src
 
 
+def test_the_markets_job_builds_one_region_and_remembers_across_restarts():
+    """A PROCESS-LOCAL WATERMARK IS NO WATERMARK ON A CRASHING CONTAINER.
+
+    `_markets_at` starts empty in every process, so each restart rebuilt all
+    three stories — the heaviest read in the loop, and on 2026-08-18 it ran
+    while the corpus was still warming and the kernel took the container at
+    7.76 GB of 8 GB. The story now carries the archive size it was built at,
+    so a restart reads it back instead of re-earning it.
+    """
+    import inspect
+
+    from core.api import work
+
+    src = inspect.getsource(work.markets)
+    assert "built_at_affected" in src
+    assert "_memory_is_tight()" in src
+    # It returns as soon as one region is written, rather than walking on.
+    body = src.split("record_market_story", 1)[1]
+    assert body.index("return {") < body.index("finally")
+
+
+def test_jobs_wait_for_the_corpus_warm():
+    """serving.warm() holds ~1.3 GB and the boot thread opens the graph while
+    it runs, so the scheduler used to start mid-warm and put a region-sized
+    job beside it. `ready_for_jobs` is the gate."""
+    import inspect
+
+    from core.api import app as app_module
+
+    src = inspect.getsource(app_module)
+    assert "ready_for_jobs" in src
+    start = src.index("def _start_jobs")
+    assert "ready_for_jobs" in src[start : start + 1200]
+
+
 def test_harvest_is_a_noop_while_the_snapshot_is_frozen(monkeypatch, tmp_path):
     from core.api import work
 
