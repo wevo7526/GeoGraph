@@ -53,6 +53,29 @@ def _pack_names() -> list[str]:
         return []
 
 
+def _newest_event_time(conn: Any) -> str:
+    """The archive's newest timestamp, without re-parsing 1.33M rows.
+
+    `forecasting.rows_from_conn` unions the graph with a full corpus parse —
+    ~1.4 GB of dicts that `serving.warm()` already threw away. The slim view
+    is already in memory; the graph max is the fallback when it is not.
+    """
+    try:
+        from core.wire import serving
+
+        rows, _truncated = serving.events_window(
+            None, None, None, 1, newest_first=True
+        )
+        if rows:
+            return str(rows[0].get("event_time") or "")
+    except Exception:  # noqa: BLE001 - a closed corpus must not force a re-parse
+        pass
+    from core.graph import kuzu_store
+
+    rows = kuzu_store.query(conn, "MATCH (e:Event) RETURN max(e.event_time) AS n")
+    return str(rows[0]["n"] or "") if rows else ""
+
+
 #: Headroom a job wants before it starts a REGION-SIZED read. The scheduler's
 #: own guard asks once, before the job; this is the check inside a job that
 #: loops over regions, because the second region is where the first region's
@@ -746,7 +769,10 @@ def calibration(conn: Any, deadline: float) -> dict[str, Any]:
     from core.reasoning import calibration as calibration_module
     from core.reasoning import forecasting
 
-    rows = forecasting.all_dyad_event_rows(settings_module.load().kuzu_db_path)
+    # The API already holds the write lock — a second `kuzu.Database` here
+    # is the configuration the job comments exist to forbid. And this is the
+    # last heavy read on the first post-boot pass; use the connection we have.
+    rows = forecasting.rows_from_conn(conn)
     size = len(rows)
     done: list[str] = []
     for name in _pack_names():
@@ -809,9 +835,11 @@ def rescore(conn: Any, deadline: float) -> dict[str, Any]:
 #: what the wire and study jobs are adding.
 FREEZE_GROWTH = 0.05
 
-#: Event count at the last freeze, per process. The Forecast nodes carry their
-#: own `generated_at`, so a restart simply re-freezes once — cheap insurance
-#: against a stale call, which is the failure that matters here.
+#: Event count at the last freeze, per process. Forecast nodes persist on the
+#: graph: a restart ADOPTS them rather than re-freezing. Re-freezing on every
+#: boot was "cheap insurance" until it was the crash loop — 6.0 GB of a 7.45 GB
+#: container on 2026-08-17, and with the corpus resident after boot the kernel
+#: killed the process on every restart.
 _frozen_at: dict[str, int] = {}
 
 
@@ -854,6 +882,21 @@ def forecasts(conn: Any, deadline: float) -> dict[str, Any]:
     done: list[dict[str, Any]] = []
     for name in _pack_names():
         was = _frozen_at.get(name)
+        if was is None:
+            # THE WATERMARK OUTLIVES THE PROCESS. Same lesson as markets:
+            # `_frozen_at` starts empty, so every restart re-froze every
+            # region. That is the heaviest job in the loop, and after boot the
+            # corpus is already resident — 2026-08-18 the kernel took the
+            # container. The nodes are already on the graph; adopt the current
+            # archive size. The next 5% of growth re-freezes.
+            existing = kuzu_store.query(
+                conn,
+                "MATCH (f:Forecast) WHERE f.region_pack = $r RETURN count(f) AS n",
+                {"r": name},
+            )
+            if existing and int(existing[0]["n"] or 0) > 0:
+                _frozen_at[name] = size
+                was = size
         if was is not None and was > 0 and abs(size - was) / was < FREEZE_GROWTH:
             continue
         if time.monotonic() >= deadline:
@@ -901,13 +944,36 @@ def scores(conn: Any, deadline: float) -> dict[str, Any]:
         "f.generated_at AS generated_at, f.horizon_end AS horizon_end, "
         "f.scenarios_json AS scenarios_json, "
         "f.frozen_inputs_json AS frozen_inputs_json, "
-        "f.boundary_statement AS boundary_statement ORDER BY f.node_id",
+        "f.boundary_statement AS boundary_statement, "
+        "f.brier_score AS brier_score, f.retrodiction_json AS retrodiction_json "
+        "ORDER BY f.node_id",
     )
     if not rows:
         return {"skipped": "no frozen forecasts"}
 
+    # CHEAP LATEST, not the 1.33M-row archive. `rows_from_conn` re-parses the
+    # corpus (~1.4 GB of dicts) that `serving.warm()` already evicted — and
+    # on a restart that parse ran on the first job tick, on top of the freeze.
+    # Ask the warmed slim view (or the graph) for the newest timestamp first;
+    # skip the archive read when nothing is newly scoreable.
+    latest = _newest_event_time(conn)
+    needs_brier = False
+    needs_retro = False
+    for row in rows:
+        mode = row.get("mode")
+        if mode == "near_term":
+            horizon_end = str(row.get("horizon_end") or "")
+            if (
+                horizon_end and latest and latest >= horizon_end
+                and row.get("brier_score") in (None, "")
+            ):
+                needs_brier = True
+        elif mode == "long_horizon" and not row.get("retrodiction_json"):
+            needs_retro = True
+    if not needs_brier and not needs_retro:
+        return {"note": "nothing newly scoreable", "forecasts": len(rows)}
+
     archive_rows = forecasting.rows_from_conn(conn)
-    latest = max((str(r["event_time"]) for r in archive_rows), default="")
     episodes = calibration_module.episode_quarters(archive_rows)
 
     retro_by_region: dict[str, str] = {}
@@ -928,7 +994,8 @@ def scores(conn: Any, deadline: float) -> dict[str, Any]:
     updates: list[dict[str, Any]] = []
     scored = 0
     for row in rows:
-        base = {k: (v if v is not None else "") for k, v in row.items()}
+        base = {k: (v if v is not None else "") for k, v in row.items()
+                if k not in ("brier_score", "retrodiction_json")}
         scenarios = json.loads(str(row["scenarios_json"]) or "[]")
         frozen = json.loads(str(row["frozen_inputs_json"]) or "{}")
         if row["mode"] == "near_term":
@@ -984,6 +1051,13 @@ def metrics(conn: Any, deadline: float) -> dict[str, Any]:
     rows = kuzu_store.query(conn, "MATCH (e:Event) RETURN count(e) AS n")
     size = int(rows[0]["n"]) if rows else 0
     was = _metrics_at.get("all")
+    if was is None:
+        existing = kuzu_store.query(
+            conn, "MATCH (n:NetworkMetric) RETURN count(n) AS n"
+        )
+        if existing and int(existing[0]["n"] or 0) > 0:
+            _metrics_at["all"] = size
+            was = size
     if was is not None and was > 0 and abs(size - was) / was < FREEZE_GROWTH:
         return {"note": "network metrics are current", "archive": size}
 
@@ -1029,9 +1103,26 @@ def backtest(conn: Any, deadline: float) -> dict[str, Any]:
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
 
+    persisted: set[str] = set()
+    panel = _panel()
+    if panel is not None:
+        try:
+            from core.panel import pg_store
+
+            for name in _pack_names():
+                if pg_store.backtest_run(panel, name) is not None:
+                    persisted.add(name)
+        finally:
+            panel.close()
+
     done: list[str] = []
     for name in _pack_names():
         was = _backtest_at.get(name)
+        if was is None and name in persisted:
+            # Ledger lives in Postgres. A restart that re-walked every region
+            # stacked another gigabyte on the first job tick after boot.
+            _backtest_at[name] = size
+            was = size
         if was is not None and was > 0 and abs(size - was) / was < FREEZE_GROWTH:
             continue
         if time.monotonic() >= deadline:

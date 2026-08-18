@@ -350,6 +350,7 @@ def computed_runs(
     *,
     ticker: str | None = None,
     event_id: str | None = None,
+    event_ids: list[str] | None = None,
     window: str | None = None,
 ) -> list[dict[str, Any]]:
     """Measured (non-skip) event-study rows — the panel's AFFECTED.
@@ -366,6 +367,11 @@ def computed_runs(
     if event_id:
         clauses.append("event_node_id = %s")
         params.append(event_id)
+    if event_ids is not None:
+        if not event_ids:
+            return []
+        clauses.append("event_node_id = ANY(%s)")
+        params.append(list(event_ids))
     if window:
         clauses.append("effect_window = %s")
         params.append(window)

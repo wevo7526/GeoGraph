@@ -113,36 +113,49 @@ def _from_panel(
             "MATCH (m:Market) RETURN m.node_id AS id, m.name AS name, m.ticker AS ticker",
         )
     }
+    # ONLY THE EVENTS THIS REGION CAN CODE. `computed_runs()` with no filter
+    # materialises every measured row in one statement — the same unbounded
+    # read that killed the refill job — and `context.build` asks for this on
+    # the first games/markets tick after boot. Chunk the ids so a region's
+    # working set is that region's rows, not the whole panel.
+    wanted = [
+        eid for eid, meta in coding.items()
+        if (meta.get("region_pack") or "") in (region_pack, "")
+    ]
+    if not wanted:
+        return []
     out: list[dict[str, Any]] = []
-    for run in pg_store.computed_runs(panel):
-        event_id = str(run["event_node_id"])
-        meta = coding.get(event_id)
-        if meta is None:
-            continue
-        pack = meta.get("region_pack") or ""
-        if pack not in (region_pack, ""):
-            continue
-        if event_id.startswith("event:gdelt-") and str(run["window"]) != HEADLINE_WINDOW:
-            continue
-        ticker = str(run["market_ticker"])
-        market_id, market_name = markets.get(ticker, (f"market:{ticker}", ticker))
-        initiator = meta.get("initiator_id")
-        target = meta.get("target_id")
-        dyad = None
-        if initiator and target:
-            dyad = escalation.dyad_id(initiator, target)
-        out.append({
-            "event_id": event_id,
-            "event_time": meta.get("date"),
-            "quad_class": meta.get("quad_class"),
-            "magnitude": meta.get("magnitude"),
-            "dyad_id": dyad,
-            "initiator_id": initiator,
-            "target_id": target,
-            "market_id": market_id,
-            "market_name": market_name,
-            "abnormal_return": run["abnormal_return"],
-        })
+    chunk = 4_000
+    for start in range(0, len(wanted), chunk):
+        for run in pg_store.computed_runs(panel, event_ids=wanted[start:start + chunk]):
+            event_id = str(run["event_node_id"])
+            meta = coding.get(event_id)
+            if meta is None:
+                continue
+            pack = meta.get("region_pack") or ""
+            if pack not in (region_pack, ""):
+                continue
+            if event_id.startswith("event:gdelt-") and str(run["window"]) != HEADLINE_WINDOW:
+                continue
+            ticker = str(run["market_ticker"])
+            market_id, market_name = markets.get(ticker, (f"market:{ticker}", ticker))
+            initiator = meta.get("initiator_id")
+            target = meta.get("target_id")
+            dyad = None
+            if initiator and target:
+                dyad = escalation.dyad_id(initiator, target)
+            out.append({
+                "event_id": event_id,
+                "event_time": meta.get("date"),
+                "quad_class": meta.get("quad_class"),
+                "magnitude": meta.get("magnitude"),
+                "dyad_id": dyad,
+                "initiator_id": initiator,
+                "target_id": target,
+                "market_id": market_id,
+                "market_name": market_name,
+                "abnormal_return": run["abnormal_return"],
+            })
     return out
 
 
