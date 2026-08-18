@@ -50,7 +50,7 @@ def build_server() -> Any:
     def regime_at(date: str) -> dict[str, Any]:
         """The monetary order and polarity epoch covering an ISO date.
         Analogies are only admissible WITHIN a regime — never reason naively
-        across the 120-year span."""
+        across the archive (1972 → present)."""
         return tools.regime_at(date)
 
     @server.tool()

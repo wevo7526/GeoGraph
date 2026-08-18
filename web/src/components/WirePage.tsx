@@ -45,7 +45,7 @@ function baselineFigure(item: WireItem): string {
 }
 
 function EventEffects({ eventId }: { eventId: string }) {
-  const [rows, setRows] = useState<Effect[] | null | undefined>(undefined)
+  const [rows, setRows] = useState<Effect[] | undefined>(undefined)
   useEffect(() => {
     let live = true
     setRows(undefined)
@@ -167,7 +167,7 @@ function LiveCard({ item }: { item: WireLiveItem }) {
       <h3 className="wire-headline">{wireHeadline(item)}</h3>
       <p className="wire-read">
         {item.escalation_direction
-          ? `${item.implied_kind === 'stable' ? 'Routine against this pair’s snapshot baseline' : `Head B reads this as ${kind} against this pair’s snapshot EWMA`}${
+          ? `${item.implied_kind === 'stable' ? 'Routine against this pair’s usual level' : `This reads as ${kind} against this pair’s usual level`}${
               item.escalation_magnitude != null
                 ? ` (${item.escalation_magnitude.toFixed(1)} Goldstein points from their usual).`
                 : '.'
@@ -213,7 +213,7 @@ function LiveCard({ item }: { item: WireLiveItem }) {
           day, not what this event is worth.
         </p>
       ) : (
-        <p className="figure-note">No measured market cell for this event&rsquo;s Head B kind — analogy has nothing to attach.</p>
+        <p className="figure-note">No measured market cell for this kind of event — analogy has nothing to attach.</p>
       )}
       {item.source_url && (
         <a className="article-link" href={item.source_url} target="_blank" rel="noreferrer">
@@ -308,7 +308,7 @@ export default function WirePage({
         <Beat
           title="What just arrived"
           major
-          aside="GDELT 2.0's newest 15-minute export, scored with Head B against each pair's snapshot baseline. A historical cell is analogy — what similarly coded events did — attached only for escalations and step-downs. Routine traffic is not a trade. Not advice."
+          aside="Newest 15-minute GDELT 2.0 export, scored against each pair's usual level in the frozen archive. A historical cell is analogy — what similarly coded events did — attached only for escalations and step-downs. Routine traffic is not a trade. Not advice."
         >
           {liveFeed.rows.slice(0, 8).map((item) => (
             <LiveCard key={item.node_id} item={item} />

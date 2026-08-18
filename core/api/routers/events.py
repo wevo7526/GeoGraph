@@ -612,7 +612,6 @@ def wire_live(region: str = "mena", limit: int = Query(30, ge=1, le=100)) -> dic
     from core import packs
     from core.panel import pg_store
     from core.reasoning import markets as markets_module
-    from core.reasoning import strategy as strategy_module
     from core.wire import live as live_overlay
 
     now = time.monotonic()
@@ -682,7 +681,6 @@ def wire_live(region: str = "mena", limit: int = Query(30, ge=1, le=100)) -> dic
                     "n": cell.get("n"),
                     "share_positive": cell.get("share_positive"),
                     "thin": bool(cell.get("thin")),
-                    **strategy_module.assess_cell(cell),
                 })
             outlook.sort(key=lambda m: abs(m.get("median") or 0.0), reverse=True)
         rows.append({
@@ -715,16 +713,13 @@ def wire_live(region: str = "mena", limit: int = Query(30, ge=1, le=100)) -> dic
         "scanned": polled.get("scanned"),
         "kept": polled.get("kept"),
         "rows": rows,
-        "strategy": strategy_module.strategy_contract(),
         "cached": False,
         "method": (
-            "GDELT 2.0's 15-minute export, filtered to this pack's roster. "
-            "`implied_kind` is Head B against the pair's snapshot EWMA — a "
-            "departure from what these two normally do, not a raw Goldstein "
-            "band. `market_outlook` is the frozen transmission map: realised "
-            "abnormal returns over the four sessions after past events of that "
-            "coding, with n. Nothing here is written to the graph, nothing is "
-            "a forecast, and nothing is advice."
+            "Newest 15-minute GDELT 2.0 export, scored against each pair's "
+            "usual level in the frozen archive. Market cells are realised "
+            "abnormal returns over the four sessions after past events of "
+            "that coding, with n. Nothing here is written to the graph, "
+            "nothing is a forecast, and nothing is advice."
         ),
     }
     _live_cache.update({"at": now, "payload": payload, "region": region})

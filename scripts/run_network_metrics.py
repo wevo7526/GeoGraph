@@ -17,25 +17,28 @@ import argparse
 import datetime as dt
 import sys
 
+from core import archive as archive_bounds
 from core import settings as settings_module
 from core.graph import analytics
 from core.reasoning import regimes
-
-_ARCHIVE_START = 1905
 
 
 def standard_windows(today: dt.date | None = None) -> list[analytics.Window]:
     now = today or dt.date.today()
     windows = [
         analytics.Window(f"{year}-01-01", f"{year + 9}-12-31")
-        for year in range(_ARCHIVE_START, now.year + 1, 10)
+        for year in range(archive_bounds.START_YEAR, now.year + 1, 10)
     ]
     for entries in regimes.segmentation().values():
         for entry in entries:
+            # Windows that END before the archive floor are not a live fact.
+            if entry["end"] and entry["end"] < archive_bounds.START:
+                continue
             # The open regime's window grows with the calendar year — that is
             # the correct semantics, not drift: the regime is still running.
+            start = archive_bounds.clamp_start(entry["start"])
             end = entry["end"] or f"{now.year}-12-31"
-            windows.append(analytics.Window(entry["start"], end))
+            windows.append(analytics.Window(start, end))
     return windows
 
 

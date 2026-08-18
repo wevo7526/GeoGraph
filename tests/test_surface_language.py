@@ -89,6 +89,13 @@ MACHINE_TOKENS = {
     "What is actionable now": (
         "the live wire is intel scored against a snapshot baseline, not a blotter"
     ),
+    "Head B": (
+        "the classifier's internal name — the page says 'usual level', not the head"
+    ),
+    "EWMA": "an estimator noun on a page about what just arrived",
+    "120 years": (
+        "the archive floor is 1972; the slider and the lede have to say so"
+    ),
 }
 
 
@@ -120,6 +127,12 @@ def test_the_relationship_page_leads_with_three_reads_not_a_hostility_ladder() -
     )
     assert "tensionSentence" not in rel
     assert "relationshipStandfirst" in rel
+
+
+def test_the_slider_opens_at_the_archive_floor() -> None:
+    slider = (WEB / "components" / "TimeSlider.tsx").read_text(encoding="utf-8")
+    assert "YEAR_MIN = 1972" in slider
+    assert "YEAR_MIN = 1905" not in slider
 
 
 def test_a_dyad_id_is_never_built_into_a_sentence() -> None:

@@ -26,7 +26,7 @@ import Graph3D, {
   type Graph3DHandle,
   type LinkSelection,
 } from './Graph3D'
-import TimeSlider, { YEAR_NOW } from './TimeSlider'
+import TimeSlider, { YEAR_MIN, YEAR_NOW } from './TimeSlider'
 import { LineBand } from './charts/Charts'
 import type {
   Dyad,
@@ -1258,7 +1258,7 @@ export default function Explorer({
                 <Microcaps>{year} in the archive</Microcaps>
               </div>
               <p className="text-sm leading-relaxed" style={{ color: 'var(--muted)' }}>
-                Scrub the slider to move through 120 years and watch the network
+                Scrub the slider from {YEAR_MIN} and watch the network
                 reconfigure. Click an actor to focus their world, an edge to
                 read the relationship behind it, or an event on the left to see
                 how it was coded and what it moved in markets.

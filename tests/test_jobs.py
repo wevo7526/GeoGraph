@@ -923,3 +923,59 @@ def test_refill_does_not_project_gdelt_rows_back_onto_the_graph():
     src = Path(rebuild.__file__).read_text(encoding="utf-8")
     assert "event:gdelt-" in src
     assert "NOT LIKE" in src
+
+
+def test_prune_gdelt_runs_drops_skips_and_unused_windows():
+    """The panel's GDELT skip rows and car_0_5 windows are dead weight
+    once the snapshot is frozen. Spine events are not in the WHERE."""
+    from core.panel import pg_store
+
+    class _Panel:
+        def __init__(self) -> None:
+            self.sql = ""
+            self.params: tuple[Any, ...] | None = None
+            self.committed = False
+
+        def cursor(self) -> Any:
+            panel = self
+
+            class _Cur:
+                rowcount = 11
+
+                def __enter__(self) -> Any:
+                    return self
+
+                def __exit__(self, *exc: object) -> bool:
+                    return False
+
+                def execute(self, sql: str, params: Any = None) -> None:
+                    panel.sql = sql
+                    panel.params = params
+
+            return _Cur()
+
+        def commit(self) -> None:
+            self.committed = True
+
+    panel = _Panel()
+    out = pg_store.prune_gdelt_runs(panel, limit=50, drop_skips=True)
+    assert out == {"deleted": 11, "drop_skips": True, "limit": 50}
+    assert "event:gdelt-%" in panel.sql
+    assert "skipped_no_data" in panel.sql
+    assert "car_0_1" in panel.sql and "car_0_3" in panel.sql
+    assert "LIMIT %s" in panel.sql
+    assert panel.params == (50,)
+    assert panel.committed
+
+    keep_skips = _Panel()
+    pg_store.prune_gdelt_runs(keep_skips, drop_skips=False)
+    assert "skipped_no_data" not in keep_skips.sql
+
+
+def test_network_windows_open_at_the_archive_floor():
+    from pathlib import Path
+
+    src = (Path(__file__).resolve().parents[1] / "scripts" / "run_network_metrics.py")
+    text = src.read_text(encoding="utf-8")
+    assert "archive_bounds.START_YEAR" in text
+    assert "_ARCHIVE_START = 1905" not in text

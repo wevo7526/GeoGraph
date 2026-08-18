@@ -102,3 +102,16 @@ def test_the_live_module_never_imports_a_graph_writer():
     assert "merge_nodes" not in source
     assert "write_edges" not in source
     assert "write_effects" not in source
+
+
+def test_the_live_feed_does_not_attach_a_strategy_contract():
+    """The live page shows historical cells as analogy. Stamping a trade
+    action onto those cells is how the blotter leaked back in."""
+    import inspect
+
+    from core.api.routers import events as events_router
+
+    source = inspect.getsource(events_router.wire_live)
+    assert "strategy_contract" not in source
+    assert "assess_cell" not in source
+    assert "Head B" not in source

@@ -1,11 +1,13 @@
 import { useMemo } from 'react'
 import type { Segmentation } from '../types'
 
-// The signature interaction (build-spec section 15): scrub 120 years and
-// watch the network reconfigure through regimes. The range runs PAST the
-// present into the forecast horizon — the forward segment renders scenario
-// space, not history, and the label says which side of "now" you are on.
-export const YEAR_MIN = 1905
+// The signature interaction (build-spec section 15): scrub the archive and
+// watch the network reconfigure through regimes. The floor is 1972 — cited
+// deviation from §3's 1905 start; see core/archive.py. The range runs PAST
+// the present into the forecast horizon — the forward segment renders
+// scenario space, not history, and the label says which side of "now" you
+// are on.
+export const YEAR_MIN = 1972
 export const YEAR_NOW = new Date().getFullYear()
 export const YEAR_MAX = YEAR_NOW + 20
 

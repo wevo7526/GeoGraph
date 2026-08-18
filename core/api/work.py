@@ -30,9 +30,8 @@ import time
 from pathlib import Path
 from typing import Any
 
-from core import packs
+from core import packs, snapshot
 from core import settings as settings_module
-from core import snapshot
 from core.ingestion import harvest as harvest_module
 from core.transmission import event_study, runner
 from core.wire import corpus
@@ -1508,17 +1507,37 @@ def trim(conn: Any, deadline: float) -> dict[str, Any]:
 
 
 def reclaim(conn: Any, deadline: float) -> dict[str, Any]:
-    """Delete quarantined WAL tails when the volume is approaching the floor.
+    """Free what a full volume can actually free: WAL tails, then dead panel rows.
 
     The study pauses at 400 MB free. Acting at 512 MB means the tails are
     gone before writers stop — the boot's reclaim only fires below 64 MB,
     which is already the crash-loop zone. Takes no graph lock.
+
+    The panel half drops GDELT skip rows and unused windows. Those rows are
+    the watermark of a growing study; with the snapshot frozen they are
+    dead weight on the OTHER 5 GB volume.
     """
     del conn, deadline
     from core.graph import kuzu_store
+    from core.panel import pg_store
 
     path = settings_module.load().kuzu_db_path
     usage = kuzu_store.disk_usage(path)
+    graph: dict[str, Any]
     if usage is not None and usage["free"] > (512 << 20):
-        return {"skipped": "volume has headroom", "disk": usage}
-    return kuzu_store.reclaim_non_data(path)
+        graph = {"skipped": "volume has headroom", "disk": usage}
+    else:
+        graph = kuzu_store.reclaim_non_data(path)
+
+    panel_out: dict[str, Any]
+    panel = _panel()
+    if panel is None:
+        panel_out = {"skipped": "no panel"}
+    else:
+        try:
+            panel_out = pg_store.prune_gdelt_runs(
+                panel, drop_skips=snapshot.frozen(),
+            )
+        finally:
+            panel.close()
+    return {"graph": graph, "panel": panel_out}

@@ -397,6 +397,43 @@ def computed_run_count(conn: Any) -> int:
         return int(cur.fetchone()[0])
 
 
+#: Windows the live surfaces actually read for GDELT measurements.
+#: Pricing and the headline map use car_0_3; the sessions-2–3 measurement
+#: uses car_0_1 against car_0_3. car_0_5 on the wire is unused weight.
+GDELT_KEEP_WINDOWS = ("car_0_1", "car_0_3")
+PRUNE_GDELT_LIMIT = 20_000
+
+
+def prune_gdelt_runs(
+    conn: Any, *, limit: int = PRUNE_GDELT_LIMIT, drop_skips: bool = True,
+) -> dict[str, int | bool]:
+    """Delete GDELT working-set rows the frozen snapshot no longer needs.
+
+    Skip rows watermark a GROWING study. With the snapshot frozen they are
+    dead weight (production held ~1.4 million of them on a 5 GB Postgres
+    volume). Extra windows on the wire (car_0_5) are unused. Spine and
+    deep-tier events are untouched — their windows still feed the studies.
+    Bounded so a tick cannot lock the 2.7 GB table for its whole life.
+    """
+    extra = (
+        " OR status IN ('skipped_no_data', 'skipped_no_market')"
+        if drop_skips else ""
+    )
+    keep = ", ".join(f"'{w}'" for w in GDELT_KEEP_WINDOWS)
+    sql = (
+        "DELETE FROM event_study_runs WHERE run_id IN ("
+        "SELECT run_id FROM event_study_runs "
+        "WHERE event_node_id LIKE 'event:gdelt-%' "
+        f"AND (effect_window NOT IN ({keep}){extra}) "
+        "LIMIT %s)"
+    )
+    with conn.cursor() as cur:
+        cur.execute(sql, (int(limit),))
+        deleted = int(cur.rowcount or 0)
+    conn.commit()
+    return {"deleted": deleted, "drop_skips": drop_skips, "limit": int(limit)}
+
+
 def computed_event_ids(conn: Any, *, ticker: str | None = None) -> set[str]:
     """Event ids that carry at least one measured (non-skip) run."""
     sql = (

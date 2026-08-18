@@ -469,7 +469,7 @@ export function wireRead(item: WireItem): string {
   const way =
     item.escalation_direction === 'escalating'
       ? `${off.toFixed(1)} points more hostile than ${theirs} usual`
-      : item.escalation_direction === 'deescalating' || item.escalation_direction === 'de-escalating'
+      : item.escalation_direction === 'deescalating'
         ? `${off.toFixed(1)} points calmer than ${theirs} usual`
         : `${off.toFixed(1)} points from ${theirs} usual level`
   return pair ? `A real departure for ${pair} \u2014 ${way}.` : `A real departure \u2014 ${way}.`

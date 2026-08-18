@@ -137,12 +137,6 @@ export interface WireLiveMarketImpact {
   n: number
   share_positive: number | null
   thin: boolean
-  action: 'trade' | 'watch' | 'stand_aside'
-  direction: 'long' | 'short' | 'flat'
-  expected_return: number | null
-  edge_after_cost: number | null
-  confidence: string
-  reason: string
 }
 
 export interface WireLiveItem {
@@ -176,7 +170,6 @@ export interface WireLiveFeed {
   kept: number
   cached: boolean
   rows: WireLiveItem[]
-  strategy: Record<string, unknown>
   method: string
 }
 
