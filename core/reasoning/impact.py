@@ -111,7 +111,8 @@ def _measured_for_event(conn: Any, event_id: str) -> dict[str, dict[str, Any]]:
 
 
 def _expected_for_dyad(
-    conn: Any, dyad_id: str, as_of: str, *, exclude_event_id: str | None = None
+    conn: Any, dyad_id: str, as_of: str, *, exclude_event_id: str | None = None,
+    exclude_overlapping: bool = False,
 ) -> tuple[dict[str, dict[str, Any]], int]:
     """The base rate: this dyad's measured effects in periods regime-comparable
     to `as_of`, aggregated per market. Returns (per-market summary, number of
@@ -129,6 +130,8 @@ def _expected_for_dyad(
         if row["abnormal_return"] is None:
             continue
         if exclude_event_id is not None and str(row["event_id"]) == exclude_event_id:
+            continue
+        if exclude_overlapping and row.get("overlapping"):
             continue
         if not regimes.comparable(as_of, str(row["event_time"])):
             continue
@@ -187,7 +190,8 @@ def event_impact(conn: Any, event_id: str) -> dict[str, Any] | None:
         return None
     measured = _measured_for_event(conn, event_id)
     expected, n = _expected_for_dyad(
-        conn, context["dyad"], context["date"], exclude_event_id=event_id
+        conn, context["dyad"], context["date"], exclude_event_id=event_id,
+        exclude_overlapping=False,
     )
     return {
         "mode": "historical",

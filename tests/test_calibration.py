@@ -140,3 +140,18 @@ def test_a_walk_with_too_few_closed_cutoffs_refuses_to_report_a_score():
     }]
     out = calibration.walk(thin, region_pack="test")
     assert "brier" not in out and "too few" in out["note"]
+
+
+def test_a_one_year_walk_is_a_named_variant_not_a_silent_swap():
+    from core.reasoning import calibration, paper
+
+    out = calibration.horizon_variant_walks(
+        _episode_rows(), region_pack="test", horizons=(1,),
+    )
+    assert out["locked_horizon_years"] == 3
+    assert "1y" in out["variants"]
+    assert out["variants"]["1y"].get("horizon_years") in (1, None) or (
+        "too few" in (out["variants"]["1y"].get("note") or "")
+    )
+    assert "three years" in paper.QUESTION
+    assert "three-year" in paper.QUESTION or "three years" in paper.QUESTION

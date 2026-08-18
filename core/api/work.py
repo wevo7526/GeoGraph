@@ -1020,10 +1020,24 @@ def scores(conn: Any, deadline: float) -> dict[str, Any]:
             continue
         updates.append(base)
 
-    if not updates:
-        return {"note": "nothing newly scoreable", "forecasts": len(rows)}
-    kuzu_store.merge_nodes(conn, "Forecast", updates)
-    return {"updated": len(updates), "brier_scored": scored}
+    if updates:
+        kuzu_store.merge_nodes(conn, "Forecast", updates)
+    variants: dict[str, Any] = {}
+    for name in _pack_names():
+        if time.monotonic() >= deadline:
+            break
+        try:
+            variants[name] = calibration_module.horizon_variant_walks(
+                archive_rows, region_pack=name, horizons=(1,),
+            )
+        except Exception as exc:  # noqa: BLE001 - one pack's walk is its own
+            variants[name] = {"skipped": str(exc)[:120]}
+    return {
+        "updated": len(updates),
+        "brier_scored": scored,
+        "horizon_1y": variants,
+        "note": "1y is a named variant; the frozen call stays three years",
+    }
 
 
 # ── the network's shape, and the paper book ────────────────────────────────

@@ -138,6 +138,38 @@ def test_dyad_timeline_groups_by_event_most_recent_first(conn):
     assert "car" in first["markets"][0]
 
 
+def test_overlapping_precedents_are_dropped_when_asked(conn):
+    kuzu_store.merge_nodes(conn, "Event", [_event("event:overlap", "2014-06-01", 3.0)])
+    kuzu_store.merge_edges(conn, "INITIATED_BY", [
+        {"src": "event:overlap", "dst": "actor:a", "source_id": "source:test"},
+    ])
+    kuzu_store.merge_edges(conn, "DIRECTED_AT", [
+        {"src": "event:overlap", "dst": "actor:b", "source_id": "source:test"},
+    ])
+    kuzu_store.merge_edges(conn, "AFFECTED", [{
+        "src": "event:overlap", "dst": "market:x", "window": "car_0_1",
+        "resolution": "day", "abnormal_return": 0.99, "first_mover": False,
+        "overlapping": True, "method": "test", "source_id": "source:test",
+    }])
+    dyad = escalation.dyad_id("actor:a", "actor:b")
+    _, n_all = impact._expected_for_dyad(
+        conn, dyad, "2015-06-01", exclude_event_id="event:target",
+    )
+    _, n_clean = impact._expected_for_dyad(
+        conn, dyad, "2015-06-01", exclude_event_id="event:target",
+        exclude_overlapping=True,
+    )
+    assert n_all == n_clean + 1
+
+
+def test_event_impact_always_excludes_the_event_itself(conn):
+    result = impact.event_impact(conn, "event:target")
+    assert result is not None
+    # The event's own 0.05 must not be in its expected mean (0.02 from prec1).
+    x = next(m for m in result["markets"] if m["market_id"] == "market:x")
+    assert x["expected"]["mean_car"] == pytest.approx(0.02)
+
+
 def test_hypothetical_shares_the_object_shape(conn):
     dyad = escalation.dyad_id("actor:a", "actor:b")
     hist = impact.event_impact(conn, "event:target")

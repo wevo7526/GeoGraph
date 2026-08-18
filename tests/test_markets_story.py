@@ -313,3 +313,55 @@ def test_an_alliances_friction_is_not_where_the_risk_points(conn):
     # And the exclusion is REPORTED, never silent.
     assert forward["allied_courses_excluded"] == 1
     assert "allied pairs" in forward["note"]
+
+
+def test_clean_cells_drop_overlapping_and_out_of_regime():
+    rows = [
+        {
+            "event_id": f"event:e{i}", "direction": "escalating", "magnitude": 4.0,
+            "date": "2016-06-15", "window": "car_0_3", "ar": 0.02,
+            "first_mover": False, "overlapping": False, "p_value": 0.01,
+        }
+        for i in range(10)
+    ]
+    rows.append({
+        "event_id": "event:overlap", "direction": "escalating", "magnitude": 4.0,
+        "date": "2016-06-15", "window": "car_0_3", "ar": 0.90,
+        "first_mover": False, "overlapping": True, "p_value": 0.01,
+    })
+    rows.append({
+        "event_id": "event:old", "direction": "escalating", "magnitude": 4.0,
+        "date": "1960-06-15", "window": "car_0_3", "ar": 0.90,
+        "first_mover": False, "overlapping": False, "p_value": 0.01,
+    })
+    shape = markets.market_response(rows, as_of="2016-12-31")
+    assert shape["response"]["sharp_escalation"]["car_0_3"]["n"] == 12
+    assert shape["clean_response"]["sharp_escalation"]["car_0_3"]["n"] == 10
+    assert shape["headline"]["n"] == 12
+    assert shape["clean_headline"]["n"] == 10
+
+
+def test_gdelt_copies_collapse_in_the_cell(conn):
+    rows = [
+        {
+            "event_id": "event:gdelt-a", "direction": "escalating", "magnitude": 4.0,
+            "date": "2016-06-15", "window": "car_0_3", "ar": -0.16,
+            "first_mover": False, "overlapping": False, "p_value": 0.01,
+        },
+        {
+            "event_id": "event:gdelt-b", "direction": "escalating", "magnitude": 4.0,
+            "date": "2016-06-15", "window": "car_0_3", "ar": -0.16,
+            "first_mover": False, "overlapping": False, "p_value": 0.01,
+        },
+    ]
+    shape = markets.market_response(rows, as_of="2016-12-31")
+    assert shape["response"]["sharp_escalation"]["car_0_3"]["n"] == 1
+
+
+def test_the_story_carries_a_skill_block(conn):
+    pack = _seed(conn)
+    payload = markets.story(conn, pack, game_map=None, duration=None, flows=[],
+                            coverage=None, as_of="2020-12-31")
+    assert payload["transmission_skill"] is not None
+    assert payload["transmission_skill"]["universe"] >= 1
+    assert payload["markets"][0]["clean_response"] is not None

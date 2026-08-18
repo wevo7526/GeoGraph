@@ -438,6 +438,25 @@ def test_pricing_refuses_evidence_from_another_regime():
     assert pricing.build_index(old, as_of="2019-12-31", scale=9.0) == {}
 
 
+def test_clean_index_drops_overlapping_windows():
+    from core.games import pricing
+
+    effects = [
+        _effect(f"e{i}", "material_conflict", 9.0, "market:brent", 0.02)
+        for i in range(12)
+    ]
+    overlap = _effect("ox", "material_conflict", 9.0, "market:brent", 0.90)
+    overlap["overlapping"] = True
+    effects.append(overlap)
+    dirty = pricing.build_index(effects, as_of="2019-12-31", scale=9.0)
+    clean = pricing.build_index(
+        effects, as_of="2019-12-31", scale=9.0, exclude_overlapping=True,
+    )
+    band = state.intensity_band(9.0, 9.0)
+    assert len(dirty[("material_conflict", band)]["market:brent"]) == 13
+    assert len(clean[("material_conflict", band)]["market:brent"]) == 12
+
+
 def test_paths_without_measured_effects_say_so_rather_than_pricing_nothing():
     from core.games import pricing
 
