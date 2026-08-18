@@ -96,6 +96,9 @@ MACHINE_TOKENS = {
     "120 years": (
         "the archive floor is 1972; the slider and the lede have to say so"
     ),
+    "hundred and twenty years": (
+        "the same 1905 claim in longhand — Landing used it to dodge '120 years'"
+    ),
 }
 
 
@@ -133,6 +136,15 @@ def test_the_slider_opens_at_the_archive_floor() -> None:
     slider = (WEB / "components" / "TimeSlider.tsx").read_text(encoding="utf-8")
     assert "YEAR_MIN = 1972" in slider
     assert "YEAR_MIN = 1905" not in slider
+
+
+def test_the_landing_lede_opens_at_the_archive_floor() -> None:
+    """The door used to claim a hundred and twenty years. The floor is 1972."""
+    landing = _strip_comments(
+        (WEB / "components" / "Landing.tsx").read_text(encoding="utf-8")
+    )
+    assert "1972" in landing
+    assert "priced." not in landing
 
 
 def test_a_dyad_id_is_never_built_into_a_sentence() -> None:

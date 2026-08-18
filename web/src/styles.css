@@ -864,11 +864,12 @@ input[type='range'].timeline:focus-visible {
   margin: 0 0 0.35rem;
 }
 
-/* THE FRONT DOOR AND ITS MAP (2026-08-17) -----------------------------------
-   Masthead, then hero-left / globe-right, then one centred door, then a
-   hairline. The wordmark and its double rule are the same masthead motif every
-   working page wears, so the front door reads as the same publication rather
-   than a separate splash.
+/* THE FRONT DOOR AND ITS MAP (2026-08-17, recut 2026-08-18) -----------------
+   Masthead, then a left-set copy column (kicker, headline, standfirst, door)
+   beside the globe, then a hairline. The wordmark and its double rule are the
+   same masthead motif every working page wears, so the front door reads as the
+   same publication rather than a separate splash. The door sits on the copy's
+   left edge, pushed down the column so it is not jammed under the headline.
 
    The globe wore a dark plate for one afternoon; the override is withdrawn.
    The white-ground decision is dated twice in this file and tells the next
@@ -909,13 +910,15 @@ input[type='range'].timeline:focus-visible {
 }
 
 /* Hero and globe share the row; the copy holds the left edge and the globe
-   takes what it needs on the right. Below 900px they stack, copy first —
-   a sentence still reads before its illustration. */
+   takes what it needs on the right. Stretch the row so the door can sit at
+   the foot of the copy column, opposite the globe's lower edge, instead of
+   crowding the headline. Below 900px they stack, copy first — a sentence
+   still reads before its illustration. */
 .landing-split {
   width: 100%;
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
-  align-items: center;
+  align-items: stretch;
   gap: clamp(1.5rem, 4vw, 3.5rem);
 }
 
@@ -923,25 +926,61 @@ input[type='range'].timeline:focus-visible {
   .landing-split { grid-template-columns: minmax(0, 1fr); }
 }
 
-/* Copy and door share the left column and its edge. */
+/* Copy and door share the left column and its edge. The text block sits at
+   the top; the door is pushed to the column foot (`margin-top: auto`) so
+   there is air between the standfirst and the click. */
 .landing-copy {
   display: flex;
   flex-direction: column;
   align-items: flex-start;
-  gap: 1.6rem;
+  justify-content: flex-start;
+  gap: 0;
   min-width: 0;
+  max-width: 32rem;
+  padding: 0.35rem 0 0.25rem;
+}
+
+.landing-copy-text {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  width: 100%;
+  /* Air under the standfirst lives here, not as padding on the button:
+     padding-top on `.ink-button` would stretch the ink box. */
+  margin-bottom: 2.8rem;
+}
+
+.landing-kicker {
+  margin: 0;
 }
 
 .landing-hero {
   /* Smaller than the old display size but still the largest thing on the page
-     — the brief was "smaller, but not tiny". */
-  font-size: clamp(1.9rem, 3.4vw, 3rem);
-  line-height: 1.08;
-  letter-spacing: -0.012em;
+     — the brief was "smaller, but not tiny". Measure is the column, not a
+     17ch clamp that stacked the old headline into a cramped rag. */
+  font-size: clamp(2rem, 3.6vw, 3.15rem);
+  line-height: 1.12;
+  letter-spacing: -0.015em;
   text-wrap: balance;
   text-align: left;
-  max-width: 17ch;
-  margin: 0;
+  max-width: none;
+  margin: 0.7rem 0 0;
+}
+
+.landing-lede {
+  margin: 1.35rem 0 0;
+  max-width: 36ch;
+  color: var(--muted);
+  font-size: 1.05rem;
+  line-height: 1.55;
+  text-align: left;
+}
+
+.landing-enter {
+  /* `auto` drops the door to the column foot once the split is as tall as
+     the globe; the text block's margin-bottom is the minimum air when it
+     is not. */
+  margin-top: auto;
 }
 
 .landing-foot {
@@ -952,7 +991,13 @@ input[type='range'].timeline:focus-visible {
   color: var(--muted);
 }
 
-.plate { margin: 0; width: 100%; display: flex; justify-content: center; }
+.plate {
+  margin: 0;
+  width: 100%;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+}
 
 .plate--waiting {
   min-height: 280px;

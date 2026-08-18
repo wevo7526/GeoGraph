@@ -3,30 +3,22 @@ import { getHealth } from '../api'
 import SituationPlate from './SituationPlate'
 import type { Health } from '../types'
 
-/** The front door, cut to the bone (2026-08-15): masthead, headline, three
- *  live region tiles — one figure each, the frozen near-term call, and the
- *  solved game's lead pair as a bar — the wire running underneath as a
- *  ticker, one line of archive figures, one door. No paragraphs. Every
- *  number is served and has a page behind it; a tile is the way in. */
-
-/** THE FRONT DOOR IS THE MAP (2026-08-17, cut twice the same day).
+/** THE FRONT DOOR IS THE MAP (2026-08-17, recut 2026-08-18).
  *
- *  Four things, centred: the hero line, the globe, one door, and a hairline
- *  saying whether the graph is open. Everything else is gone — the masthead
- *  kicker, the three region tiles, the scrolling ticker, the archive-figures
- *  line and the globe's own strapline.
+ *  Left column: kicker, headline, standfirst, then the door on the same left
+ *  edge, dropped so it is not jammed under the sentence that earns it. Right
+ *  column: the globe. A hairline at the foot says whether the graph is open.
  *
- *  Each of those was defensible on its own and the pile was not. A reader who
- *  has not been told what this is does not need the region with the most
- *  coercive pair, the count of measured effects and a caption about
- *  unplaceable actors, all before the first click. The globe is the argument;
- *  the pages behind the door carry the evidence, and every number that used to
- *  sit here is still served by the endpoint that fed it.
+ *  The 08-17 cut was right about the pile — tiles, ticker, archive figures,
+ *  globe strapline — and wrong about the sentence. "A hundred and twenty
+ *  years of geopolitics, priced" was the 1905 claim in longhand, written to
+ *  dodge the surface-language ban on `120 years`. The floor is 1972. The
+ *  product is applied history: the archive measures what events did to
+ *  prices; games answer what happens next. A standfirst is the one paragraph
+ *  the door is allowed, because a headline alone cannot say both halves.
  *
- *  ONE HONEST LOSS, recorded because it is not free: the strapline named the
- *  nineteen roster actors the globe cannot place. The front door no longer
- *  discloses that. `/api/globe` still returns `unplaced`, so any surface that
- *  wants to say it can.
+ *  ONE HONEST LOSS, still recorded: the strapline named the nineteen roster
+ *  actors the globe cannot place. `/api/globe` still returns `unplaced`.
  */
 
 export default function Landing({ onEnter }: { onEnter: (route: string) => void }) {
@@ -63,12 +55,19 @@ export default function Landing({ onEnter }: { onEnter: (route: string) => void 
               floating on the page's centre axis away from the thing it
               answers. */}
           <div className="landing-copy">
-            <h1 className="landing-hero">
-              A hundred and twenty years of geopolitics, priced.
-            </h1>
+            <div className="landing-copy-text">
+              <p className="kicker landing-kicker">Applied history</p>
+              <h1 className="landing-hero">
+                What events did to prices.
+              </h1>
+              <p className="landing-lede">
+                From 1972 to the live wire. The archive measures the record.
+                Games solve for what happens next.
+              </p>
+            </div>
             <button
               type="button"
-              className="ink-button text-lg"
+              className="ink-button landing-enter text-lg"
               onClick={() => onEnter('/explore')}
             >
               Enter
