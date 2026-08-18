@@ -55,7 +55,7 @@ COPY core/__init__.py core/
 # API starts. Without the extras those steps fail on import and the archive
 # quietly serves less than it claims — "panel empty" and zero metrics read as
 # facts about the world when they are facts about the wheel.
-# `reasoning` ships in the image so ANTHROPIC_API_KEY is the ONLY gate on the
+# `reasoning` ships in the image so OPENAI_API_KEY is the ONLY gate on the
 # agent in production — adding the key must not also require a dependency
 # redeploy.
 RUN pip install --no-cache-dir ".[api,panel,mcp,ingest,analysis,reasoning]" \

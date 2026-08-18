@@ -85,7 +85,7 @@ def test_situation_endpoint_serves_the_briefing_without_a_key(monkeypatch, tmp_p
 
     monkeypatch.setenv("KUZU_DB_PATH", str(path))
     monkeypatch.delenv("DATABASE_URL", raising=False)
-    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     from core.api.app import create_app
 
     with TestClient(create_app()) as client:

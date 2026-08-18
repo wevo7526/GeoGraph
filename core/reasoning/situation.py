@@ -5,7 +5,7 @@ assembles a compact, already-computed briefing — the same layers the Situation
 page composes from existing endpoints — so one call can argue across the wire,
 the region games, packed markets, globe coverage, and frozen forecasts.
 
-WHY THIS EXISTS. POST /reasoning/assess used to hand Claude four Forecast
+WHY THIS EXISTS. POST /reasoning/assess used to hand the agent four Forecast
 rows (full `scenarios_json` blobs) and eight GLOBAL dyads ordered by EWMA.
 That is not the situation, and it is not region-aware. The Situation page
 already had the real briefing; the agent could not see it. One compact object,

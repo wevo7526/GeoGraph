@@ -1,6 +1,6 @@
 """The reasoning agent — build-spec sections 2, 3 and 13.
 
-Claude over the archive's deterministic context: reads the present against
+OpenAI over the archive's deterministic context: reads the present against
 the graph's deep memory, narrates analogues the structural engine retrieved,
 and drafts assessments AROUND the frozen numbers. DIVISION OF LABOUR, locked
 (section 17): the agent REASONS and NARRATES; the deterministic core
@@ -12,7 +12,7 @@ Realist strategic logic (Kissinger, bargaining and power-transition
 traditions): actors are modeled by interests, resolve, and capability — the
 AttributeEstimate layer is the agent's state of belief about those.
 
-DARK BY DEFAULT. Requires ANTHROPIC_API_KEY (and the `reasoning` extra);
+DARK BY DEFAULT. Requires OPENAI_API_KEY (and the `reasoning` extra);
 without either, `assess` raises AgentUnavailable naming exactly what is
 missing, and the API surfaces that as an honest 503 — the deterministic
 half of the reasoning page runs regardless.
@@ -24,11 +24,11 @@ import json
 import os
 from typing import Any
 
-#: Override with GEOGRAPH_AGENT_MODEL. Sonnet is the default deliberately:
+#: Override with GEOGRAPH_AGENT_MODEL. 4.1 is the default deliberately:
 #: the agent narrates around numbers it is handed — it needs judgment, not
-#: frontier-scale reasoning. The Situation page asks on a click, not on
+#: a reasoning-model loop, and the Situation page asks on a click, not on
 #: every view; credits are the reader's, not a page-load cost.
-_DEFAULT_MODEL = "claude-sonnet-5"
+_DEFAULT_MODEL = "gpt-4.1"
 
 _SYSTEM = (
     "You are GeoGraph's reasoning agent: an applied-history analyst over a "
@@ -72,41 +72,43 @@ def assess(
     assembled (the situation briefing: wire, region games, markets,
     globe, frozen forecasts — every item carrying its node id). The agent
     adds the argument; the context already holds all the numbers."""
-    key = os.getenv("ANTHROPIC_API_KEY", "").strip()
+    key = os.getenv("OPENAI_API_KEY", "").strip()
     if not key:
         raise AgentUnavailable(
-            "ANTHROPIC_API_KEY is not set — the reasoning agent is dark. "
+            "OPENAI_API_KEY is not set — the reasoning agent is dark. "
             "The deterministic layer (the what-if engine, frozen forecasts, "
             "the paper backtest) runs without it; narrated assessments and "
             "generated case studies need the key."
         )
     try:
-        import anthropic
+        from openai import OpenAI
     except ImportError as exc:
         raise AgentUnavailable(
-            'the `anthropic` package is not installed — pip install -e '
+            'the `openai` package is not installed — pip install -e '
             '".[reasoning]"'
         ) from exc
 
     model = os.getenv("GEOGRAPH_AGENT_MODEL", "").strip() or _DEFAULT_MODEL
-    client = anthropic.Anthropic(api_key=key)
-    response = client.messages.create(
+    client = OpenAI(api_key=key)
+    response = client.chat.completions.create(
         model=model,
         max_tokens=1500,
-        system=_SYSTEM,
-        messages=[{
-            "role": "user",
-            "content": (
-                f"Question, through the {region_pack} lens: {question}\n\n"
-                "Deterministic context from the archive (every number here "
-                "was measured or counted before you saw it):\n"
-                f"{json.dumps(context, indent=2, default=str)}"
-            ),
-        }],
+        messages=[
+            {"role": "system", "content": _SYSTEM},
+            {
+                "role": "user",
+                "content": (
+                    f"Question, through the {region_pack} lens: {question}\n\n"
+                    "Deterministic context from the archive (every number here "
+                    "was measured or counted before you saw it):\n"
+                    f"{json.dumps(context, indent=2, default=str)}"
+                ),
+            },
+        ],
     )
-    text = "".join(
-        block.text for block in response.content if block.type == "text"
-    )
+    choice = response.choices[0] if response.choices else None
+    message = choice.message if choice is not None else None
+    text = (getattr(message, "content", None) or "") if message is not None else ""
     return {
         "question": question,
         "region_pack": region_pack,

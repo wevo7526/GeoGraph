@@ -4,7 +4,7 @@ A fresh clone serves whatever graph exists with no `.env` at all. Each unset
 value disables ONE capability, and the API's health payload names which:
 
   DATABASE_URL                 → the Postgres panel (transmission engine input)
-  ANTHROPIC_API_KEY            → the reasoning layer (never numbers anyway)
+  OPENAI_API_KEY               → the reasoning layer (never numbers anyway)
   BIGQUERY_PROJECT / GOOGLE_APPLICATION_CREDENTIALS → GDELT ingestion
   FRED_API_KEY                 → Treasury yields
   GPR_INDEX_URL                → the GPR regime overlay
@@ -36,7 +36,7 @@ class Settings:
     kuzu_db_path: Path
     #: Postgres for the market panel; None disables panel-backed features.
     database_url: str | None
-    anthropic_api_key: str | None
+    openai_api_key: str | None
     bigquery_project: str | None
     fred_api_key: str | None
     gpr_index_url: str | None
@@ -48,9 +48,9 @@ class Settings:
         out: dict[str, str] = {}
         if not self.database_url:
             out["panel"] = "DATABASE_URL unset — market panel and event studies disabled"
-        if not self.anthropic_api_key:
+        if not self.openai_api_key:
             out["reasoning"] = (
-                "ANTHROPIC_API_KEY unset — agent, coder and analogy narration disabled"
+                "OPENAI_API_KEY unset — agent, coder and analogy narration disabled"
             )
         # NOT a GDELT-disabled signal: the wire loads credential-free from the
         # raw files (Phase 4), and production serves 1.33M events with
@@ -86,7 +86,7 @@ def load() -> Settings:
         # OPTIONAL, AND ITS ABSENCE IS NOT AN ERROR. The deterministic layers —
         # crosswalks, transmission, network analytics — have no model
         # dependency at all; only the reasoning layer does.
-        anthropic_api_key=os.getenv("ANTHROPIC_API_KEY", "").strip() or None,
+        openai_api_key=os.getenv("OPENAI_API_KEY", "").strip() or None,
         bigquery_project=os.getenv("BIGQUERY_PROJECT", "").strip() or None,
         fred_api_key=os.getenv("FRED_API_KEY", "").strip() or None,
         gpr_index_url=gpr,

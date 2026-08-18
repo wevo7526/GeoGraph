@@ -148,7 +148,7 @@ def test_the_agent_is_honestly_dark_without_a_key(seeded_graph, monkeypatch):
 
     monkeypatch.setenv("KUZU_DB_PATH", str(seeded_graph))
     monkeypatch.delenv("DATABASE_URL", raising=False)
-    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     from core.api.app import create_app
 
     with TestClient(create_app()) as client:
@@ -158,5 +158,5 @@ def test_the_agent_is_honestly_dark_without_a_key(seeded_graph, monkeypatch):
         )
         assert response.status_code == 503
         detail = response.json()["detail"]
-        assert "ANTHROPIC_API_KEY" in detail
+        assert "OPENAI_API_KEY" in detail
         assert "deterministic" in detail  # says what still works

@@ -60,7 +60,7 @@ ingest = [
 bigquery = ["google-cloud-bigquery>=3.25"]
 # The reasoning layer's LLM: CAMEO coding of non-GDELT text, the agent, and
 # analogy retrieval. NEVER for numbers — see docs/build-spec.md section 17.
-reasoning = ["anthropic>=0.40"]
+reasoning = ["openai>=1.40"]
 # The MCP server (agent surface).
 mcp = ["mcp>=1.2"]
 # LinkML generators (gen-pydantic, gen-json-schema) for scripts/generate_ontology.py.
@@ -125,7 +125,7 @@ ignore_missing_imports = true
 # All live in optional extras, so a core-only checkout does not have them
 # installed at all — and `mypy .` must still pass there, because every
 # deterministic layer runs without the LLM and the graph reads without Postgres.
-module = ["anthropic.*", "psycopg.*", "mcp.*"]
+module = ["openai.*", "psycopg.*", "mcp.*"]
 ignore_missing_imports = true
 
 [[tool.mypy.overrides]]

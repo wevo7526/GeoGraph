@@ -9,7 +9,7 @@ Three paths into one CAMEO vocabulary, ONE of which involves a model:
    structured 1911 dispute record does not need a language model to become a
    CAMEO code, and determinism means the whole deep tier re-derives
    identically on every run.
-3. Modern non-GDELT text (marquee spine narratives, live episodes): Claude
+3. Modern non-GDELT text (marquee spine narratives, live episodes): OpenAI
    with the CAMEO codebook → {cameo_code, actor1, actor2, quad_class,
    confidence}. The LLM types the event; it NEVER originates a number that
    lands in an effect or a metric (build-spec section 17).
@@ -26,7 +26,7 @@ from __future__ import annotations
 import functools
 import json
 from pathlib import Path
-from typing import Any, Literal, cast
+from typing import Any, cast
 
 import yaml
 
@@ -169,13 +169,7 @@ class ClassifierError(RuntimeError):
 #: whose mistakes are hardest to see downstream — a mis-coded event silently
 #: corrupts its dyad's whole escalation baseline — so it does not get
 #: downgraded to save fractions of a cent.
-CODER_MODEL = "claude-opus-5"
-
-#: Reasoning effort. High because the archive is small and curated: the total
-#: spend is trivial and the cost of a wrong code is a corrupted baseline.
-#: Typed as the SDK's closed effort vocabulary — a bare str stops matching the
-#: TypedDict the moment the SDK regenerates its overloads.
-CODER_EFFORT: Literal["high"] = "high"
+CODER_MODEL = "gpt-4.1"
 
 _INSTRUCTIONS = """\
 You assign CAMEO event codes to descriptions of geopolitical events, for a \
@@ -233,10 +227,10 @@ def _instructions() -> str:
 def code_text_event(
     text: str, *, api_key: str, model: str = CODER_MODEL
 ) -> dict[str, Any]:
-    """Path 3: modern non-GDELT text → CAMEO via Claude.
+    """Path 3: modern non-GDELT text → CAMEO via OpenAI.
 
     Returns {cameo_code, actor1, actor2, quad_class, goldstein, confidence,
-    reasoning}. Requires the `reasoning` extra and ANTHROPIC_API_KEY.
+    reasoning}. Requires the `reasoning` extra and OPENAI_API_KEY.
 
     THE MODEL RETURNS A CODE, NOT A CLASSIFICATION. `quad_class` and
     `goldstein` in the result are DERIVED from the returned code by the
@@ -249,52 +243,49 @@ def code_text_event(
     plausible: a dropped event is countable, a wrong one is not.
     """
     try:
-        import anthropic
+        from openai import OpenAI
     except ModuleNotFoundError as exc:  # pragma: no cover - depends on extras
         raise ClassifierError(
-            "Head A needs the Anthropic SDK: pip install -e '.[reasoning]'. The "
+            "Head A needs the OpenAI SDK: pip install -e '.[reasoning]'. The "
             "deterministic layers (crosswalks, transmission, analytics) do not."
         ) from exc
 
-    client = anthropic.Anthropic(api_key=api_key)
-    response = client.beta.messages.create(
+    client = OpenAI(api_key=api_key)
+    response = client.chat.completions.create(
         model=model,
         max_tokens=4096,
-        # Opus 5's classifiers can decline a request; without a fallback a
-        # refusal would just stop. Historical political violence is exactly
-        # the benign-but-adjacent material that occasionally trips them.
-        betas=["server-side-fallback-2026-07-01"],
-        fallbacks="default",
-        output_config={
-            "effort": CODER_EFFORT,
-            "format": {"type": "json_schema", "schema": _CODING_SCHEMA},
+        response_format={
+            "type": "json_schema",
+            "json_schema": {
+                "name": "cameo_coding",
+                "strict": True,
+                "schema": _CODING_SCHEMA,
+            },
         },
-        # The codebook is identical on every call and the events are coded in
-        # batches, so it is worth caching rather than re-sending.
-        system=[
-            {
-                "type": "text",
-                "text": _instructions(),
-                "cache_control": {"type": "ephemeral"},
-            }
+        messages=[
+            {"role": "system", "content": _instructions()},
+            {"role": "user", "content": text},
         ],
-        messages=[{"role": "user", "content": text}],
     )
 
-    # stop_reason BEFORE content: a refusal returns 200 with empty or partial
-    # content, so indexing content first would raise something misleading.
-    if response.stop_reason == "refusal":
-        detail = getattr(response.stop_details, "category", None)
+    choice = response.choices[0] if response.choices else None
+    if choice is None:
+        raise ClassifierError("the coder returned no choices.")
+    message = choice.message
+    # finish_reason / refusal BEFORE content: a filtered call can return 200
+    # with empty or partial content, so reading content first would raise
+    # something that blames the wrong thing.
+    if choice.finish_reason == "content_filter" or getattr(message, "refusal", None):
+        detail = getattr(message, "refusal", None) or choice.finish_reason
         raise ClassifierError(
-            f"the coder declined this text (category: {detail}) and the fallback "
-            "model did not answer either. Code this event by hand into the pack's "
-            "marquee spine rather than leaving it uncoded."
+            f"the coder declined this text ({detail}). Code this event by hand "
+            "into the pack's marquee spine rather than leaving it uncoded."
         )
 
-    raw = next((b.text for b in response.content if b.type == "text"), "")
+    raw = getattr(message, "content", None) or ""
     if not raw:
         raise ClassifierError(
-            f"the coder returned no text (stop_reason: {response.stop_reason})."
+            f"the coder returned no text (finish_reason: {choice.finish_reason})."
         )
     result: dict[str, Any] = json.loads(raw)
 

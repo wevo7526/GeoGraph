@@ -14,7 +14,7 @@ The page has two halves and they degrade honestly:
 - The ASSESS half is the LLM agent narrating around the situation briefing
   (wire, region games, markets, globe, frozen forecasts). GET
   /reasoning/situation serves that briefing with no model. Without
-  ANTHROPIC_API_KEY, POST /reasoning/assess is a 503 that names the key
+  OPENAI_API_KEY, POST /reasoning/assess is a 503 that names the key
   and what still works; it never fakes an assessment.
 """
 

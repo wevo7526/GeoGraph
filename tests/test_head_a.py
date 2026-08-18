@@ -18,41 +18,45 @@ from core.classifier import typing as event_typing
 
 
 class _Response:
-    def __init__(self, payload: dict[str, Any] | None, *, stop_reason: str = "end_turn"):
-        self.stop_reason = stop_reason
-        self.stop_details = types.SimpleNamespace(category="cyber")
-        text = json.dumps(payload) if payload is not None else ""
-        # A thinking block first, as Opus 5 returns: the reader must find the
-        # text block rather than assuming content[0].
-        self.content = [
-            types.SimpleNamespace(type="thinking", thinking=""),
-            types.SimpleNamespace(type="text", text=text),
+    def __init__(
+        self,
+        payload: dict[str, Any] | None,
+        *,
+        finish_reason: str = "stop",
+        refusal: str | None = None,
+    ):
+        content = json.dumps(payload) if payload is not None else ""
+        message = types.SimpleNamespace(content=content, refusal=refusal)
+        self.choices = [
+            types.SimpleNamespace(finish_reason=finish_reason, message=message)
         ]
 
 
-class _FakeAnthropic:
+class _FakeOpenAI:
     """Records the request so the call's shape can be asserted."""
 
     last_kwargs: dict[str, Any] = {}
     response: _Response | None = None
 
     def __init__(self, **_: Any) -> None:
-        self.beta = types.SimpleNamespace(messages=types.SimpleNamespace(create=self._create))
+        self.chat = types.SimpleNamespace(
+            completions=types.SimpleNamespace(create=self._create)
+        )
 
     def _create(self, **kwargs: Any) -> _Response:
         type(self).last_kwargs = kwargs
         response = type(self).response
-        assert response is not None, "set _FakeAnthropic.response before calling"
+        assert response is not None, "set _FakeOpenAI.response before calling"
         return response
 
 
 @pytest.fixture()
 def fake_sdk(monkeypatch):
-    module = types.ModuleType("anthropic")
-    module.Anthropic = _FakeAnthropic  # type: ignore[attr-defined]
-    monkeypatch.setitem(sys.modules, "anthropic", module)
-    _FakeAnthropic.last_kwargs = {}
-    return _FakeAnthropic
+    module = types.ModuleType("openai")
+    module.OpenAI = _FakeOpenAI  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "openai", module)
+    _FakeOpenAI.last_kwargs = {}
+    return _FakeOpenAI
 
 
 def test_the_model_types_the_event_and_the_crosswalk_prices_it(fake_sdk):
@@ -85,25 +89,27 @@ def test_an_unscorable_code_is_refused_not_coerced(fake_sdk):
         event_typing.code_text_event("Something happened.", api_key="k")
 
 
-def test_a_refusal_is_reported_before_content_is_read(fake_sdk):
-    # A refusal returns 200 with empty content; reading content first would
-    # raise something that blames the wrong thing.
-    fake_sdk.response = _Response(None, stop_reason="refusal")
+def test_a_content_filter_is_reported_before_content_is_read(fake_sdk):
+    # A filtered call returns 200 with empty content; reading content first
+    # would raise something that blames the wrong thing.
+    fake_sdk.response = _Response(None, finish_reason="content_filter")
     with pytest.raises(event_typing.ClassifierError, match="declined"):
         event_typing.code_text_event("...", api_key="k")
 
 
-def test_the_request_carries_the_current_model_and_a_fallback(fake_sdk):
+def test_the_request_carries_the_current_model_and_a_closed_schema(fake_sdk):
     fake_sdk.response = _Response({
         "cameo_code": "190", "actor1": "A", "actor2": "B",
         "confidence": 0.8, "reasoning": "Force used.",
     })
     event_typing.code_text_event("Troops crossed the border.", api_key="k")
     kwargs = fake_sdk.last_kwargs
-    assert kwargs["model"] == event_typing.CODER_MODEL == "claude-opus-5"
-    assert kwargs["fallbacks"] == "default"
-    assert kwargs["output_config"]["format"]["type"] == "json_schema"
-    # No sampling parameters — they are rejected on this model.
+    assert kwargs["model"] == event_typing.CODER_MODEL == "gpt-4.1"
+    schema = kwargs["response_format"]["json_schema"]
+    assert kwargs["response_format"]["type"] == "json_schema"
+    assert schema["strict"] is True
+    assert schema["schema"] is event_typing._CODING_SCHEMA
+    # No sampling parameters — they are not part of this coding path.
     assert not {"temperature", "top_p", "top_k"} & set(kwargs)
 
 
