@@ -70,6 +70,16 @@ MEMORY_PAUSE_BELOW = float(os.getenv("GEOGRAPH_MEMORY_PAUSE_BELOW", "0.12"))
 
 FAILURE_BACKOFF_SECONDS = 600.0
 
+#: Seconds a job with a long slice must wait after the scheduler starts
+#: before its first tick. The first pass used to run every due job in list
+#: order ~15s after boot — forecasts (6 GB), scores (corpus re-parse),
+#: metrics, backtest and calibration stacked on top of the warmed corpus and
+#: the kernel killed the 8 GB container. Cheap jobs (counts, wire, trim)
+#: still run on the first tick so the front page is warm; the rest wait until
+#: RSS from boot has somewhere to go.
+HEAVY_SLICE_SECONDS = 180.0
+HEAVY_JOB_BOOT_DELAY = 120.0
+
 #: Rows per write statement WHILE SERVING. The graph lock is FIFO, so a reader
 #: waits at most one statement — which makes statement size the p95 read
 #: latency of every page while the archive converges. Measured against a
@@ -259,6 +269,9 @@ class Scheduler:
         if self._thread is not None:
             return
         self.started_at = time.monotonic()
+        for job in self.jobs:
+            if job.slice_seconds >= HEAVY_SLICE_SECONDS:
+                job.state.next_due = self.started_at + HEAVY_JOB_BOOT_DELAY
         self._thread = threading.Thread(
             target=self._loop, daemon=True, name="geograph-jobs"
         )
@@ -505,6 +518,10 @@ class Scheduler:
                 flush=True,
             )
             self.current = None
+            # RSS stays at the high-water mark of the heaviest job unless
+            # glibc is told to give arenas back. A first-pass stack of jobs
+            # otherwise climbs until the cgroup kills the process.
+            _return_free_arenas()
 
     # ── what a reader sees ─────────────────────────────────────────────────
     def status(self) -> dict[str, Any]:

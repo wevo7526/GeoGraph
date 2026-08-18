@@ -803,6 +803,91 @@ def test_jobs_wait_for_the_corpus_warm():
     assert "ready_for_jobs" in src[start : start + 1200]
 
 
+def test_forecasts_metrics_and_backtest_remember_work_across_restarts():
+    """A PROCESS-LOCAL WATERMARK IS NO WATERMARK ON A CRASHING CONTAINER.
+
+    `_frozen_at` / `_metrics_at` / `_backtest_at` start empty, so every
+    restart re-earned the heaviest jobs — freeze alone peaked at 6.0 GB of a
+    7.45 GB container. After boot the corpus is already resident, and the
+    kernel took the process. Persisted Forecast nodes, NetworkMetric nodes
+    and the paper ledger are the watermark a restart can actually read.
+    """
+    import inspect
+
+    from core.api import work
+
+    freeze = inspect.getsource(work.forecasts)
+    assert "MATCH (f:Forecast)" in freeze
+    assert "_frozen_at[name] = size" in freeze
+
+    metrics = inspect.getsource(work.metrics)
+    assert "MATCH (n:NetworkMetric)" in metrics
+
+    backtest = inspect.getsource(work.backtest)
+    assert "backtest_run" in backtest
+    assert "persisted" in backtest
+
+
+def test_scores_does_not_reparse_the_corpus_when_nothing_is_due():
+    """`rows_from_conn` re-parses 1.33M events. On a restart that ran on the
+    first tick, on top of the freeze, and the container died. Ask the warmed
+    slim view for the newest timestamp first; skip the parse when every
+    near-term is still open and every long-horizon already carries a
+    retrodiction."""
+    import inspect
+
+    from core.api import work
+
+    src = inspect.getsource(work.scores)
+    assert "rows_from_conn" in src
+    gate = src.index("needs_brier")
+    parse = src.rindex("forecasting.rows_from_conn")
+    assert gate < parse, "the archive parse must sit behind the scoreable gate"
+    assert "_newest_event_time" in src
+
+
+def test_heavy_jobs_do_not_stampede_the_first_tick_after_boot():
+    """Every job's next_due starts at 0, so the first scheduler pass ran
+    forecasts, scores, metrics, backtest and calibration back-to-back ~15s
+    after boot. Cheap jobs still run immediately; long slices wait."""
+    cheap = jobs_module.Job(
+        name="counts", every=240.0, run=lambda c, d: {}, slice_seconds=120.0,
+    )
+    heavy = jobs_module.Job(
+        name="forecasts", every=1800.0, run=lambda c, d: {}, slice_seconds=600.0,
+    )
+    scheduler = jobs_module.Scheduler(_App(), None, [cheap, heavy])
+    scheduler.start()
+    try:
+        assert cheap.state.next_due == 0.0
+        assert heavy.state.next_due >= (scheduler.started_at or 0) + 100
+    finally:
+        scheduler.stop(timeout=5.0)
+
+
+def test_a_finished_job_returns_arenas_to_the_kernel():
+    """Reclaim was the only caller of malloc_trim, so RSS sat at the peak of
+    whichever job had run until the next memory-pressure pause — which on
+    the first pass after boot is too late."""
+    import inspect
+
+    src = inspect.getsource(jobs_module.Scheduler._run)
+    assert "_return_free_arenas()" in src
+
+
+def test_region_effects_do_not_materialise_the_whole_panel():
+    """`computed_runs()` with no filter is the refill bug again: every
+    measured row as a Python dict, between two memory checks, inside
+    `context.build` on the first games tick after boot."""
+    import inspect
+
+    from core.games import pricing
+
+    src = inspect.getsource(pricing._from_panel)
+    assert "event_ids" in src
+    assert "computed_runs(panel)" not in src.replace("computed_runs(panel, event_ids", "")
+
+
 def test_harvest_is_a_noop_while_the_snapshot_is_frozen(monkeypatch, tmp_path):
     from core.api import work
 
