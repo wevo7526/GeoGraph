@@ -54,14 +54,91 @@ body {
   font-family: Georgia, 'Times New Roman', serif;
 }
 
-/* ── The top bar: region on the left, the pages, one status dot ─────────────*/
-.topbar {
+/* ── The left rail: wordmark, region, the desks, one status dot ─────────────
+   Working pages wear a vertical masthead. The double rule is on the rail's
+   right edge — print's way of saying "this is the left of the page" — so the
+   explorer can use the full remaining height for its workspace and time
+   slider instead of sharing that height with a toolbar. */
+.sidebar {
+  display: flex;
+  flex-direction: column;
+  width: 14.75rem;
+  flex: none;
+  min-height: 0;
+  padding: 1rem 1rem 1.1rem 1.15rem;
+  border-right: 4px double var(--rule-strong);
+  background: var(--ground);
+}
+.sidebar-head {
+  display: flex;
+  flex-direction: column;
+  gap: 0.85rem;
+  min-width: 0;
+}
+.sidebar-wordmark {
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: var(--text);
+  font-family: inherit;
+  font-variant-caps: small-caps;
+  letter-spacing: 0.14em;
+  font-size: 1.25rem;
+  text-align: left;
+  padding: 0;
+  line-height: 1.1;
+}
+.sidebar-wordmark-mark {
+  display: none;
+}
+.sidebar-region {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 0.35rem;
+  min-width: 0;
+}
+.sidebar-nav {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 0.15rem;
+  margin-top: 1.35rem;
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+}
+.sidebar-nav-item {
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-family: inherit;
+  text-align: left;
+  color: var(--muted);
+  font-size: 0.95rem;
+  line-height: 1.25;
+  padding: 0.35rem 0.4rem 0.35rem 0.55rem;
+  border-left: 2px solid transparent;
+}
+.sidebar-nav-item.is-active {
+  color: var(--text);
+  border-left-color: var(--accent);
+}
+.sidebar-nav-mark {
+  display: none;
+}
+.sidebar-foot {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 1.5rem;
-  padding: 0 1.25rem;
-  min-height: 3.25rem;
+  gap: 0.5rem;
+  margin-top: 1rem;
+  flex: none;
+}
+.sidebar-health {
+  display: inline-block;
+  height: 0.5rem;
+  width: 0.5rem;
+  border-radius: 999px;
   flex: none;
 }
 
@@ -72,15 +149,26 @@ body {
   padding: 0.25rem 0.5rem;
   cursor: pointer;
   font-variant-numeric: tabular-nums;
+  min-width: 0;
+  max-width: 100%;
 }
 .region-select:focus-visible {
   outline: 1px solid var(--accent);
 }
 
-/* Pages under the top bar fill the rest of the viewport; each page manages
-   its own internal scrolling. */
+/* Pages beside the rail fill the rest of the viewport; each page manages
+   its own internal scrolling. The frame is a ROW so the explorer's height
+   is the viewport minus nothing but the optional health banner. */
 .app-frame {
   height: 100dvh;
+  display: flex;
+  flex-direction: row;
+  overflow: hidden;
+}
+.app-body {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
   display: flex;
   flex-direction: column;
   overflow: hidden;
@@ -102,8 +190,8 @@ body {
    wearing the first one's clothes. */
 
 /* The double rule under a masthead. Print's way of saying "this is the top of
-   the page", and the reason the app's top bar reads as a masthead rather than
-   as a toolbar. */
+   the page". The front door still wears it horizontally; working pages wear
+   the same rule vertically on the left rail. */
 .masthead {
   border-bottom: 4px double var(--rule-strong);
 }
@@ -186,28 +274,45 @@ body {
 }
 
 /* ── The explorer workspace: everything visible, nothing scrolls the page ────
-   One viewport-height grid — topbar / main / time slider — in the MarketGraph
-   shell lineage. Panels that overflow scroll INSIDE their own box
-   (.pane-scroll); the page itself never does. `minmax(0, …)` and `min-height:
-   0` are load-bearing: without them a long event list stretches the row and
-   silently re-introduces page scroll. */
+   One remaining-viewport grid — main / time slider — beside the left rail.
+   (The rail is app chrome, not a row of this shell.) Panels that overflow
+   scroll INSIDE their own box (.pane-scroll); the page itself never does.
+   `minmax(0, …)` and `min-height: 0` are load-bearing: without them a long
+   event list stretches the row and silently re-introduces page scroll.
+   Event/drawer columns are a little tighter than they were under a top bar,
+   because the rail already spends ~15rem of width.
+
+   Breakpoints are CONTAINER queries on this shell, not the viewport: a 1100px
+   window with a 15rem rail leaves an ~860px workspace, which is the width
+   that used to stack. Measuring the pane keeps the three-column desk from
+   running at 200px of canvas. */
 .explorer-shell {
   height: 100%;
   display: grid;
   grid-template-rows: minmax(0, 1fr) auto;
   overflow: hidden;
+  container-type: inline-size;
 }
 
 .explorer-main {
   display: grid;
-  grid-template-columns: 19rem minmax(0, 1fr) 21rem;
+  grid-template-columns: 16rem minmax(0, 1fr) 18rem;
   min-height: 0;
 }
 
-@media (max-width: 1100px) {
+@container (max-width: 1100px) {
   .explorer-main {
-    grid-template-columns: 15rem minmax(0, 1fr) 17rem;
+    grid-template-columns: 13.5rem minmax(0, 1fr) 15rem;
   }
+}
+
+@container (max-width: 900px) {
+  .explorer-main {
+    grid-template-columns: 1fr;
+    grid-auto-rows: min-content;
+    overflow-y: auto;
+  }
+  .explorer-main .canvas3d { min-height: 60vh; }
 }
 
 .pane-scroll {
@@ -486,26 +591,53 @@ input[type='range'].timeline:focus-visible {
 }
 
 /* ── Shell responsiveness ────────────────────────────────────────────────────
-   The masthead wraps its region/nav onto a second line on narrow screens
-   rather than crushing them; the explorer's three-column workspace collapses
-   to a single scrolling column on phones (the 3D canvas keeps a usable height
-   above the panels). */
-@media (max-width: 720px) {
-  .topbar {
-    flex-wrap: wrap;
-    padding: 0.5rem 1rem;
-    min-height: 0;
-    gap: 0.5rem 1rem;
-  }
-  .topbar nav { gap: 1rem; flex-wrap: wrap; }
-}
+   Below 900px the rail collapses to initials (icon rail) so a labelled 15rem
+   sidebar does not eat the explorer's plate. The explorer itself stacks from
+   a container query on `.explorer-shell` — that width is the pane beside
+   this rail, not the window. The time slider stays the shell's bottom row. */
 @media (max-width: 900px) {
-  .explorer-main {
-    grid-template-columns: 1fr;
-    grid-auto-rows: min-content;
-    overflow-y: auto;
+  .sidebar {
+    width: 3rem;
+    padding: 0.75rem 0.3rem 0.85rem;
   }
-  .explorer-main .canvas3d { min-height: 60vh; }
+  .sidebar-wordmark {
+    font-size: 1.15rem;
+    letter-spacing: 0;
+    text-align: center;
+    width: 100%;
+  }
+  .sidebar-wordmark-full,
+  .sidebar-region-kicker,
+  .sidebar-nav-full,
+  .sidebar-health-label {
+    display: none;
+  }
+  .sidebar-wordmark-mark,
+  .sidebar-nav-mark {
+    display: inline;
+  }
+  .sidebar-region {
+    align-items: stretch;
+  }
+  .region-select {
+    padding: 0.15rem 0;
+    font-size: 9px;
+    letter-spacing: 0;
+  }
+  .sidebar-nav-item {
+    text-align: center;
+    padding: 0.4rem 0;
+    border-left: none;
+    border-bottom: 2px solid transparent;
+    font-variant-caps: small-caps;
+    letter-spacing: 0.06em;
+  }
+  .sidebar-nav-item.is-active {
+    border-bottom-color: var(--accent);
+  }
+  .sidebar-foot {
+    justify-content: center;
+  }
 }
 
 /* ── The front door (2026-08-15, rebuilt 2026-08-17) ────────────────────────
@@ -866,10 +998,10 @@ input[type='range'].timeline:focus-visible {
 
 /* THE FRONT DOOR AND ITS MAP (2026-08-17, recut 2026-08-18) -----------------
    Masthead, then a left-set copy column (kicker, headline, standfirst, door)
-   beside the globe, then a hairline. The wordmark and its double rule are the
-   same masthead motif every working page wears, so the front door reads as the
-   same publication rather than a separate splash. The door sits on the copy's
-   left edge, pushed down the column so it is not jammed under the headline.
+   beside the globe, then a hairline. The wordmark and its horizontal double
+   rule are the COVER of the paper; working pages wear that same rule turned
+   vertical on the left rail. The door sits on the copy's left edge, pushed
+   down the column so it is not jammed under the headline.
 
    The globe wore a dark plate for one afternoon; the override is withdrawn.
    The white-ground decision is dated twice in this file and tells the next

@@ -63,7 +63,7 @@ function sameByKey<T>(prev: T[] | null, next: T[], key: (item: T) => string): bo
 
 /** What the drawer is showing. One thing at a time — an event's coding, a
  *  dyad's trajectory, a durable relation, or the focused actor — never several
- *  fighting over the same 21rem. */
+ *  fighting over the same drawer column. */
 type Selection =
   | { kind: 'event'; id: string }
   | { kind: 'dyad'; id: string }

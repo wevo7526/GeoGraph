@@ -1,7 +1,7 @@
 import { Suspense, lazy, useEffect, useState } from 'react'
 import ApiHealthBanner from './components/ApiHealthBanner'
 import Landing from './components/Landing'
-import TopBar from './components/TopBar'
+import Sidebar from './components/Sidebar'
 
 // Lazy on purpose: the explorer carries three.js (~1.5 MB minified), and the
 // front door must not pay for it. Working pages load when entered.
@@ -12,6 +12,7 @@ const WirePage = lazy(() => import('./components/WirePage'))
 const CasesPage = lazy(() => import('./components/CasesPage'))
 const GamesPage = lazy(() => import('./components/GamesPage'))
 const MarketsPage = lazy(() => import('./components/MarketsPage'))
+const SituationPage = lazy(() => import('./components/SituationPage'))
 
 // Hash routing rather than a router dependency: a handful of views, and the
 // hash keeps URLs shareable — a reader can send someone the case study, which
@@ -64,7 +65,7 @@ export default function App() {
   //
   // On ROUTE ONLY — the link's region applies when the hash changes, once.
   // With `region` in the deps this re-fired on every manual region change and
-  // snapped the lens back to the stale hash's region, making the TopBar
+  // snapped the lens back to the stale hash's region, making the Sidebar
   // select inert on any page reached through a region-carrying link.
   useEffect(() => {
     const q = route.split('?')[1]
@@ -102,16 +103,21 @@ export default function App() {
   } else if (route.startsWith('/wire')) {
     page = <WirePage region={region} onNavigate={navigate} />
     scrollPage = true
+  } else if (route.startsWith('/situation')) {
+    page = <SituationPage region={region} onNavigate={navigate} />
+    scrollPage = true
   } else {
     page = <Explorer region={region} onNavigate={navigate} />
   }
 
   return (
     <div className="app-frame">
-      <TopBar route={route} region={region} onRegion={chooseRegion} onNavigate={navigate} />
-      <ApiHealthBanner />
-      <div className={scrollPage ? 'app-page app-page--scroll' : 'app-page'}>
-        <Suspense fallback={<Loading />}>{page}</Suspense>
+      <Sidebar route={route} region={region} onRegion={chooseRegion} onNavigate={navigate} />
+      <div className="app-body">
+        <ApiHealthBanner />
+        <div className={scrollPage ? 'app-page app-page--scroll' : 'app-page'}>
+          <Suspense fallback={<Loading />}>{page}</Suspense>
+        </div>
       </div>
     </div>
   )

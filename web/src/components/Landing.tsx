@@ -38,8 +38,8 @@ export default function Landing({ onEnter }: { onEnter: (route: string) => void 
       {/* THE MASTHEAD IS BACK (2026-08-17). It went with the rest of the
           subtext in the cut and took the wordmark and its double rule with
           it, which left the page anonymous — a headline and a globe belonging
-          to nobody. The rule is the same masthead motif every working page
-          wears, so the front door reads as the same publication. */}
+          to nobody. The rule is the cover's masthead; working pages wear the
+          same double rule turned vertical on the left rail. */}
       <header className="landing-masthead">
         <span className="landing-wordmark">GeoGraph</span>
       </header>

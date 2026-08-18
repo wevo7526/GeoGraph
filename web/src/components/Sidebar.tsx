@@ -1,13 +1,14 @@
 import { useEffect, useState } from 'react'
 import { getHealth, getPacks } from '../api'
 
-/** The one bar every working page shares, set as the paper's MASTHEAD: REGION
- *  on the left (the lens every layer looks through), the pages in the middle,
- *  and a single status dot on the right instead of a stats readout — coverage
- *  lives in the pages, not the chrome. The double rule under it is the same
- *  one the front page carries, which is what makes the working pages read as
- *  later pages of one paper rather than as a different application. */
-export default function TopBar({
+/** The one rail every working page shares, set as the paper's LEFT RULE:
+ *  wordmark and region at the top (the lens every layer looks through), the
+ *  desks in order of the reader's question, and a single status dot at the
+ *  foot instead of a stats readout — coverage lives in the pages, not the
+ *  chrome. The double rule on the rail's right edge is the same motif the
+ *  front page wears under its wordmark, turned vertical so the desks read as
+ *  later pages of one paper rather than as a toolbar above a product. */
+export default function Sidebar({
   route,
   region,
   onRegion,
@@ -45,46 +46,36 @@ export default function TopBar({
   }, [])
 
   // One coherent front-of-house, organised around the user's question, not the
-  // machine's parts: browse the web (Explorer), open a relationship (the
-  // answer, past→now→forward), read what just came in (Wire) and the cases.
-  // Reasoning, the game and trading folded INTO the Relationship page as its
-  // evidence, its "how it plays out", and its track record — no longer tabs.
-  // Six pages since 2026-08-15: the game-theory map and the markets page are
-  // tabs again (a solved-game region map and a per-region paper backtest are
-  // destinations, not evidence folded under a pair), beside the explorer, the
-  // relationship, the wire and the case studies. The Wire replaced the
-  // Watchlist on 2026-08-17: a saved list of pairs was a bookmark the user
-  // had to build first, where the wire answers "what just happened" on
-  // arrival — which is the question a live archive is FOR.
-  const pages: Array<[string, string]> = [
-    ['/explore', 'Explorer'],
-    ['/relationships', 'Relationships'],
-    ['/games', 'Game theory'],
-    ['/markets', 'Markets'],
-    ['/wire', 'Wire'],
-    ['/cases', 'Case studies'],
+  // machine's parts: the situation first (what broke, what it means, what
+  // happens next), then the desks that go deeper, with the 3D explorer as the
+  // archive instrument rather than the door.
+  const pages: Array<[string, string, string]> = [
+    ['/situation', 'Situation', 'S'],
+    ['/wire', 'Wire', 'W'],
+    ['/markets', 'Markets', 'M'],
+    ['/games', 'Game theory', 'G'],
+    ['/relationships', 'Relationships', 'R'],
+    ['/explore', 'Explorer', 'E'],
+    ['/cases', 'Case studies', 'C'],
   ]
 
   return (
-    <header className="topbar masthead">
-      <div className="flex items-center gap-4 min-w-0">
+    <aside className="sidebar">
+      <div className="sidebar-head">
         <button
           type="button"
           onClick={() => onNavigate('/')}
-          className="text-xl shrink-0"
-          style={{
-            background: 'none',
-            border: 'none',
-            cursor: 'pointer',
-            color: 'var(--text)',
-            fontVariantCaps: 'small-caps',
-            letterSpacing: '0.14em',
-          }}
+          className="sidebar-wordmark"
+          title="GeoGraph — front page"
+          aria-label="GeoGraph, front page"
         >
-          GeoGraph
+          <span className="sidebar-wordmark-full">GeoGraph</span>
+          <span className="sidebar-wordmark-mark" aria-hidden>
+            G
+          </span>
         </button>
-        <label className="flex items-center gap-2 kicker">
-          region
+        <label className="sidebar-region">
+          <span className="kicker sidebar-region-kicker">region</span>
           <select
             value={region}
             onChange={(e) => onRegion(e.target.value)}
@@ -100,10 +91,10 @@ export default function TopBar({
         </label>
       </div>
 
-      <nav className="flex items-baseline gap-5 text-sm">
-        {pages.map(([path, label]) => {
+      <nav className="sidebar-nav" aria-label="desks">
+        {pages.map(([path, label, mark]) => {
           // The game, reasoning and trading pages folded INTO Relationship, so
-          // their old deep links must light the Relationship tab, not nothing.
+          // their old deep links must light the Relationship item, not nothing.
           // Reading one case (/case/<slug>) is being IN Case studies.
           const active =
             route.startsWith(path) ||
@@ -116,29 +107,34 @@ export default function TopBar({
               key={path}
               type="button"
               onClick={() => onNavigate(path)}
-              className="pb-0.5"
-              style={{
-                background: 'none',
-                border: 'none',
-                cursor: 'pointer',
-                color: active ? 'var(--text)' : 'var(--muted)',
-                borderBottom: active ? '2px solid var(--accent)' : '2px solid transparent',
-              }}
+              className={active ? 'sidebar-nav-item is-active' : 'sidebar-nav-item'}
+              title={label}
+              aria-label={label}
+              aria-current={active ? 'page' : undefined}
             >
-              {label}
+              <span className="sidebar-nav-full">{label}</span>
+              <span className="sidebar-nav-mark" aria-hidden>
+                {mark}
+              </span>
             </button>
           )
         })}
+      </nav>
+
+      <div className="sidebar-foot">
         <span
           aria-label={healthy === null ? 'connecting' : healthy ? 'archive live' : 'archive offline'}
           title={healthy === null ? 'connecting…' : healthy ? 'archive live' : 'archive offline'}
-          className="inline-block h-2 w-2 rounded-full"
+          className="sidebar-health"
           style={{
             background:
               healthy === null ? 'var(--line)' : healthy ? 'var(--accent)' : 'var(--alert)',
           }}
         />
-      </nav>
-    </header>
+        <span className="kicker sidebar-health-label">
+          {healthy === null ? 'connecting' : healthy ? 'live' : 'offline'}
+        </span>
+      </div>
+    </aside>
   )
 }

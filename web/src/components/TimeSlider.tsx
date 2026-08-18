@@ -43,7 +43,7 @@ export default function TimeSlider({ year, onChange, regimes, coverage }: Props)
   }, [coverage])
 
   return (
-    <div className="px-6 py-4 border-t" style={{ borderColor: 'var(--line)' }}>
+    <div className="px-4 py-3 border-t" style={{ borderColor: 'var(--line)' }}>
       <div className="flex items-baseline justify-between mb-2">
         <span className="mono text-2xl" style={{ color: 'var(--accent)' }}>
           {year}

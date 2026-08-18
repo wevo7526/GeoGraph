@@ -128,7 +128,7 @@ export const getHealth = () => get<Health>('/api/health')
 // `packs` are the KEYS every region= parameter takes; `labels` is what a
 // reader is shown. Never send a label back to the API.
 //
-// Memoised: the pack list is immutable for the session, and TopBar, regions.ts
+// Memoised: the pack list is immutable for the session, and Sidebar, regions.ts
 // and Landing each asked for it independently (2-3 fetches per page). One
 // shared promise dedups them; a failed fetch is NOT cached, so it still
 // retries on the next call.
