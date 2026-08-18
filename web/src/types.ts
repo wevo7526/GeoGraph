@@ -23,6 +23,9 @@ export interface Health {
   graph: 'open' | 'unavailable'
   graphError: string | null
   disabled: Record<string, string>
+  /** Env var NAMES that are unused or one-shot and still set. Reasons only
+   *  — never secret values. Empty means the Railway list is clean. */
+  leftover?: Record<string, string>
   boot?: BootStatus | null
 }
 

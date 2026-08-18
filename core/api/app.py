@@ -423,6 +423,7 @@ def create_app() -> FastAPI:
             "graphError": app.state.graph_error,
             "corpusError": app.state.corpus_error,
             "disabled": settings.missing_capabilities(),
+            "leftover": settings_module.leftover_variables(),
             # Live state when the boot runs behind this API (api-first),
             # else whatever the serialised boot handed over in the env.
             "boot": getattr(app.state, "boot", None) or _boot_status(),
