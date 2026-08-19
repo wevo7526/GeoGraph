@@ -1,10 +1,11 @@
-/** Intel: one reading column — the desk, then the wire it is reading.
+/** Intel: the briefing — lede, globe, a small figure, then the wire.
  *
- *  THE AGENT RUNS THE ROOM. The page lede is composed from named fields
- *  (`lib/story.ts` `situationLede`); the desk narrates those numbers, it does
- *  not originate them. The feed that used to live on its own Wire page is
- *  folded under the argument: live overlay, what broke, the rest of the
- *  traffic. Old `/situation` and `/wire` hashes still land here.
+ *  THE AGENT RUNS THE ROOM from the corner desk, not from this page. The
+ *  lede is composed from named fields (`lib/story.ts` `situationLede`);
+ *  questions go through the global modal. The feed that used to live on its
+ *  own Wire page is folded under the argument: live overlay, what broke,
+ *  the rest of the traffic. Old `/situation` and `/wire` hashes still land
+ *  here.
  */
 import { useEffect, useState } from 'react'
 import {
@@ -16,7 +17,7 @@ import {
   getWireLive,
   lastFailureFor,
 } from '../api'
-import { count, situationLede } from '../lib/story'
+import { count, intelTrafficFigure, situationLede } from '../lib/story'
 import { useRegionLabel } from '../regions'
 import type {
   GlobeBoard,
@@ -27,10 +28,9 @@ import type {
   WireLiveFeed,
 } from '../types'
 import { Empty, StoryHead } from '../ui'
-import AgentDesk from './AgentDesk'
-import { useAgent } from './AgentSession'
 import SituationPlate from './SituationPlate'
 import { WireFeedBeats } from './WireList'
+import { Bars } from './charts/Kit'
 
 const LIVE_POLL_MS = 60_000
 
@@ -42,7 +42,6 @@ export default function IntelPage({
   onNavigate: (route: string) => void
 }) {
   const label = useRegionLabel(region)
-  const { brief, darkReason, reread } = useAgent()
   const [wire, setWire] = useState<WireFeed | null | undefined>(undefined)
   const [liveFeed, setLiveFeed] = useState<WireLiveFeed | null | undefined>(undefined)
   const [map, setMap] = useState<RegionMap | null | undefined>(undefined)
@@ -71,14 +70,10 @@ export default function IntelPage({
     }
   }, [region])
 
-  useEffect(() => {
-    brief()
-  }, [region, darkReason, brief])
-
   if (wire === null) {
     const failure = lastFailureFor('/api/wire')
     return (
-      <div className="reading-column py-10">
+      <div className="intel-page py-10">
         <StoryHead
           kicker={`Intel · ${label.toUpperCase()}`}
           title="The intel desk did not answer"
@@ -96,18 +91,17 @@ export default function IntelPage({
   })
   const unplaced = globe?.counts?.unplaced ?? globe?.unplaced?.length ?? 0
   const studyStopped = jobs?.jobs?.find((j) => j.name === 'study')?.last_result?.stopped
+  const figure = intelTrafficFigure({
+    wire: wire ?? null,
+    live: liveFeed ?? null,
+  })
 
   return (
-    <div className="reading-column">
+    <div className="intel-page">
       <StoryHead
         kicker={`Intel · ${label.toUpperCase()}`}
         title={lede?.headline ?? `The desk is reading ${label}`}
         standfirst={lede?.support ?? 'The argument opens as the briefing lands.'}
-        action={
-          <button type="button" className="article-link" onClick={() => reread()}>
-            new reading
-          </button>
-        }
       />
       {(unplaced > 0 || studyStopped) && (
         <p className="figure-note mt-4">
@@ -117,14 +111,25 @@ export default function IntelPage({
           {studyStopped && `The event study is paused (${studyStopped}). Coverage will not grow until the volume has headroom.`}
         </p>
       )}
-      <div className="situation-plate mt-6">
-        <SituationPlate region={region} board={globe === undefined ? undefined : globe} onOpen={onNavigate} />
+      <div className="intel-grid">
+        <div className="situation-plate intel-globe">
+          <SituationPlate region={region} board={globe === undefined ? undefined : globe} onOpen={onNavigate} />
+        </div>
+        {figure && (
+          <figure className="intel-figure">
+            <figcaption>
+              <h2>{figure.title}</h2>
+              <p className="figure-note">{figure.support}</p>
+            </figcaption>
+            <Bars rows={figure.bars} format={(v) => String(v)} />
+          </figure>
+        )}
       </div>
-      <AgentDesk region={region} onNavigate={onNavigate} />
       {wire === undefined ? (
         <Empty>Reading the wire…</Empty>
       ) : (
         <WireFeedBeats
+          className="intel-wire"
           feed={wire}
           liveFeed={liveFeed}
           region={region}

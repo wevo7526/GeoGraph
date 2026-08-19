@@ -20,6 +20,7 @@ from core import settings as settings_module
 from core.cite import citable_url
 from core.graph import kuzu_store
 from core.ingestion import gdelt
+from core.wire import headline as wire_headline
 from core.wire import serving as wire_serving
 
 router = APIRouter(tags=["events"])
@@ -520,7 +521,7 @@ def wire(
     )
     rows = rows_payload["rows"]
 
-    names = _actor_names(request)
+    names, geo_names = _pack_roster()
     items: list[dict[str, Any]] = []
     for row in rows:
         magnitude = row.get("escalation_magnitude")
@@ -529,10 +530,16 @@ def wire(
         departure = (
             magnitude is not None and float(magnitude) >= WIRE_DEPARTURE_POINTS
         )
+        initiator_name = names.get(str(row.get("initiator_id") or ""))
+        target_name = names.get(str(row.get("target_id") or ""))
+        display = wire_headline.display_fields(
+            {**row, "initiator_name": initiator_name, "target_name": target_name},
+            geo_names=geo_names,
+        )
         items.append({
             **row,
-            "initiator_name": names.get(str(row.get("initiator_id") or "")),
-            "target_name": names.get(str(row.get("target_id") or "")),
+            "initiator_name": initiator_name,
+            "target_name": target_name,
             # THE FIRST READ, as fields. `departure` is the judgement the
             # surface leads with; `points_from_baseline` is the number that
             # substantiates it; `baseline` is what it departed FROM, so a
@@ -549,6 +556,9 @@ def wire(
                 else "coercive" if goldstein is not None and float(goldstein) < 0
                 else None
             ),
+            # Display/nav only: action_geo is corpus-only and is omitted when
+            # the row never carried it. Never a stored retarget.
+            **display,
         })
     return {
         "rows": items,
@@ -564,8 +574,8 @@ def wire(
     }
 
 
-def _actor_names(request: Request | None = None) -> dict[str, str]:
-    """actor node_id → display name, for the wire's headline.
+def _pack_roster() -> tuple[dict[str, str], dict[str, str]]:
+    """actor node_id → name, and iso3 → name, from the packs.
 
     FROM THE PACKS, NOT THE GRAPH, and that is deliberate. The roster is the
     same data in both places, but the graph is not always open: the study runs
@@ -578,8 +588,8 @@ def _actor_names(request: Request | None = None) -> dict[str, str]:
     """
     from core import packs
 
-    del request  # no graph access, by design
     names: dict[str, str] = {}
+    geo: dict[str, str] = {}
     for pack_name in packs.available():
         try:
             pack = packs.load(pack_name)
@@ -589,7 +599,10 @@ def _actor_names(request: Request | None = None) -> dict[str, str]:
             node_id, name = str(actor.get("id") or ""), actor.get("name")
             if node_id and name:
                 names.setdefault(node_id, str(name))
-    return names
+            iso3 = str(actor.get("iso3") or "").strip().upper()
+            if iso3 and name:
+                geo.setdefault(iso3, str(name))
+    return names, geo
 
 
 #: The live poll is cached for this long. GDELT publishes every 15 minutes, so
@@ -689,7 +702,7 @@ def wire_live(region: str = "mena", limit: int = Query(30, ge=1, le=100)) -> dic
         finally:
             panel.close()
 
-    names = _actor_names(None)
+    names, geo_names = _pack_roster()
     rows: list[dict[str, Any]] = []
     for row in polled.get("rows", [])[:limit]:
         goldstein = row.get("goldstein")
@@ -719,6 +732,12 @@ def wire_live(region: str = "mena", limit: int = Query(30, ge=1, le=100)) -> dic
                     "thin": bool(cell.get("thin")),
                 })
             outlook.sort(key=lambda m: abs(m.get("median") or 0.0), reverse=True)
+        initiator_name = names.get(str(row.get("initiator_id") or ""))
+        target_name = names.get(str(row.get("target_id") or ""))
+        display = wire_headline.display_fields(
+            {**row, "initiator_name": initiator_name, "target_name": target_name},
+            geo_names=geo_names,
+        )
         rows.append({
             "node_id": row.get("node_id"),
             "event_time": row.get("event_time"),
@@ -731,8 +750,8 @@ def wire_live(region: str = "mena", limit: int = Query(30, ge=1, le=100)) -> dic
             "escalation_magnitude": row.get("escalation_magnitude"),
             "initiator_id": row.get("initiator_id"),
             "target_id": row.get("target_id"),
-            "initiator_name": names.get(str(row.get("initiator_id") or "")),
-            "target_name": names.get(str(row.get("target_id") or "")),
+            "initiator_name": initiator_name,
+            "target_name": target_name,
             "dyad_id": row.get("dyad_id"),
             "available_at": row.get("available_at"),
             # Cite the dataset, never GDELT SOURCEURL. That field is a mention
@@ -745,6 +764,9 @@ def wire_live(region: str = "mena", limit: int = Query(30, ge=1, le=100)) -> dic
             "num_sources": row.get("num_sources"),
             "implied_kind": kind,
             "market_outlook": outlook[:4],
+            # Display/nav only. Live rows already carry action_geo from the
+            # parser; nothing here retargets USA→SYR as a stored fact.
+            **display,
         })
 
     payload = {

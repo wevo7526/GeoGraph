@@ -162,14 +162,49 @@ def test_intel_and_the_wire_are_one_package() -> None:
     )
     assert "Ask the desk" not in intel
     assert "situationLede" in intel
-    assert "AgentDesk" in intel
+    assert "AgentDesk" not in intel
+    assert "A follow-up" not in intel
+    assert "desk-ask" not in intel
+    assert "new reading" not in intel
+    assert "brief()" not in intel
     assert "WireFeedBeats" in intel
     assert "getWireLive" in intel
+    assert "intelTrafficFigure" in intel
     assert "explanation[0]" not in intel
     app = _strip_comments((WEB / "App.tsx").read_text(encoding="utf-8"))
     assert "AgentModal" in app
     assert "WirePage" not in app
     assert "route.startsWith('/wire')" in app
+    # Landing returns before the working frame, so the FAB is not on `/`.
+    landing_return = app.find("return <Landing")
+    modal_jsx = app.find("<AgentModal")
+    assert landing_return != -1 and modal_jsx != -1 and landing_return < modal_jsx
+    modal_src = _strip_comments(
+        (WEB / "components" / "AgentModal.tsx").read_text(encoding="utf-8")
+    )
+    assert "onIntel" not in modal_src
+    assert "onLanding" in modal_src
+    assert "AgentDesk" in modal_src
+    desk = _strip_comments(
+        (WEB / "components" / "AgentDesk.tsx").read_text(encoding="utf-8")
+    )
+    assert "A follow-up" not in desk
+    assert "A question for the desk" in desk
+    cases = _strip_comments(
+        (WEB / "components" / "CaseStudyView.tsx").read_text(encoding="utf-8")
+    )
+    assert "postCaseNarrate" not in cases
+
+
+def test_wire_headlines_use_cameo_roots_not_only_quad_four() -> None:
+    """Quad 4 is not always 'used force toward'. The composer reads CAMEO."""
+    story = _strip_comments((WEB / "lib" / "story.ts").read_text(encoding="utf-8"))
+    assert "CAMEO_ACT" in story
+    assert "exhibited force toward" in story
+    assert "thirdCountryForce" in story
+    assert "used force in" in story
+    # The quad fallback may still exist; it must not be the only verb.
+    assert story.count("used force toward") == 1
 
 
 def test_the_desk_renders_an_article_not_a_preformatted_blob() -> None:

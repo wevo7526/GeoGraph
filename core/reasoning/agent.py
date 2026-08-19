@@ -26,8 +26,8 @@ from typing import Any
 
 #: Override with GEOGRAPH_AGENT_MODEL. 4.1 is the default deliberately:
 #: the agent narrates around numbers it is handed — it needs judgment, not
-#: a reasoning-model loop. Intel opens a reading on arrival; follow-ups
-#: and the corner desk are the reader's, not a poll.
+#: a reasoning-model loop. The desk waits for the reader to ask; it does
+#: not open a reading on arrival.
 _DEFAULT_MODEL = "gpt-4.1"
 
 #: Prior turns kept on a follow-up. The briefing is re-sent every call, so
@@ -38,8 +38,8 @@ _TURN_CHARS = 4000
 _SYSTEM = (
     "You are GeoGraph's desk: an applied-history analyst over a "
     "1972–present geopolitical archive with a measured market-transmission "
-    "layer. Intel is your office — the desk's reading sits above the wire "
-    "itself. A reader may also summon you from any other desk. You reason "
+    "layer. Intel is the briefing. A reader summons you from the corner "
+    "desk on any working page. You reason "
     "in the realist tradition — interests, resolve, capability, bargaining "
     "position — and by disciplined analogy.\n\n"
     "SHAPE OF THE READING. Short paragraphs separated by a blank line. "

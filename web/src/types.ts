@@ -120,6 +120,16 @@ export interface WireItem extends GraphEvent {
   points_from_baseline: number | null
   pair_baseline: number | null
   tone: 'cooperative' | 'coercive' | null
+  /** Corpus-only. ISO3 of the action, when the row carried it. */
+  action_geo?: string | null
+  action_geo_name?: string | null
+  initiator_iso3?: string | null
+  target_iso3?: string | null
+  /** Display/nav only — a fight coded on a third roster country. */
+  third_country_force?: boolean
+  /** False when the surface must not offer this row as an A–B fight. */
+  pair_fight?: boolean
+  coercion?: boolean | null
 }
 
 export interface WireFeed {
@@ -159,6 +169,13 @@ export interface WireLiveItem {
   dyad_id: string | null
   initiator_name: string | null
   target_name: string | null
+  action_geo?: string | null
+  action_geo_name?: string | null
+  initiator_iso3?: string | null
+  target_iso3?: string | null
+  third_country_force?: boolean
+  pair_fight?: boolean
+  coercion?: boolean | null
   mentions?: number | null
   num_sources?: number | null
   implied_kind: string

@@ -1,7 +1,8 @@
-/** Corner control: the same desk, from any working page but Intel.
+/** Corner control: the same desk, from any working page.
  *
- *  Intel is the office; this is the summons. Paper language — a ruled
- *  panel, not a chat bubble. Hidden on the landing and on Intel itself. */
+ *  Paper language — a ruled panel, not a chat bubble. Hidden on the landing
+ *  only (`App` returns the front page before this mounts; the path check is
+ *  the same gate). Intel is a briefing; questions come here. */
 import { useEffect, useState } from 'react'
 import AgentDesk from './AgentDesk'
 import { useAgent } from './AgentSession'
@@ -16,8 +17,7 @@ export default function AgentModal({
   onNavigate: (next: string) => void
 }) {
   const path = route.split('?')[0]
-  const onIntel =
-    path.startsWith('/intel') || path.startsWith('/situation') || path.startsWith('/wire')
+  const onLanding = path === '/' || path === ''
   const [open, setOpen] = useState(false)
   const { asking, messages } = useAgent()
 
@@ -30,7 +30,7 @@ export default function AgentModal({
     return () => window.removeEventListener('keydown', onKey)
   }, [open])
 
-  if (onIntel) return null
+  if (onLanding) return null
 
   return (
     <>

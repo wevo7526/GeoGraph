@@ -1,7 +1,7 @@
-/** Shared conversation for Intel and the corner desk.
+/** Shared conversation for the corner desk.
  *
- *  One briefing, one argument. Region change clears the thread. Intel
- *  opens a reading on arrival; other desks wait for the reader to ask. */
+ *  One briefing, one argument. Region change clears the thread. The desk
+ *  waits for the reader to ask — nothing opens a reading on arrival. */
 import {
   createContext,
   useCallback,

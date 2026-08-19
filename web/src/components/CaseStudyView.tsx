@@ -1,9 +1,7 @@
 import { useEffect, useState } from 'react'
-import { getCaseStudy, getDynamicCaseStudy, postCaseNarrate } from '../api'
-import { citeLabel, parseDeskProse } from '../lib/desk'
+import { getCaseStudy, getDynamicCaseStudy } from '../api'
 import { useRegionLabel } from '../regions'
 import type { CaseStudy, CaseStudyEpisode, Effect } from '../types'
-import { Disclosure } from '../ui'
 
 /** The pack KEY is not its caption (packs/china is captioned Asia) — every
  *  reader surface routes through the label layer. */
@@ -186,43 +184,6 @@ function Episode({ episode }: { episode: CaseStudyEpisode }) {
   )
 }
 
-function DeskGrafs({ raw }: { raw: string }) {
-  return (
-    <>
-      {parseDeskProse(raw).map((block, index) => {
-        if (block.kind === 'ul') {
-          return (
-            <ul key={index} className="mt-3 list-disc pl-5" style={{ maxWidth: '68ch' }}>
-              {block.items.map((item, itemIndex) => (
-                <li key={itemIndex} className="text-base leading-relaxed">
-                  {item.map((part, partIndex) => (
-                    <DeskBit key={partIndex} part={part} />
-                  ))}
-                </li>
-              ))}
-            </ul>
-          )
-        }
-        return (
-          <p key={index} className="mt-4 text-lg leading-relaxed" style={{ maxWidth: '68ch' }}>
-            {block.children.map((part, partIndex) => (
-              <DeskBit key={partIndex} part={part} />
-            ))}
-          </p>
-        )
-      })}
-    </>
-  )
-}
-
-function DeskBit({ part }: { part: { kind: string; value?: string; id?: string } }) {
-  if (part.kind === 'strong') return <strong>{part.value}</strong>
-  if (part.kind === 'cite' && part.id) {
-    return <span className="mono text-sm">{citeLabel(part.id, null)}</span>
-  }
-  return <>{part.value}</>
-}
-
 export default function CaseStudyView({
   slug,
   onNavigate,
@@ -232,11 +193,9 @@ export default function CaseStudyView({
 }) {
   const [study, setStudy] = useState<CaseStudy | null>(null)
   const [missing, setMissing] = useState(false)
-  const [desk, setDesk] = useState<{ desk_reading: string; method?: string } | null>(null)
 
   useEffect(() => {
     let active = true
-    setDesk(null)
     // `dynamic?dyad=…` (or `?event=…`) composes a study on request from the
     // measured record — same shape as a worked one, so this view renders both.
     const [bare, query] = slug.split('?')
@@ -249,15 +208,6 @@ export default function CaseStudyView({
       if (!active) return
       setStudy(result)
       setMissing(result === null)
-      if (!result) return
-      postCaseNarrate(
-        bare === 'dynamic'
-          ? { ...params, region: params.region || result.pack }
-          : { slug: bare },
-      ).then((reading) => {
-        if (!active || !reading.ok || !reading.result?.desk_reading) return
-        setDesk(reading.result)
-      })
     })
     return () => {
       active = false
@@ -342,22 +292,6 @@ export default function CaseStudyView({
       {study.episodes.map((episode) => (
         <Episode key={episode.node_id} episode={episode} />
       ))}
-
-      {desk?.desk_reading && (
-        <section className="mt-16 pt-8 border-t" style={{ borderColor: 'var(--line)' }}>
-          <h2 className="mono text-xs uppercase tracking-[0.3em]" style={{ color: 'var(--accent)' }}>
-            The desk&rsquo;s reading
-          </h2>
-          <DeskGrafs raw={desk.desk_reading} />
-          {desk.method && (
-            <Disclosure label="How this was written">
-              <p className="text-sm leading-relaxed" style={{ color: 'var(--muted)', maxWidth: '68ch' }}>
-                {desk.method}
-              </p>
-            </Disclosure>
-          )}
-        </section>
-      )}
 
       <section className="mt-16 pt-8 border-t" style={{ borderColor: 'var(--line)' }}>
         <h2 className="mono text-xs uppercase tracking-[0.3em]" style={{ color: 'var(--accent)' }}>

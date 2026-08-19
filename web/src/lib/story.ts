@@ -32,6 +32,7 @@ import type {
   TransmissionSkill,
   WireFeed,
   WireItem,
+  WireLiveFeed,
   NetworkSnapshot,
 } from '../types'
 
@@ -389,9 +390,10 @@ export function marketsLede(
 /** What happened, in a reader's words — never the CAMEO string GDELT ships.
  *
  *  `item.name` is machine vocabulary ("Engage in negotiation: Israel → Egypt")
- *  and the globe already refuses to render it. The act comes from `quad_class`,
- *  the only named field that is a KIND of interaction rather than a codebook
- *  label; the actors come from the resolved names. */
+ *  and the globe already refuses to render it. The act comes from the CAMEO
+ *  ROOT when the code is present, so quad 4 is not always "used force toward"
+ *  (19 fight vs 15 exhibit force vs 17 coerce). Quad class is the fallback
+ *  for a row that never carried a code. */
 const QUAD_ACT: Record<string, string> = {
   verbal_cooperation: 'spoke with',
   material_cooperation: 'cooperated with',
@@ -399,14 +401,81 @@ const QUAD_ACT: Record<string, string> = {
   material_conflict: 'used force toward',
 }
 
-export function wireHeadline(item: {
+/** Mirrors `core/wire/headline.py` ROOT_ACT. Keep the two tables in step. */
+const CAMEO_ACT: Record<string, string> = {
+  '01': 'issued a statement about',
+  '02': 'appealed to',
+  '03': 'expressed intent to cooperate with',
+  '04': 'consulted',
+  '05': 'cooperated diplomatically with',
+  '06': 'cooperated materially with',
+  '07': 'provided aid to',
+  '08': 'yielded to',
+  '09': 'investigated',
+  '10': 'demanded of',
+  '11': 'disapproved of',
+  '12': 'rejected',
+  '13': 'threatened',
+  '14': 'protested against',
+  '15': 'exhibited force toward',
+  '16': 'reduced relations with',
+  '17': 'coerced',
+  '18': 'assaulted',
+  '19': 'fought',
+  '20': 'used mass violence against',
+}
+
+const FORCE_ROOTS = new Set(['15', '18', '19', '20'])
+
+export type WireHeadlineFields = {
   initiator_name?: string | null
   target_name?: string | null
   quad_class?: string | null
-}): string {
+  cameo_code?: string | null
+  action_geo?: string | null
+  action_geo_name?: string | null
+  initiator_iso3?: string | null
+  target_iso3?: string | null
+  third_country_force?: boolean
+  pair_fight?: boolean
+  dyad_id?: string | null
+}
+
+export function cameoRoot(code?: string | null): string | null {
+  const digits = (code ?? '').replace(/\D/g, '')
+  return digits.length >= 2 ? digits.slice(0, 2) : null
+}
+
+/** Fight/use-of-force coded on a roster country that is neither side.
+ *  Display only — does not retarget the stored pair. */
+export function thirdCountryForce(item: WireHeadlineFields): boolean {
+  if (item.third_country_force === true) return true
+  if (item.third_country_force === false) return false
+  const geo = item.action_geo?.trim().toUpperCase() || ''
+  const left = item.initiator_iso3?.trim().toUpperCase() || ''
+  const right = item.target_iso3?.trim().toUpperCase() || ''
+  if (!geo || !left || !right || geo === left || geo === right) return false
+  if (!FORCE_ROOTS.has(cameoRoot(item.cameo_code) ?? '')) return false
+  // Without a resolved roster name the geo is not confirmed as a pack country.
+  return Boolean(item.action_geo_name)
+}
+
+/** Whether the surface may offer this row as an A–B fight relationship. */
+export function offersPairNav(item: WireHeadlineFields): boolean {
+  if (!item.dyad_id) return false
+  if (item.pair_fight === false) return false
+  return !thirdCountryForce(item)
+}
+
+export function wireHeadline(item: WireHeadlineFields): string {
   const left = item.initiator_name?.trim() || null
   const right = item.target_name?.trim() || null
-  const act = QUAD_ACT[item.quad_class ?? ''] ?? 'interacted with'
+  if (thirdCountryForce(item) && left) {
+    const place = item.action_geo_name?.trim() || item.action_geo?.trim() || 'a third country'
+    return `${left} used force in ${place}`
+  }
+  const root = cameoRoot(item.cameo_code)
+  const act = (root && CAMEO_ACT[root]) || QUAD_ACT[item.quad_class ?? ''] || 'interacted with'
   if (left && right) return `${left} ${act} ${right}`
   if (left) return `${left} ${act} an unnamed counterpart`
   return 'A coded event between unnamed actors'
@@ -441,6 +510,15 @@ export function wireKindWord(kind: string | null | undefined): string {
  *  (test_surface_language.py refuses the latter).
  */
 export function wireRead(item: WireItem): string {
+  const place = item.action_geo_name?.trim() || item.action_geo?.trim() || null
+  if (thirdCountryForce(item) && place) {
+    const off = item.points_from_baseline
+    const who = item.initiator_name?.trim() || 'A named actor'
+    if (off === null) {
+      return `${who} acted in ${place}; GDELT attached another roster flag, which is not a fight between those two states.`
+    }
+    return `${who} acted in ${place} — ${off.toFixed(1)} points from the coded pair's usual level, which is who GDELT attached, not a fight between them.`
+  }
   const pair =
     item.initiator_name && item.target_name
       ? `${item.initiator_name} and ${item.target_name}`
@@ -500,6 +578,56 @@ export function wireLede(feed: WireFeed, label: string): Lede | null {
     `that is routine for a rivalry is a rupture for an alliance.` +
     cap
   return { headline, support, asOf: newest }
+}
+
+/** The intel plate's small figure: departures by pair, else live kinds.
+ *
+ *  Counts of named fields already on the page — never a new measurement. */
+export function intelTrafficFigure(args: {
+  wire: WireFeed | null
+  live: WireLiveFeed | null
+}): {
+  title: string
+  support: string
+  bars: Array<{ key: string; label: string; value: number; sub?: string }>
+} | null {
+  const byPair = new Map<string, number>()
+  for (const row of args.wire?.rows ?? []) {
+    if (!row.departure || thirdCountryForce(row)) continue
+    const label =
+      row.initiator_name && row.target_name
+        ? `${row.initiator_name}–${row.target_name}`
+        : 'unnamed pair'
+    byPair.set(label, (byPair.get(label) ?? 0) + 1)
+  }
+  if (byPair.size) {
+    const bars = [...byPair.entries()]
+      .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+      .slice(0, 8)
+      .map(([label, value]) => ({ key: label, label, value }))
+    const n = [...byPair.values()].reduce((sum, v) => sum + v, 0)
+    return {
+      title: `${count(n)} departure${n === 1 ? '' : 's'} by pair`,
+      support:
+        'Coded events at least the pair’s own departure bar from their running baseline. A third-country force coding is omitted here — it is not offered as a fight between the named flags.',
+      bars,
+    }
+  }
+  const byKind = new Map<string, number>()
+  for (const row of args.live?.rows ?? []) {
+    const label = wireKindWord(row.implied_kind)
+    byKind.set(label, (byKind.get(label) ?? 0) + 1)
+  }
+  if (!byKind.size) return null
+  const bars = [...byKind.entries()]
+    .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+    .map(([label, value]) => ({ key: label, label, value }))
+  const n = [...byKind.values()].reduce((sum, v) => sum + v, 0)
+  return {
+    title: `${count(n)} live coding${n === 1 ? '' : 's'} in this export`,
+    support: 'Implied kind against each pair’s usual level in the frozen archive, counted — not a forecast.',
+    bars,
+  }
 }
 
 // ── the situation briefing ──────────────────────────────────────────────────

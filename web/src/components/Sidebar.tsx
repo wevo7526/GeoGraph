@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { getActors, getDyads, getHealth, getPacks, getWire } from '../api'
-import { wireHeadline } from '../lib/story'
+import { offersPairNav, wireHeadline } from '../lib/story'
 
 /** The one rail every working page shares, set as the paper's LEFT RULE:
  *  wordmark and region at the top (the lens every layer looks through), the
@@ -180,8 +180,8 @@ function FindBox({
           out.push({
             kind: 'event',
             label: head,
-            route: item.dyad_id
-              ? `/relationships?dyad=${encodeURIComponent(item.dyad_id)}&region=${encodeURIComponent(region)}`
+            route: offersPairNav(item)
+              ? `/relationships?dyad=${encodeURIComponent(item.dyad_id!)}&region=${encodeURIComponent(region)}`
               : '/intel',
           })
         }

@@ -104,6 +104,20 @@ def test_the_live_module_never_imports_a_graph_writer():
     assert "write_effects" not in source
 
 
+def test_the_live_feed_passes_action_geo_for_display_not_as_a_retarget():
+    """Live rows already carry action_geo. The endpoint must pass it through
+    so the surface can headline a third-country fight as location, without
+    rewriting the stored pair."""
+    import inspect
+
+    from core.api.routers import events as events_router
+
+    source = inspect.getsource(events_router.wire_live)
+    assert "display_fields" in source
+    assert "action_geo" in source
+    assert "geo_names" in source
+
+
 def test_the_live_feed_does_not_attach_a_strategy_contract():
     """The live page shows historical cells as analogy. Stamping a trade
     action onto those cells is how the blotter leaked back in."""

@@ -1,8 +1,7 @@
 /** The desk itself — argument over numbers already on the archive.
  *
- *  Used full-page on Intel and as the body of the corner panel. The opening
- *  reading is an article (grafs, a lede, named citations), not a chat log.
- *  The default first question is not printed. Method sits under a disclosure. */
+ *  The body of the corner panel. The opening reading is an article (grafs,
+ *  a lede, named citations), not a chat log. Method sits under a disclosure. */
 import { useEffect, useRef, useState, type FormEvent } from 'react'
 import {
   citeLabel,
@@ -173,9 +172,7 @@ export default function AgentDesk({
               value={draft}
               onChange={(event) => setDraft(event.target.value)}
               disabled={asking}
-              placeholder={
-                visible.some((turn) => turn.role === 'assistant') ? 'A follow-up' : DEFAULT_QUESTION
-              }
+              placeholder="A question for the desk"
               aria-label="Question for the desk"
               onKeyDown={(event) => {
                 if (event.key === 'Enter' && !event.shiftKey) {

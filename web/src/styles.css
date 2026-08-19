@@ -631,6 +631,61 @@ input[type='range'].timeline:focus-visible {
   .reading-column { padding: 1.25rem 1rem 4rem; }
 }
 
+/* Intel is a laid-out briefing, not one long reading column: lede full width,
+   globe + a small figure, then the wire in two columns on a wide screen. */
+.intel-page {
+  width: 100%;
+  max-width: 72rem;
+  margin: 0 auto;
+  padding: 2rem 1.5rem 5rem;
+}
+@media (max-width: 640px) {
+  .intel-page { padding: 1.25rem 1rem 4rem; }
+}
+.intel-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 1.5rem 2rem;
+  margin-top: 1.5rem;
+  align-items: start;
+}
+@media (min-width: 880px) {
+  .intel-grid {
+    grid-template-columns: minmax(0, 280px) minmax(0, 1fr);
+  }
+}
+.intel-page .situation-plate .globe-box {
+  width: min(28vh, 100%, 260px);
+}
+.intel-figure {
+  min-width: 0;
+  margin: 0;
+  padding-top: 0.25rem;
+}
+.intel-figure h2 {
+  font-size: var(--type-section);
+  letter-spacing: -0.01em;
+  margin: 0 0 0.35rem;
+}
+.intel-figure .figure-note {
+  margin: 0 0 1rem;
+  max-width: 52ch;
+}
+.intel-wire-split {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 0 2rem;
+}
+@media (min-width: 880px) {
+  .intel-wire-split {
+    grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr);
+    align-items: start;
+  }
+  .intel-wire-split .beat {
+    margin-top: 2.5rem;
+  }
+}
+
 /* A page header set as a story head: kicker, headline, standfirst, and a
    right-hand slot for one action. Wraps to stack on narrow screens. */
 .story-head {

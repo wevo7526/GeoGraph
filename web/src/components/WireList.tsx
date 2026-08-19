@@ -4,7 +4,7 @@
  *  vocabulary and is never rendered here. */
 import { useState } from 'react'
 import { citableUrl } from '../lib/cite'
-import { count, wireHeadline, wireKindWord, wireRead } from '../lib/story'
+import { count, offersPairNav, thirdCountryForce, wireHeadline, wireKindWord, wireRead } from '../lib/story'
 import type { WireFeed, WireItem, WireLiveFeed, WireLiveItem } from '../types'
 import { Beat, Disclosure, Empty } from '../ui'
 import { Tiles } from './charts/Kit'
@@ -56,7 +56,7 @@ export function WireDeparture({
       <h3 className="wire-headline">{wireHeadline(item)}</h3>
       <p className="wire-read">{wireRead(item)}</p>
       <div className="toolbar mt-2" style={{ borderTop: 'none' }}>
-        {item.dyad_id && onOpen && (
+        {offersPairNav(item) && onOpen && (
           <button type="button" className="article-link" onClick={onOpen}>
             open the relationship →
           </button>
@@ -102,6 +102,8 @@ function SourceCredit({
 function LiveCard({ item }: { item: WireLiveItem }) {
   const outlook = item.market_outlook
   const kind = wireKindWord(item.implied_kind)
+  const place = item.action_geo_name?.trim() || item.action_geo?.trim() || null
+  const inThird = thirdCountryForce(item) && place
   return (
     <article className="wire-entry">
       <div className="ledger-row">
@@ -111,7 +113,9 @@ function LiveCard({ item }: { item: WireLiveItem }) {
       </div>
       <h3 className="wire-headline">{wireHeadline(item)}</h3>
       <p className="wire-read">
-        {item.escalation_direction
+        {inThird
+          ? `Coded in ${place}. The named flags are who GDELT attached, not a fight between them.`
+          : item.escalation_direction
           ? `${item.implied_kind === 'stable' ? 'Routine against this pair’s usual level' : `This reads as ${kind} against this pair’s usual level`}${
               item.escalation_magnitude != null
                 ? ` (${item.escalation_magnitude.toFixed(1)} points from their usual).`
@@ -172,25 +176,27 @@ export function WireFeedBeats({
   liveFeed,
   region,
   onNavigate,
+  className,
 }: {
   feed: WireFeed
   liveFeed: WireLiveFeed | null | undefined
   region: string
   onNavigate: (route: string) => void
+  className?: string
 }) {
   const [openEffects, setOpenEffects] = useState<string | null>(null)
   const departures = feed.rows.filter((row) => row.departure)
   const routine = feed.rows.filter((row) => !row.departure)
   const open = (item: WireItem) => {
-    if (!item.dyad_id) return
+    if (!offersPairNav(item)) return
     onNavigate(
-      `/relationships?dyad=${encodeURIComponent(item.dyad_id)}` +
+      `/relationships?dyad=${encodeURIComponent(item.dyad_id!)}` +
         `&region=${encodeURIComponent(region)}`,
     )
   }
 
   return (
-    <>
+    <div className={className}>
       {liveFeed?.rows.length ? (
         <Beat
           title="What just arrived"
@@ -227,6 +233,7 @@ export function WireFeedBeats({
         />
       </div>
 
+      <div className="intel-wire-split">
       <Beat
         title="What broke from routine"
         major
@@ -237,7 +244,7 @@ export function WireFeedBeats({
             <WireDeparture
               key={item.node_id}
               item={item}
-              onOpen={() => open(item)}
+              onOpen={offersPairNav(item) ? () => open(item) : undefined}
               onEffects={() => setOpenEffects((id) => (id === item.node_id ? null : item.node_id))}
               effectsOpen={openEffects === item.node_id}
             />
@@ -278,6 +285,7 @@ export function WireFeedBeats({
           </div>
         </Beat>
       )}
+      </div>
 
       <Disclosure label="How the feed reads an event">
         <p className="figure-note">{feed.method}</p>
@@ -290,6 +298,6 @@ export function WireFeedBeats({
           was coded and how far it sat from usual.
         </p>
       </Disclosure>
-    </>
+    </div>
   )
 }
