@@ -49,13 +49,23 @@ export function focusFromRoute(route: string): Record<string, string> {
   return focus
 }
 
-export function citeRoute(id: string, region: string): string | null {
+export function citeRoute(
+  id: string,
+  region: string,
+  briefing?: SituationBriefing | null,
+): string | null {
   const lens = `region=${encodeURIComponent(region)}`
   if (isPairId(id)) {
     return `/relationships?dyad=${encodeURIComponent(id)}&${lens}`
   }
   if (id.startsWith('event:')) {
-    return `/case/dynamic?event=${encodeURIComponent(id)}&${lens}`
+    // Ordinary wire events are not narrated case studies. Send the reader to
+    // the pair's record when we have one; otherwise the label stands alone.
+    const dep = briefing?.wire?.departures?.find((row) => row.node_id === id)
+    if (dep?.dyad_id) {
+      return `/relationships?dyad=${encodeURIComponent(dep.dyad_id)}&${lens}`
+    }
+    return null
   }
   if (id.startsWith('market:')) return '/markets'
   return null

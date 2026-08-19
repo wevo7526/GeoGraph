@@ -313,6 +313,15 @@ def test_network_metrics_serves_empty_before_any_window_is_computed(client):
     assert response.json() == {"rows": [], "truncated": False}
 
 
+def test_network_snapshot_is_empty_before_any_window_is_computed(client):
+    response = client.get("/api/network/snapshot?region=mena")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["brokers"] == []
+    assert body["window_end"] is None
+    assert "computed" in body["note"]
+
+
 def test_an_unknown_api_route_is_a_json_404_not_the_spa(client):
     response = client.get("/api/nope")
     assert response.status_code == 404

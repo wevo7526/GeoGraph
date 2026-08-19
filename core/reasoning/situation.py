@@ -55,7 +55,7 @@ _NOTE = (
 )
 
 _SURFACES = frozenset({
-    "intel", "markets", "games", "relationships", "explorer", "cases",
+    "intel", "markets", "games", "relationships", "explorer", "cases", "network",
 })
 _FOCUS_KEYS = ("dyad_id", "event_id", "ticker", "slug")
 

@@ -3,6 +3,7 @@
  *  Headlines are composed in lib/story.ts. The event's own `name` is CAMEO
  *  vocabulary and is never rendered here. */
 import { useState } from 'react'
+import { citableUrl } from '../lib/cite'
 import { count, wireHeadline, wireKindWord, wireRead } from '../lib/story'
 import type { WireFeed, WireItem, WireLiveFeed, WireLiveItem } from '../types'
 import { Beat, Disclosure, Empty } from '../ui'
@@ -27,13 +28,11 @@ export function WireDeparture({
   item,
   onOpen,
   onEffects,
-  onStudy,
   effectsOpen,
 }: {
   item: WireItem
   onOpen?: () => void
   onEffects?: () => void
-  onStudy?: () => void
   effectsOpen?: boolean
 }) {
   const points = item.points_from_baseline
@@ -67,11 +66,6 @@ export function WireDeparture({
             {effectsOpen ? 'hide measured vs typical' : 'measured vs typical →'}
           </button>
         )}
-        {onStudy && (
-          <button type="button" className="article-link" onClick={onStudy}>
-            the study →
-          </button>
-        )}
       </div>
       {effectsOpen && onEffects && (
         <ImpactLine
@@ -81,6 +75,28 @@ export function WireDeparture({
       )}
     </article>
   )
+}
+
+function SourceCredit({
+  name,
+  id,
+  url,
+}: {
+  name?: string | null
+  id?: string | null
+  url?: string | null
+}) {
+  const label = name || id
+  if (!label) return null
+  const href = citableUrl(url)
+  if (href) {
+    return (
+      <a className="article-link" href={href} target="_blank" rel="noreferrer">
+        {label}
+      </a>
+    )
+  }
+  return <span className="figure-note">{label}</span>
 }
 
 function LiveCard({ item }: { item: WireLiveItem }) {
@@ -144,11 +160,7 @@ function LiveCard({ item }: { item: WireLiveItem }) {
       ) : (
         <p className="figure-note">No measured market cell for this kind of event — analogy has nothing to attach.</p>
       )}
-      {item.source_url && (
-        <a className="article-link" href={item.source_url} target="_blank" rel="noreferrer">
-          source →
-        </a>
-      )}
+      <SourceCredit name={item.source_name} id={item.source_id} url={item.source_url} />
     </article>
   )
 }
@@ -176,11 +188,6 @@ export function WireFeedBeats({
         `&region=${encodeURIComponent(region)}`,
     )
   }
-  const study = (item: WireItem) =>
-    onNavigate(
-      `/case/dynamic?event=${encodeURIComponent(item.node_id)}` +
-        `&region=${encodeURIComponent(region)}`,
-    )
 
   return (
     <>
@@ -232,7 +239,6 @@ export function WireFeedBeats({
               item={item}
               onOpen={() => open(item)}
               onEffects={() => setOpenEffects((id) => (id === item.node_id ? null : item.node_id))}
-              onStudy={() => study(item)}
               effectsOpen={openEffects === item.node_id}
             />
           ))

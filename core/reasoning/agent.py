@@ -173,3 +173,124 @@ def assess(
             "argued, it did not compute."
         ),
     }
+
+
+#: Case-study argument — same §17 rules, a narrower job: the study already
+#: stated the numbers; this is the desk reading them, not a second summary.
+_STUDY_SYSTEM = (
+    "You are GeoGraph's desk writing the argument beside a measured case "
+    "study. The payload already contains every figure; you interpret. "
+    "Short paragraphs separated by a blank line. The first sentence is "
+    "the claim. Do not use markdown headings. Bold only names that "
+    "already appear in the study.\n\n"
+    "HARD RULES (section 17):\n"
+    "- Never originate a market number, a t-statistic, a p-value, or a "
+    "likelihood. Cite a node id in square brackets when you mention a "
+    "figure.\n"
+    "- Analogues, if present, were retrieved by the structural engine; "
+    "do not re-rank them.\n"
+    "- If the study is not_yet_measured, say that the spine has no "
+    "numbers yet. Do not invent effects.\n"
+    "- Nothing you write is financial advice."
+)
+
+
+def study_context(study: dict[str, Any]) -> dict[str, Any]:
+    """The numbers the desk is allowed to see — compact, already measured."""
+    episodes = []
+    for episode in study.get("episodes") or []:
+        if not isinstance(episode, dict):
+            continue
+        effects = [
+            row for row in (episode.get("effects") or [])
+            if isinstance(row, dict) and row.get("abnormal_return") is not None
+        ]
+        effects.sort(key=lambda row: abs(float(row.get("abnormal_return") or 0.0)), reverse=True)
+        episodes.append({
+            "node_id": episode.get("node_id"),
+            "name": episode.get("name"),
+            "event_time": episode.get("event_time"),
+            "cameo_code": episode.get("cameo_code"),
+            "quad_class": episode.get("quad_class"),
+            "goldstein": episode.get("goldstein"),
+            "escalation_direction": episode.get("escalation_direction"),
+            "escalation_magnitude": episode.get("escalation_magnitude"),
+            "escalation_baseline": episode.get("escalation_baseline"),
+            "missing": episode.get("missing"),
+            "effects": [
+                {
+                    "ticker": row.get("ticker"),
+                    "market": row.get("market"),
+                    "window": row.get("window"),
+                    "abnormal_return": row.get("abnormal_return"),
+                    "t_stat": row.get("t_stat"),
+                    "p_value": row.get("p_value"),
+                    "first_mover": row.get("first_mover"),
+                    "overlapping": row.get("overlapping"),
+                }
+                for row in effects[:4]
+            ],
+        })
+    return {
+        "slug": study.get("slug"),
+        "title": study.get("title"),
+        "dek": study.get("dek"),
+        "summary": study.get("summary"),
+        "status": study.get("status"),
+        "measured": study.get("measured"),
+        "pack": study.get("pack"),
+        "episodes": episodes,
+        "note": (
+            "Every figure here is the transmission engine's. Cite node_id "
+            "when you mention a number. Do not originate one."
+        ),
+    }
+
+
+def narrate_study(study: dict[str, Any]) -> dict[str, Any]:
+    """An argument over a case-study payload. Same darkness rule as assess."""
+    key = os.getenv("OPENAI_API_KEY", "").strip()
+    if not key:
+        raise AgentUnavailable(
+            "OPENAI_API_KEY is not set — generated case-study readings are "
+            "dark. The pack's prose and the measured tables still run."
+        )
+    try:
+        from openai import OpenAI
+    except ImportError as exc:
+        raise AgentUnavailable(
+            'the `openai` package is not installed — pip install -e '
+            '".[reasoning]"'
+        ) from exc
+
+    model = os.getenv("GEOGRAPH_AGENT_MODEL", "").strip() or _DEFAULT_MODEL
+    compact = study_context(study)
+    client = OpenAI(api_key=key)
+    response = client.chat.completions.create(
+        model=model,
+        max_tokens=900,
+        messages=[
+            {"role": "system", "content": _STUDY_SYSTEM},
+            {
+                "role": "user",
+                "content": (
+                    "Write the reading of this measured episode.\n\n"
+                    f"{json.dumps(compact, indent=2, default=str)}"
+                ),
+            },
+        ],
+    )
+    choice = response.choices[0] if response.choices else None
+    message = choice.message if choice is not None else None
+    text = (getattr(message, "content", None) or "") if message is not None else ""
+    return {
+        "slug": compact.get("slug"),
+        "title": compact.get("title"),
+        "desk_reading": text,
+        "model": model,
+        "context": compact,
+        "method": (
+            "LLM argument over the study's own measured fields (section 17): "
+            "the transmission engine originated every figure."
+        ),
+    }

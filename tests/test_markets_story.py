@@ -254,6 +254,21 @@ def test_the_forward_map_pools_the_games_courses_by_likelihood():
     assert lead["courses"] == 2 and lead["measurements"] == 50
 
 
+def test_the_forward_map_drops_markets_the_pack_does_not_name():
+    game_map = {"as_of": "2026-06-30", "scenarios_escalatory": [
+        {"dyad_name": "A–B", "kind": "mutual_escalation", "kind_label": "mutual escalation",
+         "likelihood": 0.5, "end_label": "sharp",
+         "market_implications": [
+             {"market_id": "market:hsi", "market_name": "Hang Seng", "median": 0.04, "n": 40},
+             {"market_id": "market:gdaxi", "market_name": "DAX", "median": -0.01, "n": 20},
+         ]},
+    ]}
+    fwd = markets._forward_from_map(game_map, allowed_market_ids={"market:gdaxi"})
+    assert fwd is not None
+    assert [c["market_implications"][0]["market_id"] for c in fwd["courses"]] == ["market:gdaxi"]
+    assert [d["market_id"] for d in fwd["direction"]] == ["market:gdaxi"]
+
+
 def test_one_happening_is_named_once(conn):
     """THE WIRE CODES ONE HAPPENING SEVERAL WAYS, and the page printed each.
 

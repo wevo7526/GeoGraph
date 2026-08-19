@@ -46,6 +46,8 @@ def _is_state(name: str, iso3: str, *, actor_type: str = "", geo: str = "") -> b
 def test_both_arms_load_as_iso3_name_pairs():
     never, ambiguous = gdelt.homographs()
     assert ("POL", "POLE") in never
+    assert ("USA", "ALABAMA") in never
+    assert ("USA", "BIRMINGHAM") in never
     assert ("GBR", "BIRMINGHAM") in ambiguous
     assert not (never & ambiguous), "a name belongs to one arm or the other"
     for code, name in never | ambiguous:
@@ -78,6 +80,14 @@ def test_a_pole_is_not_poland():
 def test_poland_is_poland():
     for name in ("POLAND", "POLISH", "WARSAW"):
         assert _is_state(name, "POL"), name
+
+
+def test_alabama_is_not_the_united_states():
+    """The US is UNITED STATES / THE US / WASHINGTON, never a member state."""
+    assert not _is_state("ALABAMA", "USA")
+    assert not _is_state("BIRMINGHAM", "USA")
+    assert _is_state("WASHINGTON", "USA")
+    assert _is_state("UNITED STATES", "USA")
 
 
 # ── ambiguous: dropped only where the row's own geocode disagrees ────────────

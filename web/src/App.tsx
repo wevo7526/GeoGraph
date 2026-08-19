@@ -14,6 +14,7 @@ const CasesPage = lazy(() => import('./components/CasesPage'))
 const GamesPage = lazy(() => import('./components/GamesPage'))
 const MarketsPage = lazy(() => import('./components/MarketsPage'))
 const IntelPage = lazy(() => import('./components/IntelPage'))
+const NetworkPage = lazy(() => import('./components/NetworkPage'))
 
 // Hash routing rather than a router dependency: a handful of views, and the
 // hash keeps URLs shareable — a reader can send someone the case study, which
@@ -107,6 +108,9 @@ export default function App() {
     route.startsWith('/wire')
   ) {
     page = <IntelPage region={region} onNavigate={navigate} />
+    scrollPage = true
+  } else if (route.startsWith('/network')) {
+    page = <NetworkPage region={region} />
     scrollPage = true
   } else {
     page = <Explorer region={region} onNavigate={navigate} />

@@ -53,6 +53,7 @@ export default function Sidebar({
     ['/games', 'Game theory', 'G'],
     ['/relationships', 'Relationships', 'R'],
     ['/explore', 'Explorer', 'E'],
+    ['/network', 'Network', 'N'],
     ['/cases', 'Case studies', 'C'],
   ]
 

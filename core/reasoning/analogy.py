@@ -8,19 +8,38 @@ record — Goldstein weight, escalation against the dyad's own baseline, quad
 class, and actor-role overlap. Matches persist as Analogue nodes with the
 formula in the rationale.
 
-The vector-index half (Event.embedding, semantic retrieval over narratives)
-is the LLM side of Phase 5 and composes on top: the vector match will
-PROPOSE, this structural match still DISPOSES. The LLM narrates retrieved
-analogues; it never invents the similarity score.
+The vector half PROPOSES (cosine over event names, request-time, capped);
+this structural match still DISPOSES. Proposed hits are never folded into
+the transmission average. Event.embedding stays unwritten — a Hobby volume
+cannot hold the wire as vectors. The LLM narrates retrieved analogues; it
+never invents the similarity score.
 """
 
 from __future__ import annotations
 
+import math
+import os
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
 from core.graph import kuzu_store
 from core.reasoning import regimes
+
+
+class ProposeUnavailable(RuntimeError):
+    """Vector propose cannot run here; structural ranking still can."""
+
+
+#: Newest admissible events embedded per propose call. The structural ranker
+#: still walks the whole candidate list; this cap is only the PROPOSE pool.
+#: Embedding the wire would bill per request and fill the volume if persisted.
+_PROPOSE_POOL = 80
+_EMBED_MODEL = "text-embedding-3-small"
+#: Matches Event.embedding's Kuzu FLOAT[1024]. We do not write those slots —
+#: a 5 GB Hobby volume cannot hold a second copy of the wire as vectors.
+_EMBED_DIMS = 1024
+_EMBED_CACHE: dict[str, tuple[float, ...]] = {}
 
 
 def _similarity(query: dict[str, Any], candidate: dict[str, Any]) -> float:
@@ -54,6 +73,115 @@ def _similarity(query: dict[str, Any], candidate: dict[str, Any]) -> float:
     if query.get("escalation_direction") == candidate.get("escalation_direction"):
         role += 0.2
     return round((goldstein + magnitude + baseline + min(role, 1.0)) / 4.0, 4)
+
+
+def candidate_text(row: dict[str, Any]) -> str:
+    """The string the vector half embeds. Every figure in it is already on
+    the event — this is a retrieval key, not a new measurement."""
+    name = str(row.get("name") or row.get("label") or row.get("quad_class") or "event")
+    when = str(row.get("event_time") or "")[:10]
+    quad = str(row.get("quad_class") or "")
+    gold = row.get("goldstein")
+    gold_s = f"goldstein {gold}" if gold is not None else ""
+    return " ".join(part for part in (name, when, quad, gold_s) if part)
+
+
+def cosine(left: list[float] | tuple[float, ...], right: list[float] | tuple[float, ...]) -> float:
+    """Cosine in [0, 1] after clamping negatives — retrieval rank, not a
+    similarity the surface may treat as the structural score."""
+    if not left or not right or len(left) != len(right):
+        return 0.0
+    dot = sum(a * b for a, b in zip(left, right, strict=True))
+    na = math.sqrt(sum(a * a for a in left))
+    nb = math.sqrt(sum(b * b for b in right))
+    if na == 0.0 or nb == 0.0:
+        return 0.0
+    return max(0.0, min(1.0, dot / (na * nb)))
+
+
+def embed_texts(texts: list[str]) -> list[list[float]]:
+    """OpenAI embeddings, 1024-d, process-cached by exact string.
+
+    Raises ProposeUnavailable on a missing key or SDK. Callers that must
+    stay deterministic catch this and return an empty propose list.
+    """
+    if not texts:
+        return []
+    missing = [t for t in texts if t not in _EMBED_CACHE]
+    if missing:
+        key = os.getenv("OPENAI_API_KEY", "").strip()
+        if not key:
+            raise ProposeUnavailable(
+                "OPENAI_API_KEY is not set — vector propose is dark. "
+                "Structural analogue ranking still runs."
+            )
+        try:
+            from openai import OpenAI
+        except ImportError as exc:
+            raise ProposeUnavailable(
+                'the `openai` package is not installed — pip install -e '
+                '".[reasoning]"'
+            ) from exc
+        client = OpenAI(api_key=key)
+        response = client.embeddings.create(
+            model=_EMBED_MODEL,
+            input=missing,
+            dimensions=_EMBED_DIMS,
+        )
+        by_index = {item.index: item.embedding for item in response.data}
+        for i, text in enumerate(missing):
+            _EMBED_CACHE[text] = tuple(float(x) for x in by_index[i])
+    return [list(_EMBED_CACHE[t]) for t in texts]
+
+
+def propose_candidates(
+    query: dict[str, Any],
+    candidates: list[dict[str, Any]],
+    *,
+    query_date: str,
+    regime_kind: str = "monetary_order",
+    k: int = 5,
+    embed: Callable[[list[str]], list[list[float]]] | None = None,
+) -> list[tuple[float, dict[str, Any]]]:
+    """Semantic retrieve, then the SAME admissibility gate as rank_candidates.
+
+    The vector score PROPOSES; `regimes.comparable` DISPOSES. A similar story
+    is not a similar code — callers must not fold these into the transmission
+    average, which is the structural analogues' measured effects.
+    """
+    admissible: list[dict[str, Any]] = []
+    for row in candidates:
+        if row.get("node_id") == query.get("node_id"):
+            continue
+        when = row.get("event_time")
+        if not when:
+            continue
+        if not regimes.comparable(query_date, str(when), kind=regime_kind):
+            continue
+        admissible.append(row)
+    if not admissible:
+        return []
+    pool = sorted(
+        admissible, key=lambda row: str(row.get("event_time") or ""), reverse=True,
+    )[:_PROPOSE_POOL]
+    query_row = {
+        **query,
+        "name": (
+            query.get("name") or query.get("label")
+            or query.get("quad_class") or "hypothetical"
+        ),
+        "event_time": query.get("event_time") or query_date,
+    }
+    texts = [candidate_text(query_row), *[candidate_text(row) for row in pool]]
+    vectors = (embed or embed_texts)(texts)
+    if len(vectors) != len(texts):
+        return []
+    qv = vectors[0]
+    scored: list[tuple[float, dict[str, Any]]] = []
+    for row, vec in zip(pool, vectors[1:], strict=True):
+        scored.append((round(cosine(qv, vec), 4), row))
+    scored.sort(key=lambda pair: (-pair[0], pair[1]["node_id"]))
+    return scored[:k]
 
 
 #: The candidate shape the similarity formula reads — public so the API can

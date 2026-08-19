@@ -45,6 +45,10 @@ never_the_state:
   # "A Pole" is a person; Poland is POLAND / POLISH / WARSAW. 504 of the 652
   # US-Poland material-conflict rows in the archive came through this name.
   POL: [POLE]
+  # Alabama and Birmingham, Alabama wearing the US flag. The United States
+  # is UNITED STATES / THE US / WASHINGTON — never the name of a member
+  # state or a city inside one. Reuters/Pfizer/Boeing are dropped by TYPE.
+  USA: [ALABAMA, BIRMINGHAM]
 
 ambiguous:
   # Birmingham and Manchester, England — and Alabama, New Hampshire and

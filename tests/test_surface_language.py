@@ -208,3 +208,37 @@ def test_a_dyad_id_is_never_built_into_a_sentence() -> None:
     assert not offenders, (
         "a dyad id is being written into user-facing text:\n  " + "\n  ".join(offenders)
     )
+
+
+def test_ordinary_events_are_not_sold_as_case_studies() -> None:
+    """A GDELT wire event is not a narrated pack study. 'the study →' sent
+    readers to `/case/dynamic?event=` which 404s for live rows and misnames
+    the measured-impact view for the rest."""
+    wire = _strip_comments(
+        (WEB / "components" / "WireList.tsx").read_text(encoding="utf-8")
+    )
+    assert "the study →" not in wire
+    assert "onStudy" not in wire
+    assert "/case/dynamic?event=" not in wire
+    desk = _strip_comments((WEB / "lib" / "desk.ts").read_text(encoding="utf-8"))
+    assert "/case/dynamic?event=" not in desk
+
+
+def test_source_hrefs_are_gated_not_raw_mention_urls() -> None:
+    """item.source_url as href was the baseball article: GDELT SOURCEURL."""
+    offenders = []
+    for path, text in _sources():
+        if "href={item.source_url}" in text or "href={s.url}" in text:
+            offenders.append(path.name)
+    assert not offenders, (
+        "a component is href-ing a raw source field; gate through citableUrl:\n  "
+        + "\n  ".join(offenders)
+    )
+    wire = _strip_comments(
+        (WEB / "components" / "WireList.tsx").read_text(encoding="utf-8")
+    )
+    assert "citableUrl" in wire
+    explorer = _strip_comments(
+        (WEB / "components" / "Explorer.tsx").read_text(encoding="utf-8")
+    )
+    assert "citableUrl" in explorer

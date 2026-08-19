@@ -141,7 +141,7 @@ def region_scenarios(
             finally:
                 panel.close()
             if stored is not None:
-                return stored
+                return pricing_module.clip_to_pack(stored, region) or stored
     solved = _live_region(request, region, dyads)
     out = solved["region"]
     out["persisted"] = False
@@ -189,7 +189,7 @@ def dyad_solution(
             finally:
                 panel.close()
             if stored is not None:
-                return stored
+                return pricing_module.clip_to_pack(stored, region) or stored
     context = _context(request, region)
     payoffs = solve_module.Payoffs(**_defaults(region))
     solved = scenarios.solve_dyad(

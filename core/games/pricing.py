@@ -24,6 +24,7 @@ from __future__ import annotations
 from collections import defaultdict
 from typing import Any
 
+from core import packs
 from core.games import state as state_module
 from core.graph import kuzu_store
 from core.reasoning import regimes
@@ -93,7 +94,76 @@ def measured_effects(
         "a.abnormal_return AS abnormal_return",
         {"pack": region_pack} if region_pack else {},
     )
-    return _compact(rows)
+    return _compact(_keep_pack_markets(rows, region_pack))
+
+
+def clip_to_pack(
+    payload: dict[str, Any] | None, region_pack: str,
+) -> dict[str, Any] | None:
+    """Drop priced rows for markets this pack does not name.
+
+    Deep-tier events (`region_pack = ''`) and overlapping-roster GDELT ids
+    are measured against EVERY pack's markets. The panel stores those rows
+    under the same event id, so a Eurasia solve that read every ticker
+    priced US–Russia to TAIEX and KOSPI. Persisted maps keep that leak
+    until the next games job; clipping at serve is what the surface sees
+    today, and `_from_panel` is what the next solve writes.
+    """
+    if not payload:
+        return payload
+    allowed = _pack_market_ids(region_pack)
+    if allowed is None:
+        return payload
+    return _clip_market_rows(payload, allowed)
+
+
+def _pack_market_ids(region_pack: str) -> frozenset[str] | None:
+    try:
+        return packs.load(region_pack).market_ids
+    except packs.PackError:
+        return None
+
+
+def _pack_market_lookup(region_pack: str) -> dict[str, tuple[str, str]] | None:
+    try:
+        pack = packs.load(region_pack)
+    except packs.PackError:
+        return None
+    return {
+        str(m["ticker"]): (str(m["id"]), str(m.get("name") or m["ticker"]))
+        for m in pack.markets
+    }
+
+
+def _keep_pack_markets(
+    rows: list[dict[str, Any]], region_pack: str | None,
+) -> list[dict[str, Any]]:
+    if not region_pack:
+        return rows
+    allowed = _pack_market_ids(region_pack)
+    if allowed is None:
+        return rows
+    return [row for row in rows if row.get("market_id") in allowed]
+
+
+def _clip_market_rows(value: Any, allowed: frozenset[str]) -> Any:
+    if isinstance(value, dict):
+        out = {key: _clip_market_rows(item, allowed) for key, item in value.items()}
+        for key in ("market_implications", "direction", "market"):
+            rows = out.get(key)
+            if isinstance(rows, list):
+                out[key] = [
+                    row for row in rows
+                    if not (
+                        isinstance(row, dict)
+                        and row.get("market_id")
+                        and row["market_id"] not in allowed
+                    )
+                ]
+        return out
+    if isinstance(value, list):
+        return [_clip_market_rows(item, allowed) for item in value]
+    return value
 
 
 def _from_panel(
@@ -106,13 +176,20 @@ def _from_panel(
     from core.reasoning.markets import HEADLINE_WINDOW, coding_for
 
     coding = coding_for(conn, region_pack)
-    markets = {
-        str(r["ticker"]): (str(r["id"]), str(r["name"]))
-        for r in kuzu_store.query(
-            conn,
-            "MATCH (m:Market) RETURN m.node_id AS id, m.name AS name, m.ticker AS ticker",
-        )
-    }
+    # THIS LENS'S MARKETS, not every Market node. Deep-tier events are
+    # measured once per pack against that pack's tickers; the panel then
+    # holds Hang Seng rows on the same event id Eurasia prices from. Reading
+    # the whole Market table made every region's games point at Asia.
+    markets = _pack_market_lookup(region_pack)
+    if markets is None:
+        markets = {
+            str(r["ticker"]): (str(r["id"]), str(r["name"]))
+            for r in kuzu_store.query(
+                conn,
+                "MATCH (m:Market) RETURN m.node_id AS id, m.name AS name, "
+                "m.ticker AS ticker",
+            )
+        }
     # ONLY THE EVENTS THIS REGION CAN CODE. `computed_runs()` with no filter
     # materialises every measured row in one statement — the same unbounded
     # read that killed the refill job — and `context.build` asks for this on
@@ -138,7 +215,9 @@ def _from_panel(
             if event_id.startswith("event:gdelt-") and str(run["window"]) != HEADLINE_WINDOW:
                 continue
             ticker = str(run["market_ticker"])
-            market_id, market_name = markets.get(ticker, (f"market:{ticker}", ticker))
+            if ticker not in markets:
+                continue
+            market_id, market_name = markets[ticker]
             initiator = meta.get("initiator_id")
             target = meta.get("target_id")
             dyad = None

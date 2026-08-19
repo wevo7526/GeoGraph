@@ -453,6 +453,9 @@ export default function MarketsPage({ region, onNavigate }: { region: string; on
                   : ''}
                 — the call is nearly vacuous in the modern era, which is why the
                 book is not evidence on the harder departure question.
+                {walk.horizon_variants?.['1y']?.observed_rate != null
+                  ? ` Asked over one year, the same era’s base rate is ${pctWord(walk.horizon_variants['1y'].observed_rate, 0)}; the frozen call stays three years.`
+                  : ''}
               </p>
             )}
             {(ledger.question || forward?.question) && (

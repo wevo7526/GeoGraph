@@ -1217,6 +1217,52 @@ def test_a_pact_between_rivals_does_not_outrank_the_rivalry(monkeypatch):
     assert "allies" in said  # both are named; neither is hidden
 
 
+def test_a_region_does_not_price_another_lens_markets():
+    """Deep-tier events are measured against every pack. Without a clip,
+    Eurasia's games pointed at Hang Seng, TAIEX, Nikkei and KOSPI — Asia's
+    exclusive sensors, not this lens's."""
+    from core.games import pricing
+
+    payload = {
+        "scenarios_escalatory": [{
+            "dyad_name": "United States–Russia",
+            "market_implications": [
+                {"market_id": "market:kospi", "market_name": "KOSPI Composite",
+                 "median": 0.04, "n": 40},
+                {"market_id": "market:gdaxi", "market_name": "DAX (Germany)",
+                 "median": -0.01, "n": 40},
+                {"market_id": "market:hsi", "market_name": "Hang Seng Index",
+                 "median": 0.03, "n": 40},
+            ],
+        }],
+        "forward": {
+            "direction": [
+                {"market_id": "market:kospi", "market_name": "KOSPI",
+                 "expected_abnormal_return": 0.04},
+                {"market_id": "market:natgas", "market_name": "Natural gas",
+                 "expected_abnormal_return": 0.02},
+            ],
+        },
+    }
+    clipped = pricing.clip_to_pack(payload, "eurasia")
+    assert clipped is not None
+    implied = [
+        r["market_id"] for r in clipped["scenarios_escalatory"][0]["market_implications"]
+    ]
+    assert implied == ["market:gdaxi"]
+    direction = [r["market_id"] for r in clipped["forward"]["direction"]]
+    assert direction == ["market:natgas"]
+    kept = pricing.clip_to_pack(
+        {"market_implications": [
+            {"market_id": "market:brent", "median": 0.01},
+            {"market_id": "market:twii", "median": -0.02},
+        ]},
+        "eurasia",
+    )
+    assert kept is not None
+    assert [r["market_id"] for r in kept["market_implications"]] == ["market:brent"]
+
+
 def test_measured_effects_shares_its_repeated_strings():
     """The effects cache grows with the archive, so its per-row cost compounds.
 

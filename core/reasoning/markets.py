@@ -570,7 +570,7 @@ def story(
         -abs(float(m["headline"]["median"])) if m["headline"] else 0.0,
     ))
 
-    forward = _forward_from_map(game_map)
+    forward = _forward_from_map(game_map, pack.market_ids)
     sovereign = _sovereign(flows)
     impact = strategy.market_impact(
         markets,
@@ -624,7 +624,10 @@ def story(
     return payload
 
 
-def _forward_from_map(game_map: dict[str, Any] | None) -> dict[str, Any] | None:
+def _forward_from_map(
+    game_map: dict[str, Any] | None,
+    allowed_market_ids: frozenset[str] | set[str] | None = None,
+) -> dict[str, Any] | None:
     """What the solved games imply for markets: the escalatory courses with
     the most mass across the region's pairs, each with its priced markets."""
     if not game_map:
@@ -658,7 +661,10 @@ def _forward_from_map(game_map: dict[str, Any] | None) -> dict[str, Any] | None:
             "family": sc.get("family"),
             "likelihood": sc.get("likelihood"),
             "end_label": sc.get("end_label"),
-            "market_implications": (sc.get("market_implications") or [])[:4],
+            "market_implications": [
+                row for row in (sc.get("market_implications") or [])[:4]
+                if not allowed_market_ids or row.get("market_id") in allowed_market_ids
+            ],
         })
     # Pooled: per market, the likelihood-weighted median across the listed
     # courses — a direction, stated as such.
@@ -666,6 +672,8 @@ def _forward_from_map(game_map: dict[str, Any] | None) -> dict[str, Any] | None:
     for course in courses:
         weight = float(course.get("likelihood") or 0.0)
         for row in course["market_implications"]:
+            if allowed_market_ids and row.get("market_id") not in allowed_market_ids:
+                continue
             slot = pooled.setdefault(row["market_id"], {
                 "market_id": row["market_id"], "market_name": row.get("market_name"),
                 "weighted": 0.0, "weight": 0.0, "n": 0, "courses": 0,

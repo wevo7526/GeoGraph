@@ -52,6 +52,34 @@ def test_rank_candidates_refuses_out_of_regime_history():
     assert top[0][0] == pytest.approx(1.0)
 
 
+def test_propose_cannot_override_the_regime_gate():
+    """Identical embeddings do not retrieve a Bretton Woods event for a 2026 query."""
+    def embed(texts: list[str]) -> list[list[float]]:
+        return [[1.0, 0.0] for _ in texts]
+
+    query = {
+        "name": "a strike", "goldstein": -10.0, "quad_class": "material_conflict",
+        "event_time": "2026-01-01",
+    }
+    out_regime = {
+        "node_id": "event:out", "name": "a strike", "event_time": "1960-06-01",
+        "goldstein": -10.0, "quad_class": "material_conflict",
+    }
+    in_regime = {
+        "node_id": "event:in", "name": "a meeting", "event_time": "2019-06-01",
+        "goldstein": 1.0, "quad_class": "verbal_cooperation",
+    }
+    top = analogy.propose_candidates(
+        query, [out_regime, in_regime], query_date="2026-01-15", embed=embed,
+    )
+    assert [row["node_id"] for _, row in top] == ["event:in"]
+
+
+def test_cosine_of_a_vector_with_itself_is_one():
+    assert analogy.cosine([1.0, 0.0, 0.0], [1.0, 0.0, 0.0]) == pytest.approx(1.0)
+    assert analogy.cosine([1.0, 0.0], [0.0, 1.0]) == pytest.approx(0.0)
+
+
 @pytest.fixture()
 def seeded_graph(tmp_path):
     seed_pack = _load("seed_pack")
@@ -91,6 +119,8 @@ def test_the_what_if_reads_the_archive_deterministically(seeded_graph, monkeypat
             assert 0.0 <= entry["similarity"] <= 1.0
             assert entry["event_time"] >= "1971-08-15"  # admissibility held
         assert "not a prediction" in body["transmission"]["label"]
+        assert body["proposed"] == []
+        assert "off on this call" in body["proposed_note"]
 
         # An unknown CAMEO code is a 422 naming the codebook, never a guess.
         assert client.get(
@@ -187,6 +217,47 @@ def test_follow_ups_are_still_dark_without_a_key(seeded_graph, monkeypatch):
         )
         assert response.status_code == 503
         assert "OPENAI_API_KEY" in response.json()["detail"]
+
+
+def test_case_study_narrate_is_dark_without_a_key(seeded_graph, monkeypatch):
+    from fastapi.testclient import TestClient
+
+    monkeypatch.setenv("KUZU_DB_PATH", str(seeded_graph))
+    monkeypatch.delenv("DATABASE_URL", raising=False)
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    from core.api.app import create_app
+
+    with TestClient(create_app()) as client:
+        response = client.post(
+            "/api/case-studies/narrate",
+            json={"slug": "twelve-day-war"},
+        )
+        assert response.status_code == 503
+        assert "OPENAI_API_KEY" in response.json()["detail"]
+
+
+def test_study_context_keeps_only_measured_fields():
+    from core.reasoning import agent
+
+    compact = agent.study_context({
+        "slug": "twelve-day-war",
+        "title": "A study",
+        "summary": "measured",
+        "status": "measured",
+        "measured": 9,
+        "episodes": [{
+            "node_id": "event:a",
+            "name": "A strike",
+            "effects": [
+                {"ticker": f"T{i}", "abnormal_return": 0.01 * i, "window": "car_0_1"}
+                for i in range(9)
+            ],
+        }],
+    })
+    assert compact["note"]
+    assert "originate" in compact["note"]
+    assert len(compact["episodes"][0]["effects"]) == 4
+    assert compact["episodes"][0]["effects"][0]["abnormal_return"] == pytest.approx(0.08)
 
 
 def test_conversation_messages_keep_prior_turns_and_the_briefing():

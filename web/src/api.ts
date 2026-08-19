@@ -36,6 +36,9 @@ import type {
   JobsStatus,
   MarketsStory,
   TradeableEdge,
+  WhatIfOptions,
+  WhatIfResult,
+  NetworkSnapshot,
 } from './types'
 
 /** A recorded API failure — kept so the surface can tell BROKEN from EMPTY.
@@ -366,3 +369,50 @@ export const getCaseStudies = () =>
 
 export const getCaseStudy = (slug: string) =>
   get<CaseStudy>(`/api/case-studies/${encodeURIComponent(slug)}`)
+
+export async function postCaseNarrate(body: {
+  slug?: string
+  dyad?: string
+  event?: string
+  region?: string
+}): Promise<{ ok: boolean; detail?: string; result?: { desk_reading: string; method?: string; model?: string } }> {
+  try {
+    const res = await fetch('/api/case-studies/narrate', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    })
+    const payload = await res.json().catch(() => null)
+    if (!res.ok) {
+      return { ok: false, detail: payload?.detail ?? `the API answered ${res.status}` }
+    }
+    return { ok: true, result: payload }
+  } catch {
+    return { ok: false, detail: 'the API is unreachable' }
+  }
+}
+
+export const getWhatIfOptions = (region: string) =>
+  get<WhatIfOptions>(`/api/reasoning/options?region=${encodeURIComponent(region)}`)
+
+export const getWhatIf = (params: {
+  initiator: string
+  target: string
+  cameo: string
+  date: string
+  region: string
+  propose?: boolean
+}) => {
+  const query = new URLSearchParams({
+    initiator: params.initiator,
+    target: params.target,
+    cameo: params.cameo,
+    date: params.date,
+    region: params.region,
+  })
+  if (params.propose) query.set('propose', 'true')
+  return get<WhatIfResult>(`/api/reasoning/what-if?${query}`)
+}
+
+export const getNetworkSnapshot = (region: string) =>
+  get<NetworkSnapshot>(`/api/network/snapshot?region=${encodeURIComponent(region)}`)

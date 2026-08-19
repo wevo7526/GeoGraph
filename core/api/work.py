@@ -780,9 +780,24 @@ def calibration(conn: Any, deadline: float) -> dict[str, Any]:
             continue
         if time.monotonic() >= deadline:
             return {"computed": done, "note": "slice spent", "archive_rows": size}
-        calibration_module.remember(
-            name, size, calibration_module.walk(rows, region_pack=name)
-        )
+        walk_out = calibration_module.walk(rows, region_pack=name)
+        try:
+            one = calibration_module.horizon_variant_walks(
+                rows, region_pack=name, horizons=(1,),
+            )
+            walk_out = {
+                **walk_out,
+                "locked_horizon_years": one["locked_horizon_years"],
+                "horizon_variants": one["variants"],
+                "horizon_note": one["note"],
+            }
+        except Exception as exc:  # noqa: BLE001 - the 3y board must still ship
+            walk_out = {
+                **walk_out,
+                "locked_horizon_years": 3,
+                "horizon_note": f"1y variant skipped: {str(exc)[:120]}",
+            }
+        calibration_module.remember(name, size, walk_out)
         done.append(name)
     if not done:
         return {"note": "every region's scoreboard is current", "archive_rows": size}

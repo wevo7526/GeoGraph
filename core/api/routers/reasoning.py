@@ -102,6 +102,7 @@ def what_if(
     date: str,
     region: str = "mena",
     k: int = Query(default=5, ge=1, le=12),
+    propose: bool = False,
 ) -> dict[str, Any]:
     """A hypothetical event, read through the archive. Deterministic end to
     end; the response labels every section with what it is and is not."""
@@ -195,6 +196,33 @@ def what_if(
             bucket["n"] += 1
         entry["measured_effects"] = measured
 
+    proposed: list[dict[str, Any]] = []
+    proposed_note = (
+        "vector propose is off on this call — structural ranking disposed "
+        "the analogues used in the transmission average"
+    )
+    if propose:
+        query_named = {**query_shape, "name": label, "event_time": date}
+        try:
+            for similarity, row in analogy.propose_candidates(
+                query_named, candidates, query_date=date, k=k,
+            ):
+                proposed.append({
+                    "event_id": row["node_id"],
+                    "name": row["name"],
+                    "event_time": row["event_time"],
+                    "cosine": similarity,
+                    "goldstein": row["goldstein"],
+                    "quad_class": row["quad_class"],
+                    "escalation_direction": row["escalation_direction"],
+                })
+            proposed_note = (
+                "cosine over event names, regime-gated; not folded into the "
+                "transmission average"
+            )
+        except analogy.ProposeUnavailable as exc:
+            proposed_note = str(exc)
+
     transmission = sorted(
         (
             {
@@ -218,6 +246,8 @@ def what_if(
         },
         "dyad": dyad,
         "analogues": analogues,
+        "proposed": proposed,
+        "proposed_note": proposed_note,
         "transmission": {
             "rows": transmission,
             "label": (

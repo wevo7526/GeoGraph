@@ -146,7 +146,10 @@ export interface WireLiveItem {
   node_id: string
   event_time: string
   available_at?: string | null
+  /** Dataset URL when it is an http(s) document — never GDELT SOURCEURL. */
   source_url?: string | null
+  source_id?: string | null
+  source_name?: string | null
   name: string
   cameo_code: string
   quad_class: string | null
@@ -278,7 +281,7 @@ export interface EventDetail extends GraphEvent {
   target: { node_id: string; name: string } | null
   dyad: Dyad | null
   regimes: { node_id: string; name: string; kind: string }[]
-  sources: { node_id: string; name: string; url: string; citation: string }[]
+  sources: { node_id: string; name: string; url: string | null; citation: string }[]
 }
 
 export interface GraphActor {
@@ -344,6 +347,7 @@ export interface CaseStudy {
   episodes: CaseStudyEpisode[]
   measured: number
   status: 'measured' | 'not_yet_measured'
+  dynamic?: boolean
 }
 
 export interface RetrodictionAnchor {
@@ -851,6 +855,16 @@ export interface WhatIfResult {
     escalation_direction: string | null
     measured_effects: number
   }>
+  proposed?: Array<{
+    event_id: string
+    name: string
+    event_time: string
+    cosine: number
+    goldstein: number | null
+    quad_class: string | null
+    escalation_direction: string | null
+  }>
+  proposed_note?: string
   transmission: {
     rows: Array<{
       ticker: string
@@ -1302,6 +1316,9 @@ export interface CalibrationWalk extends CalibrationBlock {
   by_cutoff?: Array<{ cutoff: string; brier: number; calls: number }>
   method?: string
   note?: string
+  locked_horizon_years?: number
+  horizon_note?: string
+  horizon_variants?: Record<string, CalibrationBlock & { horizon_years?: number; note?: string }>
 }
 
 // ── the markets story (core/reasoning/markets.py) ─────────────────────────────
@@ -1493,4 +1510,24 @@ export interface JobsStatus {
     name: string
     last_result?: { stopped?: string; note?: string } | null
   }>
+}
+
+export interface NetworkActorRank {
+  subject_id: string
+  name: string
+  value: number
+}
+
+export interface NetworkSnapshot {
+  region: string
+  region_label?: string
+  window_start: string | null
+  window_end: string | null
+  brokers: NetworkActorRank[]
+  holes: NetworkActorRank[]
+  degree: NetworkActorRank[]
+  communities: Array<{ id: number; members: string[]; size: number }>
+  n?: number
+  note?: string
+  method?: string
 }

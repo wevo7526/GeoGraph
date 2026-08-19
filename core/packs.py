@@ -46,6 +46,17 @@ class Pack:
         return cast(list[dict[str, Any]], self.data["markets"].get("markets", []))
 
     @property
+    def market_ids(self) -> frozenset[str]:
+        """Node ids this lens is entitled to price. Shared instruments
+        (Brent, the S&P, gold, Treasuries) appear in every pack; Hang Seng
+        does not belong to Eurasia just because a deep-tier war moved it."""
+        return frozenset(str(m["id"]) for m in self.markets)
+
+    @property
+    def market_tickers(self) -> frozenset[str]:
+        return frozenset(str(m["ticker"]) for m in self.markets)
+
+    @property
     def actors(self) -> list[dict[str, Any]]:
         return cast(list[dict[str, Any]], self.data["actors"].get("actors", []))
 

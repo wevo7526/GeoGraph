@@ -13,9 +13,11 @@ from __future__ import annotations
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Request
+from pydantic import BaseModel
 
 from core import packs
 from core.graph import kuzu_store
+from core.reasoning import agent
 
 router = APIRouter(tags=["case-studies"])
 
@@ -248,14 +250,20 @@ def dynamic_case_study(
         slug = f"dynamic:dyad:{dyad}"
     prose = _narrate(dyad_name, episodes)
     measured = sum(len(e.get("effects", [])) for e in episodes)
+    dek = (
+        "The measured record of this event — what markets did. Not a narrated "
+        "case study."
+        if event
+        else (
+            "The measured record: the events that moved this relationship most, "
+            "and what markets measurably did. Not a narrated case study."
+        )
+    )
     return {
         "slug": slug,
         "pack": region or "",
         "title": title,
-        "dek": (
-            "A dynamic case study: the events that moved this relationship most, and "
-            "what markets measurably did."
-        ),
+        "dek": dek,
         "summary": prose["summary"],
         "reading": prose["reading"],
         "caveat": prose["caveat"],
@@ -264,6 +272,35 @@ def dynamic_case_study(
         "status": "measured" if measured else "not_yet_measured",
         "dynamic": True,
     }
+
+
+class NarrateBody(BaseModel):
+    slug: str | None = None
+    dyad: str | None = None
+    event: str | None = None
+    region: str | None = None
+
+
+@router.post("/case-studies/narrate")
+def narrate_case_study(request: Request, body: NarrateBody) -> dict[str, Any]:
+    """Desk argument over a study the archive already composed.
+
+    GET stays deterministic and fast. This POST is key-gated: a missing key
+    is a 503 that names it, and the pack/template prose still stands.
+    """
+    slug = (body.slug or "").strip()
+    if body.dyad or body.event:
+        study = dynamic_case_study(
+            request, dyad=body.dyad, event=body.event, region=body.region,
+        )
+    elif slug:
+        study = get_case_study(request, slug)
+    else:
+        raise HTTPException(status_code=422, detail="give slug, dyad, or event")
+    try:
+        return agent.narrate_study(study)
+    except agent.AgentUnavailable as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
 
 
 @router.get("/case-studies/{slug}")

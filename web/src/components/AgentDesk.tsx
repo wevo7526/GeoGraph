@@ -32,7 +32,7 @@ function Inline({
       {parts.map((part, index) => {
         if (part.kind === 'text') return <span key={index}>{part.value}</span>
         if (part.kind === 'strong') return <strong key={index}>{part.value}</strong>
-        const route = onNavigate ? citeRoute(part.id, region) : null
+        const route = onNavigate ? citeRoute(part.id, region, briefing) : null
         const label = citeLabel(part.id, briefing)
         if (route && onNavigate) {
           return (

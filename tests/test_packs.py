@@ -62,6 +62,39 @@ def test_every_market_carries_calendar_and_inception(name):
         assert market["trading_calendar"] in {"us", "gulf", "uae", "global_futures"}
 
 
+def test_a_lens_does_not_claim_another_lens_exclusive_markets():
+    """Shared instruments (Brent, the S&P, gold, Treasuries) appear in every
+    pack. Exclusive sensors do not: Hang Seng is Asia's, the DAX is Eurasia's,
+    Tadawul is the Gulf's. Game pricing that ignored this priced US–Russia
+    to TAIEX because a deep-tier war had been measured against every ticker.
+    """
+    by_pack = {
+        name: {m["id"] for m in packs.load(name).markets}
+        for name in packs.available()
+    }
+    asia_only = {
+        "market:hsi", "market:twii", "market:n225", "market:kospi", "market:sse",
+    }
+    eurasia_only = {
+        "market:gdaxi", "market:ftse", "market:fchi", "market:imoex",
+        "market:wheat", "market:natgas",
+    }
+    gulf_only = {"market:tasi", "market:dfmgi", "market:adx"}
+    shared = {"market:gspc", "market:brent", "market:gold", "market:dgs10", "market:dgs3mo"}
+    for mid in asia_only:
+        assert mid in by_pack["china"], mid
+        assert mid not in by_pack["eurasia"] | by_pack["mena"], mid
+    for mid in eurasia_only:
+        assert mid in by_pack["eurasia"], mid
+        assert mid not in by_pack["china"] | by_pack["mena"], mid
+    for mid in gulf_only:
+        assert mid in by_pack["mena"], mid
+        assert mid not in by_pack["china"] | by_pack["eurasia"], mid
+    for mid in shared:
+        for name in by_pack:
+            assert mid in by_pack[name], f"{mid} missing from {name}"
+
+
 def test_shared_market_nodes_agree_across_packs():
     # One market, one node — but two packs can each describe market:gspc, and
     # packs seed in alphabetical order, so a disagreement about an inception

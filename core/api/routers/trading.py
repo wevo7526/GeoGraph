@@ -221,7 +221,9 @@ def markets_story(region: str = "mena") -> dict[str, Any]:
             "note": ("the markets story is built by the markets job on the first "
                      "pass after a deploy; watch /api/jobs"),
         }
-    return stored
+    from core.games import pricing as pricing_module
+
+    return pricing_module.clip_to_pack(stored, region) or stored
 
 
 @router.get("/trading/forward")

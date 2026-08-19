@@ -92,6 +92,16 @@ def calibration_walk(
             raise HTTPException(status_code=503, detail=str(exc)) from exc
         rows = corpus.forecast_rows()
     out = calibration.walk(rows, region_pack=region)
+    try:
+        one = calibration.horizon_variant_walks(rows, region_pack=region, horizons=(1,))
+        out = {
+            **out,
+            "locked_horizon_years": one["locked_horizon_years"],
+            "horizon_variants": one["variants"],
+            "horizon_note": one["note"],
+        }
+    except Exception:  # noqa: BLE001 - the locked walk is the page
+        out = {**out, "locked_horizon_years": 3}
     calibration.remember(region, len(rows), out)
     return out
 

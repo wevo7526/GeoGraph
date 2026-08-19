@@ -12,3 +12,11 @@ export function dyadId(actorA: string, actorB: string): string {
 export function isPairId(id: string): boolean {
   return id.startsWith('dyad:')
 }
+
+export function actorsFromPairId(id: string): [string, string] | null {
+  if (!isPairId(id)) return null
+  const rest = id.slice('dyad:'.length)
+  const cut = rest.indexOf('--')
+  if (cut < 1 || cut + 2 >= rest.length) return null
+  return [`actor:${rest.slice(0, cut)}`, `actor:${rest.slice(cut + 2)}`]
+}

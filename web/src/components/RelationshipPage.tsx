@@ -28,6 +28,8 @@ import {
   getEventImpact,
   getImpactCoverage,
   getDyadSolution,
+  getWhatIf,
+  getWhatIfOptions,
 } from '../api'
 import {
   bandLabel,
@@ -52,8 +54,10 @@ import type {
   ImpactCoverage,
   TimelineEvent,
   DyadSolution,
+  WhatIfResult,
 } from '../types'
 import { dyadCall, postureClause, relationshipStandfirst, standingPhrase, typicalBand } from '../lib/story'
+import { actorsFromPairId } from '../lib/ids'
 import { BoxRow, Fan, LineBand } from './charts/Charts'
 import type { Point } from './charts/Charts'
 import { Bars, FanRibbon, MultiLine, pct } from './charts/Kit'
@@ -120,6 +124,8 @@ export default function RelationshipPage({ region, onNavigate }: { region: strin
   const [precedent, setPrecedent] = useState<Precedent | null | undefined>(undefined)
   const [coverage, setCoverage] = useState<ImpactCoverage | null | undefined>(undefined)
   const [solution, setSolution] = useState<DyadSolution | null | undefined>(undefined)
+  const [whatIf, setWhatIf] = useState<WhatIfResult | null | undefined>(undefined)
+  const [stories, setStories] = useState<WhatIfResult | null | undefined>(undefined)
   const [modelTrajectory, setModelTrajectory] = useState<Array<{ q: string; deviation: number; lo?: number; hi?: number }> | null>(null)
 
   useEffect(() => {
@@ -169,11 +175,26 @@ export default function RelationshipPage({ region, onNavigate }: { region: strin
     setGame(undefined)
     setPrecedent(undefined)
     setSolution(undefined)
+    setWhatIf(undefined)
+    setStories(undefined)
     getDyadSeries(selected, region).then((r) => live && setSeries(r))
     getDyadTimeline(selected).then((r) => live && setTimeline(r))
     exploreGame(region, selected).then((r) => live && setGame(r))
     getPrecedent(selected, region).then((r) => live && setPrecedent(r))
     getDyadSolution(region, selected).then((r) => live && setSolution(r))
+    const pair = actorsFromPairId(selected)
+    if (pair) {
+      getWhatIfOptions(region).then((opts) => {
+        const cameo = opts?.example?.cameo
+        if (!cameo || !live) return
+        const date = new Date().toISOString().slice(0, 10)
+        return getWhatIf({
+          initiator: pair[0], target: pair[1], cameo, date, region,
+        })
+      }).then((row) => live && setWhatIf(row ?? null))
+    } else {
+      setWhatIf(null)
+    }
     return () => {
       live = false
     }
@@ -517,6 +538,99 @@ export default function RelationshipPage({ region, onNavigate }: { region: strin
             )}
           </Beat>
 
+          <Beat
+            title="If it happened again"
+            aside="A hypothetical coded the same way as this region's latest marquee event, asked of this pair, today. Analogues are regime-gated and ranked by the coded record. Mean market moves of those analogues are an analogy, not a forecast."
+          >
+            {whatIf === undefined ? (
+              <Empty>reading the archive through this pair…</Empty>
+            ) : whatIf && whatIf.analogues.length ? (
+              <>
+                <p className="text-sm" style={{ maxWidth: '64ch' }}>
+                  {whatIf.hypothetical.label} between them would read as{' '}
+                  {whatIf.dyad.escalation_direction === 'escalating'
+                    ? 'a departure above this pair’s own usual level'
+                    : whatIf.dyad.escalation_direction === 'deescalating'
+                      ? 'a step down from this pair’s own usual level'
+                      : 'in line with this pair’s own usual level'}
+                  .
+                </p>
+                <ul className="mt-4 space-y-2">
+                  {whatIf.analogues.map((row) => (
+                    <li key={row.event_id} className="text-sm">
+                      <span className="mono text-xs" style={{ color: 'var(--muted)' }}>
+                        {String(row.event_time).slice(0, 10)}
+                      </span>
+                      {' '}
+                      {row.name}
+                      <span className="mono text-xs" style={{ color: 'var(--muted)' }}>
+                        {' '}· match {Math.round(row.similarity * 100)}
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+                {whatIf.transmission.rows.length > 0 && (
+                  <div className="mt-4">
+                    <div className="kicker mb-1">What those analogues did to markets</div>
+                    {whatIf.transmission.rows.slice(0, 8).map((row) => (
+                      <MoveRow
+                        key={`${row.ticker}-${row.window}`}
+                        name={`${row.market} ${WINDOW_SESSIONS[row.window] ?? row.window}`}
+                        pct={row.mean_abnormal_return * 100}
+                        sub={`${row.n} analogues`}
+                      />
+                    ))}
+                    <p className="figure-note">{whatIf.transmission.label}</p>
+                  </div>
+                )}
+                <Disclosure
+                  label="Similar stories, not similar codes"
+                >
+                  {stories === undefined ? (
+                    <button
+                      type="button"
+                      className="article-link text-sm"
+                      onClick={() => {
+                        const pair = actorsFromPairId(selected)
+                        const cameo = whatIf.hypothetical.cameo
+                        if (!pair || !cameo) return
+                        setStories(undefined)
+                        getWhatIf({
+                          initiator: pair[0],
+                          target: pair[1],
+                          cameo,
+                          date: whatIf.hypothetical.date,
+                          region,
+                          propose: true,
+                        }).then(setStories)
+                      }}
+                    >
+                      Retrieve by story, still gated by era
+                    </button>
+                  ) : stories && (stories.proposed?.length ?? 0) > 0 ? (
+                    <ul className="space-y-2">
+                      {stories.proposed!.map((row) => (
+                        <li key={row.event_id} className="text-sm">
+                          <span className="mono text-xs" style={{ color: 'var(--muted)' }}>
+                            {String(row.event_time).slice(0, 10)}
+                          </span>
+                          {' '}
+                          {row.name}
+                        </li>
+                      ))}
+                    </ul>
+                  ) : (
+                    <p className="text-sm" style={{ color: 'var(--muted)' }}>
+                      {stories?.proposed_note ?? 'No additional stories cleared the era gate.'}
+                    </p>
+                  )}
+                </Disclosure>
+              </>
+            ) : (
+              <Empty>no admissible analogue in this era for a replay of this pair</Empty>
+            )}
+          </Beat>
+
           {/* ── WHERE IT'S BEEN — the event timeline ─────────────────────── */}
           <Beat
             title="Where it’s been"
@@ -558,7 +672,7 @@ export default function RelationshipPage({ region, onNavigate }: { region: strin
             {selected && (
               <p className="mt-3">
                 <button className="btn" onClick={() => onNavigate(`/case/dynamic?dyad=${encodeURIComponent(selected)}&region=${encodeURIComponent(region)}`)}>
-                  Compose a case study from this record →
+                  the measured record →
                 </button>
               </p>
             )}
@@ -663,6 +777,18 @@ export default function RelationshipPage({ region, onNavigate }: { region: strin
                         cautious there.
                       </p>
                     </div>
+                  )}
+                  {calibration.horizon_variants?.['1y'] &&
+                    calibration.horizon_variants['1y'].observed_rate != null && (
+                    <p className="figure-note mt-3">
+                      Asked over one year instead of three, the same era&rsquo;s
+                      base rate is {pct(calibration.horizon_variants['1y'].observed_rate, 0)}
+                      {calibration.horizon_variants['1y'].skill != null
+                        ? `, and skill is ${calibration.horizon_variants['1y'].skill.toFixed(2)}`
+                        : ''}
+                      . The frozen call stays three years; this is a named
+                      variant, not a silent swap.
+                    </p>
                   )}
                 </div>
               )}

@@ -10,9 +10,8 @@ function PackTag({ pack }: { pack: string }) {
   return <>{label.toUpperCase()}</>
 }
 
-/** Every narrated episode the archive carries, one card each — the pack's
- *  curated studies today, generated analyses beside them once the reasoning
- *  agent writes some. */
+/** Every narrated episode the archive carries, one card each. Open a study
+ *  and the desk writes a reading of the measured tables. */
 export default function CasesPage({
   region,
   onNavigate,
@@ -38,8 +37,8 @@ export default function CasesPage({
         <p className="mt-8 text-sm leading-relaxed" style={{ color: 'var(--muted)', maxWidth: '58ch' }}>
           No narrated episode in this region's pack yet. A case study is the
           pack's worked story — events coded, effects measured, prose beside
-          the numbers — and this page will also carry analyses the reasoning
-          agent generates once it has an API key to think with.
+          the numbers. Open one and the desk writes a reading of those
+          tables when the key is present.
         </p>
       ) : (
         <ul className="mt-8 space-y-6">

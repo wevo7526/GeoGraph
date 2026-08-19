@@ -36,12 +36,15 @@ from core.graph import kuzu_store
 from core.ingestion.cow import LoadResult
 
 SOURCE_GDELT = "source:gdelt"
+#: The dataset, not a per-event article. GDELT SOURCEURL is a mention string
+#: and is never this URL — do not serve it as a citation (core.cite.citable_url).
+SOURCE_GDELT_URL = "http://data.gdeltproject.org/events/index.html"
 
 _SOURCE_META = {
     "node_id": SOURCE_GDELT,
     "name": "GDELT 1.0 events (raw export files)",
     "kind": "dataset",
-    "url": "http://data.gdeltproject.org/events/index.html",
+    "url": SOURCE_GDELT_URL,
     "citation": (
         "Leetaru & Schrodt (2013), GDELT: Global Data on Events, Location and "
         "Tone, 1979-2012. ISA Annual Convention."
@@ -477,6 +480,10 @@ def parse_lines(
             available_at = _iso_timestamp(fields[lay.date_added].strip())
             if available_at:
                 event["available_at"] = available_at
+        # SOURCEURL is which mention GDELT attached, not a verified article
+        # about the coded event. Sports wire wearing a roster actor string is
+        # a known defect. Kept on the corpus row; stripped before a graph
+        # merge; never served as a citation href (see core.cite.citable_url).
         if lay.source_url is not None and len(fields) > lay.source_url:
             source_url = fields[lay.source_url].strip()
             if source_url:

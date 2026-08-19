@@ -506,6 +506,26 @@ def test_gdelt_keeps_the_significant_regional_root_events():
     assert kinds == ["INITIATED_BY", "DIRECTED_AT", "DERIVED_FROM"]
 
 
+def test_gdelt_sourceurl_stays_on_the_corpus_row_not_the_graph() -> None:
+    """V2 SOURCEURL is a mention, often the wrong article. Keep it off the
+    graph (and off any citation href) even when it is a well-formed URL."""
+    from core.ingestion import gdelt
+
+    fields = _gdelt_line().split("\t")
+    fields.extend([""] * (61 - len(fields)))
+    fields[59] = "20260818120000"
+    fields[60] = "https://www.mlb.com/news/unrelated-baseball-story"
+    events, _, result = gdelt.parse_lines(
+        ["\t".join(fields)],
+        actors_by_iso3=_ACTORS,
+        region_pack="mena",
+        min_mentions=10,
+    )
+    assert result.written == 1
+    assert events[0]["source_url"] == "https://www.mlb.com/news/unrelated-baseball-story"
+    assert "source_url" in gdelt._CORPUS_ONLY
+
+
 def test_gdelt_events_land_sourced_and_rescorable(conn):
     from core.classifier.rescore import rescore_escalation
     from core.ingestion import gdelt

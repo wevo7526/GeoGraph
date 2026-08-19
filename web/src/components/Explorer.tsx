@@ -25,6 +25,7 @@ import Graph3D, {
   type Graph3DHandle,
   type LinkSelection,
 } from './Graph3D'
+import { citableUrl } from '../lib/cite'
 import ImpactLine from './ImpactLine'
 import TimeSlider, { YEAR_MIN, YEAR_NOW } from './TimeSlider'
 import { LineBand } from './charts/Charts'
@@ -311,9 +312,21 @@ function EventDetailPanel({
         <div className="mt-5 pt-4 border-t" style={{ borderColor: 'var(--line)' }}>
           <Microcaps>Source</Microcaps>
           <ul className="mt-2 space-y-1 text-xs" style={{ color: 'var(--muted)' }}>
-            {detail.sources.map((s) => (
-              <li key={s.node_id}>{s.name}</li>
-            ))}
+            {detail.sources.map((s) => {
+              const href = citableUrl(s.url)
+              const label = s.name || s.node_id
+              return (
+                <li key={s.node_id}>
+                  {href ? (
+                    <a className="article-link" href={href} target="_blank" rel="noreferrer">
+                      {label}
+                    </a>
+                  ) : (
+                    label
+                  )}
+                </li>
+              )
+            })}
           </ul>
         </div>
       )}

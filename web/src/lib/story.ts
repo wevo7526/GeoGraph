@@ -32,6 +32,7 @@ import type {
   TransmissionSkill,
   WireFeed,
   WireItem,
+  NetworkSnapshot,
 } from '../types'
 
 // ── words ───────────────────────────────────────────────────────────────────
@@ -596,4 +597,18 @@ export function impactLine(impact: EventImpact): string {
       return `${m.market_name} moved ${signedPct(m.measured.car)}; typically ${signedPct(m.expected.median_car)}${surprise}`
     })
     .join(' · ')
+}
+
+/** Who sits between others in this lens's latest computed window. */
+export function networkLede(snap: NetworkSnapshot, label: string): Lede | null {
+  const lead = snap.brokers?.[0]
+  if (!lead || !snap.window_end) return null
+  const through = snap.window_end.slice(0, 4)
+  return {
+    headline: `${lead.name} sits between the others in ${label}'s web as of ${through}.`,
+    support: snap.holes?.[0]
+      ? `${snap.holes[0].name} has the most room to broker — the least constrained position in this window.`
+      : `Ranked from persisted structural measures, not a live recompute.`,
+    asOf: snap.window_end,
+  }
 }

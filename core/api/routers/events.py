@@ -17,7 +17,9 @@ from fastapi import APIRouter, HTTPException, Query, Request
 
 from core import archive as archive_bounds
 from core import settings as settings_module
+from core.cite import citable_url
 from core.graph import kuzu_store
+from core.ingestion import gdelt
 from core.wire import serving as wire_serving
 
 router = APIRouter(tags=["events"])
@@ -25,6 +27,30 @@ router = APIRouter(tags=["events"])
 #: A page of events. The explorer asks for the spine, which is ~20 rows; the
 #: cap exists so a GDELT-scale graph cannot return itself.
 MAX_ROWS = 500
+
+
+def _cited_source(
+    node_id: str | None, row: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """A Source the surface may name, with a href only when it is a document.
+
+    `source:gdelt` always cites the dataset. GDELT SOURCEURL (a mention string,
+    sometimes a baseball story) never becomes the href.
+    """
+    src = str(node_id or "")
+    row = row or {}
+    if src == gdelt.SOURCE_GDELT:
+        name = row.get("name") or "GDELT"
+        url = gdelt.SOURCE_GDELT_URL
+    else:
+        name = row.get("name") or src
+        url = row.get("url")
+    return {
+        "node_id": src,
+        "name": name,
+        "url": citable_url(url),
+        "citation": row.get("citation") or "",
+    }
 
 
 def _conn(request: Request) -> Any:
@@ -308,9 +334,7 @@ def _wire_event_detail(node_id: str) -> dict[str, Any] | None:
         "target": actor(row.get("target_id")),
         "dyad": {"node_id": dyad_id} if dyad_id else None,
         "regimes": [],
-        "sources": (
-            [{"node_id": row["source_id"]}] if row.get("source_id") else []
-        ),
+        "sources": [_cited_source(row.get("source_id"))] if row.get("source_id") else [],
     }
 
 
@@ -382,7 +406,7 @@ def get_event(request: Request, node_id: str) -> dict[str, Any]:
         "target": target[0] if target else None,
         "dyad": dyad[0] if dyad else None,
         "regimes": regimes,
-        "sources": sources,
+        "sources": [_cited_source(s.get("node_id"), s) for s in sources],
     }
 
 
@@ -711,7 +735,12 @@ def wire_live(region: str = "mena", limit: int = Query(30, ge=1, le=100)) -> dic
             "target_name": names.get(str(row.get("target_id") or "")),
             "dyad_id": row.get("dyad_id"),
             "available_at": row.get("available_at"),
-            "source_url": row.get("source_url"),
+            # Cite the dataset, never GDELT SOURCEURL. That field is a mention
+            # string — a baseball story sharing an actor name is a known miss —
+            # and a well-formed URL is not a verified article.
+            "source_id": gdelt.SOURCE_GDELT,
+            "source_name": "GDELT",
+            "source_url": citable_url(gdelt.SOURCE_GDELT_URL),
             "mentions": row.get("mentions"),
             "num_sources": row.get("num_sources"),
             "implied_kind": kind,
