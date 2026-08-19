@@ -84,6 +84,8 @@ def test_health_is_200_and_names_what_is_switched_off(client):
     assert body["graph"] == "open"
     # A capability that is unconfigured is REPORTED, not silently missing.
     assert "panel" in body["disabled"]
+    assert isinstance(body["leftover"], dict)
+    assert "sk-" not in " ".join(body["leftover"].values())
     assert body["boot"] is None
 
 

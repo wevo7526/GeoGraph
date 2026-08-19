@@ -5,12 +5,15 @@ value disables ONE capability, and the API's health payload names which:
 
   DATABASE_URL                 → the Postgres panel (transmission engine input)
   OPENAI_API_KEY               → the reasoning layer (never numbers anyway)
-  BIGQUERY_PROJECT / GOOGLE_APPLICATION_CREDENTIALS → GDELT ingestion
   FRED_API_KEY                 → Treasury yields
   GPR_INDEX_URL                → the GPR regime overlay
+  BIGQUERY_PROJECT             → unused BigQuery transport (wire is raw files)
 
 Values that ARE set are validated by CONTENT, not presence — a setting that is
 present and wrong passes every "is it set?" check and fails somewhere else.
+
+`leftover_variables()` names Railway flags that are unused or one-shot and
+still set. It never returns secret VALUES — only names and a reason to delete.
 """
 
 from __future__ import annotations
@@ -63,6 +66,117 @@ class Settings:
         if not self.fred_api_key:
             out["fred"] = "FRED_API_KEY unset — Treasury yield ingestion disabled"
         return out
+
+
+def leftover_variables() -> dict[str, str]:
+    """Names of env vars that are safe (or urgent) to delete.
+
+    Inspects presence only. Values never leave this function — a health
+    payload must not echo keys. Empty means the Railway variable list has
+    nothing this process considers leftover.
+    """
+    out: dict[str, str] = {}
+    if _present("ANTHROPIC_API_KEY"):
+        out["ANTHROPIC_API_KEY"] = (
+            "unused — the desk reads OPENAI_API_KEY; delete this"
+        )
+    if _present("GOOGLE_APPLICATION_CREDENTIALS"):
+        out["GOOGLE_APPLICATION_CREDENTIALS"] = (
+            "unused — the BigQuery transport is unbuilt; the wire loads "
+            "credential-free from raw files"
+        )
+    model = os.getenv("GEOGRAPH_AGENT_MODEL", "").strip().lower()
+    if "claude" in model or "anthropic" in model:
+        out["GEOGRAPH_AGENT_MODEL"] = (
+            "still names Claude; the desk is OpenAI (gpt-4.1). Delete, or "
+            "set an OpenAI model id"
+        )
+
+    # One-shot boot flags. Honour-once means a leftover value is a landmine
+    # on the next edit, not a current action — unset after it has run.
+    for name, note in (
+        ("GEOGRAPH_RESET_GRAPH", "one-shot graph delete; unset after it has run"),
+        ("GEOGRAPH_DROP_AFFECTED", "one-shot AFFECTED drop; unset after it has run"),
+        ("GEOGRAPH_REBUILD_AFFECTED", "one-shot AFFECTED repair; unset after it has run"),
+    ):
+        if _present(name):
+            out[name] = note
+
+    if _truthy("GEOGRAPH_READY_IGNORES_GRAPH"):
+        out["GEOGRAPH_READY_IGNORES_GRAPH"] = (
+            "healthcheck will pass while the graph is dark; unset for routine deploys"
+        )
+    if _falsy("GEOGRAPH_JOBS"):
+        out["GEOGRAPH_JOBS"] = (
+            "convergence loop is off; delete so jobs run (the production default)"
+        )
+    if _falsy("GEOGRAPH_SEED_ON_BOOT"):
+        out["GEOGRAPH_SEED_ON_BOOT"] = (
+            "seeding skipped; a fresh volume would stay empty. Delete unless a "
+            "batch job currently holds the write lock"
+        )
+    if _falsy("GEOGRAPH_SNAPSHOT_FROZEN"):
+        out["GEOGRAPH_SNAPSHOT_FROZEN"] = (
+            "live harvest will append onto the training snapshot; unset to keep the freeze"
+        )
+    if _falsy("GEOGRAPH_API_FIRST"):
+        out["GEOGRAPH_API_FIRST"] = (
+            "serial boot — the healthcheck waits on write steps. Delete for routine deploys"
+        )
+    if _truthy("GEOGRAPH_STUDY_IN_PROCESS"):
+        out["GEOGRAPH_STUDY_IN_PROCESS"] = (
+            "study forced in-process; the child path exists because this OOM'd. Delete"
+        )
+    packs = os.getenv("GEOGRAPH_SEED_PACKS", "").strip()
+    if packs:
+        out["GEOGRAPH_SEED_PACKS"] = (
+            f"set — default is every complete pack, not {packs!r}. Delete "
+            "unless you meant to seed only these"
+        )
+
+    # Opt-in measuring boots. Safe for a deliberate measuring deploy; leftover
+    # on a code-ship deploy is graph-dark time. Named so they can be seen.
+    for name, note in (
+        (
+            "GEOGRAPH_GDELT_ON_BOOT",
+            "opt-in wire load (hours of graph-dark); unset for routine deploys",
+        ),
+        (
+            "GEOGRAPH_RESCORE_ON_BOOT",
+            "opt-in archive rescore (hours, un-resumable); unset for routine deploys",
+        ),
+        (
+            "GEOGRAPH_STUDY_ON_BOOT",
+            "opt-in measuring boot (~600s graph-dark); unset for routine deploys",
+        ),
+        (
+            "GEOGRAPH_FORECASTS_ON_BOOT",
+            "opt-in forecast freeze; unset — the last freeze persists",
+        ),
+        (
+            "GEOGRAPH_GAMES_ON_BOOT",
+            "opt-in region solve; unset — the games job re-solves in the background",
+        ),
+        (
+            "GEOGRAPH_BACKTEST_ON_BOOT",
+            "opt-in paper backtest; unset — the ledger persists in Postgres",
+        ),
+    ):
+        if _truthy(name):
+            out[name] = note
+    return out
+
+
+def _present(name: str) -> bool:
+    return bool(os.getenv(name, "").strip())
+
+
+def _truthy(name: str) -> bool:
+    return os.getenv(name, "").strip().lower() in {"1", "true", "yes"}
+
+
+def _falsy(name: str) -> bool:
+    return os.getenv(name, "").strip().lower() in {"0", "false", "no"}
 
 
 def load() -> Settings:
