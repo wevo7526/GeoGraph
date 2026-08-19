@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { getCaseStudy, getDynamicCaseStudy } from '../api'
+import { getCaseStudy, getDynamicCaseStudy, postCaseNarrate } from '../api'
 import { useRegionLabel } from '../regions'
 import type { CaseStudy, CaseStudyEpisode, Effect } from '../types'
 
@@ -193,9 +193,17 @@ export default function CaseStudyView({
 }) {
   const [study, setStudy] = useState<CaseStudy | null>(null)
   const [missing, setMissing] = useState(false)
+  const [deskReading, setDeskReading] = useState<string | null>(null)
+  const [deskMethod, setDeskMethod] = useState<string | null>(null)
+  const [narrating, setNarrating] = useState(false)
+  const [narrateError, setNarrateError] = useState<string | null>(null)
 
   useEffect(() => {
     let active = true
+    setDeskReading(null)
+    setDeskMethod(null)
+    setNarrating(false)
+    setNarrateError(null)
     // `dynamic?dyad=…` (or `?event=…`) composes a study on request from the
     // measured record — same shape as a worked one, so this view renders both.
     const [bare, query] = slug.split('?')
@@ -213,6 +221,28 @@ export default function CaseStudyView({
       active = false
     }
   }, [slug])
+
+  const onRead = () => {
+    if (narrating) return
+    const [bare, query] = slug.split('?')
+    const params = Object.fromEntries(new URLSearchParams(query ?? ''))
+    setNarrating(true)
+    setNarrateError(null)
+    postCaseNarrate({
+      slug: bare === 'dynamic' ? undefined : bare,
+      dyad: params.dyad,
+      event: params.event,
+      region: params.region,
+    }).then((response) => {
+      setNarrating(false)
+      if (!response.ok || !response.result) {
+        setNarrateError(response.detail ?? 'the desk did not answer')
+        return
+      }
+      setDeskReading(response.result.desk_reading)
+      setDeskMethod(response.result.method ?? null)
+    })
+  }
 
   if (missing) {
     return (
@@ -307,6 +337,50 @@ export default function CaseStudyView({
           >
             {study.caveat}
           </p>
+        )}
+      </section>
+
+      <section className="mt-16 pt-8 border-t" style={{ borderColor: 'var(--line)' }}>
+        <h2 className="mono text-xs uppercase tracking-[0.3em]" style={{ color: 'var(--accent)' }}>
+          Ask the desk to read this
+        </h2>
+        <p className="mt-3 text-sm leading-relaxed" style={{ color: 'var(--muted)', maxWidth: '68ch' }}>
+          The figures above are the archive&rsquo;s. A reading argues from them; it
+          does not originate a number.
+        </p>
+        <p className="mt-5">
+          <button
+            type="button"
+            className="ink-button"
+            onClick={onRead}
+            disabled={narrating}
+          >
+            Read this
+          </button>
+        </p>
+        {narrating && (
+          <p className="mt-4 text-sm" style={{ color: 'var(--muted)' }}>
+            Reading…
+          </p>
+        )}
+        {narrateError && (
+          <p className="mt-4 text-sm" style={{ color: 'var(--alert)' }}>
+            {narrateError}
+          </p>
+        )}
+        {deskReading && (
+          <>
+            {deskReading.split(/\n\n+/).map((graf, index) => (
+              <p key={index} className="mt-4 text-lg leading-relaxed" style={{ maxWidth: '68ch' }}>
+                {graf}
+              </p>
+            ))}
+            {deskMethod && (
+              <p className="mt-4 text-xs leading-relaxed" style={{ color: 'var(--muted)', maxWidth: '72ch' }}>
+                {deskMethod}
+              </p>
+            )}
+          </>
         )}
       </section>
     </article>

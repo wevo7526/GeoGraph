@@ -161,6 +161,8 @@ def test_intel_and_the_wire_are_one_package() -> None:
         (WEB / "components" / "IntelPage.tsx").read_text(encoding="utf-8")
     )
     assert "Ask the desk" not in intel
+    assert "Read this" in intel
+    assert "summonDesk" in intel
     assert "situationLede" in intel
     assert "AgentDesk" not in intel
     assert "A follow-up" not in intel
@@ -185,15 +187,17 @@ def test_intel_and_the_wire_are_one_package() -> None:
     assert "onIntel" not in modal_src
     assert "onLanding" in modal_src
     assert "AgentDesk" in modal_src
+    assert "deskOpen" in modal_src
+    session = _strip_comments(
+        (WEB / "components" / "AgentSession.tsx").read_text(encoding="utf-8")
+    )
+    assert "summonDesk" in session
+    assert "deskOpen" in session
     desk = _strip_comments(
         (WEB / "components" / "AgentDesk.tsx").read_text(encoding="utf-8")
     )
     assert "A follow-up" not in desk
     assert "A question for the desk" in desk
-    cases = _strip_comments(
-        (WEB / "components" / "CaseStudyView.tsx").read_text(encoding="utf-8")
-    )
-    assert "postCaseNarrate" not in cases
 
 
 def test_wire_headlines_use_cameo_roots_not_only_quad_four() -> None:
@@ -243,6 +247,55 @@ def test_a_dyad_id_is_never_built_into_a_sentence() -> None:
     assert not offenders, (
         "a dyad id is being written into user-facing text:\n  " + "\n  ".join(offenders)
     )
+
+
+def test_working_pages_use_the_desk_layout_not_a_reading_column() -> None:
+    """Markets, games, relationships, network and cases share Intel's desk
+    measure — not one narrow `.reading-column`. Explorer and the long-form
+    case-study article are deliberately left alone."""
+    for name in (
+        "MarketsPage.tsx",
+        "GamesPage.tsx",
+        "RelationshipPage.tsx",
+        "NetworkPage.tsx",
+        "CasesPage.tsx",
+    ):
+        text = _strip_comments((WEB / "components" / name).read_text(encoding="utf-8"))
+        assert "desk-page" in text, f"{name} never took the desk-page shell"
+        assert "reading-column" not in text, f"{name} still wraps in reading-column"
+    css = (WEB / "styles.css").read_text(encoding="utf-8")
+    assert ".desk-page" in css
+    assert ".desk-grid" in css
+    assert ".intel-page" in css
+    assert ".intel-grid" in css
+
+
+def test_the_case_desk_builds_from_the_wire() -> None:
+    """`/cases` is a builder for every region, not only pack-declared studies."""
+    cases = _strip_comments((WEB / "components" / "CasesPage.tsx").read_text(encoding="utf-8"))
+    assert "Build a study" in cases
+    assert "getWire" in cases
+    assert "wireHeadline" in cases
+    assert "/case/dynamic?event=" in cases
+    assert "AgentDesk" not in cases
+    # An empty pack must still offer the picker — not declare the page empty.
+    assert "the builder" in cases.lower() or "Build a study" in cases
+
+
+def test_case_study_narrates_on_click_not_on_load() -> None:
+    """The desk reads a study when asked. GET stays the measured record."""
+    view = _strip_comments(
+        (WEB / "components" / "CaseStudyView.tsx").read_text(encoding="utf-8")
+    )
+    assert "postCaseNarrate" in view
+    assert "Read this" in view
+    load = re.search(r"useEffect\((.*?)\[\s*slug\s*\]\s*\)", view, re.S)
+    assert load, "the study fetch on slug is missing"
+    assert "postCaseNarrate" not in load.group(1), (
+        "narrate is firing in the load effect; it must sit in a click handler"
+    )
+    click = re.search(r"const onRead\s*=\s*\(\)\s*=>\s*\{(.*?)\n  \}", view, re.S)
+    assert click and "postCaseNarrate" in click.group(1)
 
 
 def test_ordinary_events_are_not_sold_as_case_studies() -> None:

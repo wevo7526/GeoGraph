@@ -96,12 +96,12 @@ function RegionGames({ region, onPick }: { region: string; onPick: (dyad: string
     return () => { live = false }
   }, [region])
 
-  if (map === undefined) return <div className="reading-column py-10"><Empty>Solving the region…</Empty></div>
+  if (map === undefined) return <div className="desk-page py-10"><Empty>Solving the region…</Empty></div>
   // The map is being re-solved (a payload-shape change): say so and let the
   // reader come back, rather than holding the request open for ~130s.
   if (map && (map as RegionMap & { resolving?: boolean }).resolving) {
     return (
-      <div className="reading-column py-10">
+      <div className="desk-page py-10">
         <StoryHead kicker={`Game theory · ${label.toUpperCase()}`}
                    title="Re-solving this region"
                    standfirst={map.note ?? 'The scenario map is being rebuilt for the current shape; it lands within a few minutes.'} />
@@ -111,7 +111,7 @@ function RegionGames({ region, onPick }: { region: string; onPick: (dyad: string
   if (map === null) {
     const f = lastFailureFor('/api/games/region')
     return (
-      <div className="reading-column py-10">
+      <div className="desk-page py-10">
         <StoryHead kicker={`Game theory · ${label.toUpperCase()}`} title="No solved games for this region"
                    standfirst={f?.detail ?? 'The API did not answer.'} />
       </div>
@@ -139,7 +139,7 @@ function RegionGames({ region, onPick }: { region: string; onPick: (dyad: string
   const calming = map.scenarios_calming.filter((s) => s.family?.family !== 'ally')
 
   return (
-    <div className="reading-column py-8">
+    <div className="desk-page py-8">
       <StoryHead
         kicker={`Game theory · ${label.toUpperCase()}`}
         title={lede?.headline ?? 'The next four quarters, solved'}
@@ -214,7 +214,7 @@ function RegionGames({ region, onPick }: { region: string; onPick: (dyad: string
         title="Where the games point"
         aside={`The courses the solved games put the most mass on, pooled by kind across ${map.dyads_solved} pairs. Each pair's kinds sum to one.`}
       >
-        <div className="grid md:grid-cols-2 gap-8">
+        <div className="desk-split">
           <div>
             <div className="kicker mb-2" style={{ color: 'var(--alert)' }}>Toward pressure</div>
             <ScenarioList rows={pressing} onPick={onPick} />
@@ -392,11 +392,11 @@ function DyadGame({
     [sol, chosen],
   )
 
-  if (sol === undefined) return <div className="reading-column py-10"><Empty>Solving the game…</Empty></div>
+  if (sol === undefined) return <div className="desk-page py-10"><Empty>Solving the game…</Empty></div>
   if (sol === null || !concept) {
     const f = lastFailureFor('/api/games/dyad')
     return (
-      <div className="reading-column py-10">
+      <div className="desk-page py-10">
         <StoryHead kicker={`Solved game · ${label.toUpperCase()}`} title="This pair could not be solved"
                    standfirst={f?.detail ?? 'The API did not answer.'}
                    action={<button className="btn btn--quiet" onClick={onBack}>← the region</button>} />
@@ -423,7 +423,7 @@ function DyadGame({
   const posture = postureClause(sol.opening.posture)
 
   return (
-    <div className="reading-column py-8">
+    <div className="desk-page py-8">
       <StoryHead
         kicker={`Solved game · ${label.toUpperCase()}`}
         title={sol.dyad_name}

@@ -619,8 +619,9 @@ input[type='range'].timeline:focus-visible {
    accent/alert pair carries the SIGN of a number.
    ═══════════════════════════════════════════════════════════════════════════ */
 
-/* The reading column every app page centres on — a newspaper measure, wide
-   enough for a two-column ledger, narrow enough to read. */
+/* The reading column — kept for the long-form case-study article and any
+   leftover narrow measure. Working pages use `.desk-page` (72rem, two-column
+   on a wide screen). Do not restore a dark theme; the ground is paper. */
 .reading-column {
   width: 100%;
   max-width: 56rem;
@@ -631,8 +632,9 @@ input[type='range'].timeline:focus-visible {
   .reading-column { padding: 1.25rem 1rem 4rem; }
 }
 
-/* Intel is a laid-out briefing, not one long reading column: lede full width,
-   globe + a small figure, then the wire in two columns on a wide screen. */
+/* Working-page shell: lede full width, then a two-column desk. Intel's
+   `.intel-*` names are aliases so the briefing does not regress. */
+.desk-page,
 .intel-page {
   width: 100%;
   max-width: 72rem;
@@ -640,8 +642,24 @@ input[type='range'].timeline:focus-visible {
   padding: 2rem 1.5rem 5rem;
 }
 @media (max-width: 640px) {
-  .intel-page { padding: 1.25rem 1rem 4rem; }
+  .desk-page, .intel-page { padding: 1.25rem 1rem 4rem; }
 }
+.desk-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 1.5rem 2rem;
+  margin-top: 1.5rem;
+  align-items: start;
+}
+@media (min-width: 880px) {
+  .desk-grid {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  }
+  .desk-grid > .beat {
+    margin-top: 0;
+  }
+}
+/* Intel's globe wants a narrow rail, not a 50/50 split. */
 .intel-grid {
   display: grid;
   grid-template-columns: minmax(0, 1fr);
@@ -654,36 +672,76 @@ input[type='range'].timeline:focus-visible {
     grid-template-columns: minmax(0, 280px) minmax(0, 1fr);
   }
 }
+.desk-page .situation-plate .globe-box,
 .intel-page .situation-plate .globe-box {
   width: min(28vh, 100%, 260px);
 }
+.desk-figure,
 .intel-figure {
   min-width: 0;
   margin: 0;
   padding-top: 0.25rem;
+  max-width: 100%;
 }
+.desk-figure h2,
 .intel-figure h2 {
   font-size: var(--type-section);
   letter-spacing: -0.01em;
   margin: 0 0 0.35rem;
 }
+.desk-figure .figure-note,
 .intel-figure .figure-note {
   margin: 0 0 1rem;
   max-width: 52ch;
 }
+.desk-page figure,
+.intel-page figure {
+  min-width: 0;
+  max-width: 100%;
+}
+.desk-split,
 .intel-wire-split {
   display: grid;
   grid-template-columns: 1fr;
   gap: 0 2rem;
 }
 @media (min-width: 880px) {
+  .desk-split,
   .intel-wire-split {
     grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr);
     align-items: start;
   }
+  .desk-split .beat,
   .intel-wire-split .beat {
     margin-top: 2.5rem;
   }
+}
+.story-head .ink-button {
+  padding: 0.55rem 1.25rem;
+  flex-shrink: 0;
+}
+.ink-button:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+.desk-pick {
+  display: block;
+  width: 100%;
+  text-align: left;
+  border: 1px solid var(--line);
+  background: var(--panel);
+  padding: 0.85rem 1rem;
+  cursor: pointer;
+}
+.desk-pick + .desk-pick {
+  border-top: none;
+}
+.desk-pick:hover {
+  background: color-mix(in srgb, var(--text) 4%, var(--panel));
+}
+.desk-pick-head {
+  display: block;
+  margin-top: 0.2rem;
 }
 
 /* A page header set as a story head: kicker, headline, standfirst, and a

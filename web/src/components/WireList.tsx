@@ -233,7 +233,7 @@ export function WireFeedBeats({
         />
       </div>
 
-      <div className="intel-wire-split">
+      <div className="desk-split intel-wire-split">
       <Beat
         title="What broke from routine"
         major

@@ -28,6 +28,7 @@ import type {
   WireLiveFeed,
 } from '../types'
 import { Empty, StoryHead } from '../ui'
+import { useAgent } from './AgentSession'
 import SituationPlate from './SituationPlate'
 import { WireFeedBeats } from './WireList'
 import { Bars } from './charts/Kit'
@@ -48,6 +49,7 @@ export default function IntelPage({
   const [story, setStory] = useState<MarketsStory | null | undefined>(undefined)
   const [globe, setGlobe] = useState<GlobeBoard | null | undefined>(undefined)
   const [jobs, setJobs] = useState<JobsStatus | null>(null)
+  const { summonDesk, darkReason, asking } = useAgent()
 
   useEffect(() => {
     let live = true
@@ -73,7 +75,7 @@ export default function IntelPage({
   if (wire === null) {
     const failure = lastFailureFor('/api/wire')
     return (
-      <div className="intel-page py-10">
+      <div className="desk-page intel-page py-10">
         <StoryHead
           kicker={`Intel · ${label.toUpperCase()}`}
           title="The intel desk did not answer"
@@ -97,11 +99,23 @@ export default function IntelPage({
   })
 
   return (
-    <div className="intel-page">
+    <div className="desk-page intel-page">
       <StoryHead
         kicker={`Intel · ${label.toUpperCase()}`}
         title={lede?.headline ?? `The desk is reading ${label}`}
         standfirst={lede?.support ?? 'The argument opens as the briefing lands.'}
+        action={
+          <button
+            type="button"
+            className="ink-button"
+            onClick={summonDesk}
+            disabled={Boolean(darkReason)}
+            title={darkReason ?? (asking ? 'The desk is already reading' : undefined)}
+            aria-haspopup="dialog"
+          >
+            Read this
+          </button>
+        }
       />
       {(unplaced > 0 || studyStopped) && (
         <p className="figure-note mt-4">

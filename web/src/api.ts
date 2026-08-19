@@ -209,7 +209,12 @@ export const getEventEffects = (nodeId: string) =>
 export const getTrajectory = (dyadId: string) =>
   get<Trajectory>(`/api/escalation/${encodeURIComponent(dyadId)}`)
 
-export const getDyads = () => get<{ rows: Dyad[] }>('/api/dyads')
+export const getDyads = (region?: string) => {
+  const query = new URLSearchParams()
+  if (region) query.set('region', region)
+  const suffix = query.toString() ? `?${query}` : ''
+  return get<{ rows: Dyad[] }>(`/api/dyads${suffix}`)
+}
 
 export const getFlows = () => get<{ rows: Flow[] }>('/api/flows')
 

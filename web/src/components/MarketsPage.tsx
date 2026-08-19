@@ -71,11 +71,11 @@ export default function MarketsPage({ region, onNavigate }: { region: string; on
     [markets, focus],
   )
 
-  if (story === undefined) return <div className="reading-column py-10"><Empty>Reading the measured record…</Empty></div>
+  if (story === undefined) return <div className="desk-page py-10"><Empty>Reading the measured record…</Empty></div>
   if (story === null) {
     const f = lastFailureFor('/api/markets/story')
     return (
-      <div className="reading-column py-10">
+      <div className="desk-page py-10">
         <StoryHead kicker={`Markets · ${label.toUpperCase()}`} title="The markets story did not answer"
                    standfirst={f?.detail ?? 'The API did not answer.'} />
       </div>
@@ -83,7 +83,7 @@ export default function MarketsPage({ region, onNavigate }: { region: string; on
   }
   if (story.pending) {
     return (
-      <div className="reading-column py-10">
+      <div className="desk-page py-10">
         <StoryHead kicker={`Markets · ${label.toUpperCase()}`} title="The markets story is being written"
                    standfirst={story.note ?? 'The markets job builds it on its first pass; come back in a few minutes.'} />
       </div>
@@ -115,7 +115,7 @@ export default function MarketsPage({ region, onNavigate }: { region: string; on
   const diskFree = jobs?.memory?.disk_free_gb
 
   return (
-    <div className="reading-column py-8">
+    <div className="desk-page py-8">
       <StoryHead
         kicker={`Markets · ${name.toUpperCase()}`}
         title={lede?.headline ?? `How ${name} moves markets`}
@@ -291,6 +291,7 @@ export default function MarketsPage({ region, onNavigate }: { region: string; on
         </Beat>
       )}
 
+      <div className="desk-grid">
       {/* 3 — WHERE THE GAMES POINT */}
       <Beat
         title="Where the solved games point next"
@@ -361,6 +362,7 @@ export default function MarketsPage({ region, onNavigate }: { region: string; on
           )}
         </Beat>
       )}
+      </div>
 
       {/* 4b — WHAT IS STILL IN THE PRICE AFTER THE NEWS IS PUBLIC */}
       <Beat

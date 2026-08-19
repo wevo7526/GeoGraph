@@ -317,7 +317,7 @@ export default function RelationshipPage({ region, onNavigate }: { region: strin
   const dyadsFailed = lastFailureFor('/api/panel/dyads', { exact: true })
 
   return (
-    <div className="reading-column">
+    <div className="desk-page">
       {linkNote && (
         <p className="mono text-[11px] mb-3" style={{ color: 'var(--alert)' }}>
           {linkNote}
@@ -447,6 +447,7 @@ export default function RelationshipPage({ region, onNavigate }: { region: strin
           </section>
 
           {/* ── NOW — the tension trajectory ─────────────────────────────── */}
+          <div className="desk-grid">
           <Beat
             title="Where it stands"
             aside="Every quarter the archive holds for this pair, measured as a departure from its own running baseline — so the height of a spike is what was unusual FOR THEM, not an absolute level of hostility."
@@ -509,7 +510,7 @@ export default function RelationshipPage({ region, onNavigate }: { region: strin
             {precedent === undefined ? (
               <Empty>reading the precedent…</Empty>
             ) : precedent && (precedent.fan.length || precedent.markets.length) ? (
-              <div className="grid md:grid-cols-2 gap-6">
+              <div className="desk-split">
                 <div>
                   <div className="kicker mb-1">How friction ran after an episode opened</div>
                   <Fan rows={precedent.fan} width={480} height={150} />
@@ -537,6 +538,7 @@ export default function RelationshipPage({ region, onNavigate }: { region: strin
               <Empty>{precedent?.markets_note ?? 'no comparable episodes on record for this pair'}</Empty>
             )}
           </Beat>
+          </div>
 
           <Beat
             title="If it happened again"

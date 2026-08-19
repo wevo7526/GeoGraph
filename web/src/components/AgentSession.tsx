@@ -23,9 +23,12 @@ type AgentApi = {
   darkReason: string | null
   method: string | null
   briefing: SituationBriefing | null
+  deskOpen: boolean
+  setDeskOpen: (open: boolean) => void
   ask: (question: string) => void
   brief: () => void
   reread: () => void
+  summonDesk: () => void
 }
 
 const AgentContext = createContext<AgentApi | null>(null)
@@ -45,7 +48,9 @@ export function AgentProvider({
   const [darkReason, setDarkReason] = useState<string | null>(null)
   const [method, setMethod] = useState<string | null>(null)
   const [briefing, setBriefing] = useState<SituationBriefing | null>(null)
+  const [deskOpen, setDeskOpen] = useState(false)
   const gen = useRef(0)
+  const askingRef = useRef(false)
   const messagesRef = useRef<DeskTurn[]>([])
   messagesRef.current = messages
 
@@ -64,6 +69,7 @@ export function AgentProvider({
     setMessages([])
     setError(null)
     setAsking(false)
+    askingRef.current = false
     setMethod(null)
     setBriefing(null)
   }, [region])
@@ -76,6 +82,7 @@ export function AgentProvider({
         content: turn.content,
       }))
       const token = ++gen.current
+      askingRef.current = true
       setAsking(true)
       setError(null)
       setMessages((prev) => [...prev, { role: 'user', content: asked }])
@@ -85,6 +92,7 @@ export function AgentProvider({
         focus: focusFromRoute(route),
       }).then((response) => {
         if (token !== gen.current) return
+        askingRef.current = false
         setAsking(false)
         if (!response.ok || !response.result) {
           setError(response.detail ?? 'the desk did not answer')
@@ -109,6 +117,7 @@ export function AgentProvider({
   const reset = useCallback(() => {
     gen.current += 1
     messagesRef.current = []
+    askingRef.current = false
     setMessages([])
     setError(null)
     setAsking(false)
@@ -121,9 +130,41 @@ export function AgentProvider({
     ask(DEFAULT_QUESTION)
   }, [ask, reset])
 
+  const summonDesk = useCallback(() => {
+    setDeskOpen(true)
+    if (darkReason) return
+    if (askingRef.current) return
+    reread()
+  }, [darkReason, reread])
+
   const value = useMemo(
-    () => ({ messages, asking, error, darkReason, method, briefing, ask, brief, reread }),
-    [messages, asking, error, darkReason, method, briefing, ask, brief, reread],
+    () => ({
+      messages,
+      asking,
+      error,
+      darkReason,
+      method,
+      briefing,
+      deskOpen,
+      setDeskOpen,
+      ask,
+      brief,
+      reread,
+      summonDesk,
+    }),
+    [
+      messages,
+      asking,
+      error,
+      darkReason,
+      method,
+      briefing,
+      deskOpen,
+      ask,
+      brief,
+      reread,
+      summonDesk,
+    ],
   )
 
   return <AgentContext.Provider value={value}>{children}</AgentContext.Provider>

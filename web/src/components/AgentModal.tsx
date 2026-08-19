@@ -3,7 +3,7 @@
  *  Paper language — a ruled panel, not a chat bubble. Hidden on the landing
  *  only (`App` returns the front page before this mounts; the path check is
  *  the same gate). Intel is a briefing; questions come here. */
-import { useEffect, useState } from 'react'
+import { useEffect } from 'react'
 import AgentDesk from './AgentDesk'
 import { useAgent } from './AgentSession'
 
@@ -18,40 +18,39 @@ export default function AgentModal({
 }) {
   const path = route.split('?')[0]
   const onLanding = path === '/' || path === ''
-  const [open, setOpen] = useState(false)
-  const { asking, messages } = useAgent()
+  const { asking, messages, deskOpen, setDeskOpen } = useAgent()
 
   useEffect(() => {
-    if (!open) return
+    if (!deskOpen) return
     const onKey = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') setOpen(false)
+      if (event.key === 'Escape') setDeskOpen(false)
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [open])
+  }, [deskOpen, setDeskOpen])
 
   if (onLanding) return null
 
   return (
     <>
-      {!open && (
+      {!deskOpen && (
         <button
           type="button"
           className="desk-fab"
-          onClick={() => setOpen(true)}
+          onClick={() => setDeskOpen(true)}
           aria-haspopup="dialog"
           aria-label="Open the desk"
         >
           Desk{asking ? '…' : messages.some((t) => t.role === 'assistant') ? ' ·' : ''}
         </button>
       )}
-      {open && (
+      {deskOpen && (
         <>
           <button
             type="button"
             className="desk-scrim"
             aria-label="Close the desk"
-            onClick={() => setOpen(false)}
+            onClick={() => setDeskOpen(false)}
           />
           <div className="desk-modal" role="dialog" aria-label="the desk">
             <header className="desk-modal-head">
@@ -59,7 +58,7 @@ export default function AgentModal({
               <button
                 type="button"
                 className="article-link"
-                onClick={() => setOpen(false)}
+                onClick={() => setDeskOpen(false)}
               >
                 close
               </button>
@@ -67,7 +66,7 @@ export default function AgentModal({
             <AgentDesk
               region={region}
               onNavigate={(next) => {
-                setOpen(false)
+                setDeskOpen(false)
                 onNavigate(next)
               }}
               variant="panel"

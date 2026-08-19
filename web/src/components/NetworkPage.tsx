@@ -23,7 +23,7 @@ export default function NetworkPage({ region }: { region: string }) {
 
   if (snap === undefined) {
     return (
-      <div className="reading-column py-10">
+      <div className="desk-page py-10">
         <Empty>Reading the persisted web…</Empty>
       </div>
     )
@@ -31,7 +31,7 @@ export default function NetworkPage({ region }: { region: string }) {
   if (snap === null) {
     const failure = lastFailureFor('/api/network/snapshot')
     return (
-      <div className="reading-column py-10">
+      <div className="desk-page py-10">
         <StoryHead
           kicker={`Network · ${label.toUpperCase()}`}
           title="The network snapshot did not answer"
@@ -46,7 +46,7 @@ export default function NetworkPage({ region }: { region: string }) {
   const from = snap.window_start?.slice(0, 4)
 
   return (
-    <div className="reading-column py-10">
+    <div className="desk-page py-10">
       <StoryHead
         kicker={`Network · ${label.toUpperCase()}`}
         title={lede?.headline ?? `The web in ${label}`}
@@ -66,6 +66,7 @@ export default function NetworkPage({ region }: { region: string }) {
             Ranked on this region&rsquo;s roster only.
           </p>
 
+          <div className="desk-grid">
           <Beat
             title="Who sits between the others"
             aside="Betweenness: the share of shortest paths that pass through this actor. A high score is a broker, not a talker."
@@ -93,6 +94,7 @@ export default function NetworkPage({ region }: { region: string }) {
               format={(v) => v.toFixed(3)}
             />
           </Beat>
+          </div>
 
           <Beat
             title="Who is most connected"
