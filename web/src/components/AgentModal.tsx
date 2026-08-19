@@ -16,7 +16,8 @@ export default function AgentModal({
   onNavigate: (next: string) => void
 }) {
   const path = route.split('?')[0]
-  const onIntel = path.startsWith('/intel') || path.startsWith('/situation')
+  const onIntel =
+    path.startsWith('/intel') || path.startsWith('/situation') || path.startsWith('/wire')
   const [open, setOpen] = useState(false)
   const { asking, messages } = useAgent()
 

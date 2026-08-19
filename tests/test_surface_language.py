@@ -112,15 +112,16 @@ def test_the_machines_vocabulary_stays_off_the_page(token: str) -> None:
 
 def test_the_wire_does_not_render_coded_event_names() -> None:
     """The event's own `name` is CAMEO vocabulary. The globe already ships
-    initiator_name / target_name instead; the wire page caught up."""
+    initiator_name / target_name instead; Intel's folded feed caught up."""
     wire = _strip_comments(
-        (WEB / "components" / "WirePage.tsx").read_text(encoding="utf-8")
+        (WEB / "components" / "WireList.tsx").read_text(encoding="utf-8")
     )
     assert "item.name" not in wire, (
-        "WirePage is rendering the coded event name; compose a headline from "
+        "the feed is rendering the coded event name; compose a headline from "
         "named fields in lib/story.ts (wireHeadline) instead"
     )
     assert "wireHeadline" in wire
+    assert not (WEB / "components" / "WirePage.tsx").exists()
 
 
 def test_the_relationship_page_leads_with_three_reads_not_a_hostility_ladder() -> None:
@@ -149,11 +150,12 @@ def test_the_landing_lede_opens_at_the_archive_floor() -> None:
 
 
 def test_intel_and_the_wire_are_one_package() -> None:
-    """Situation became Intel; the Wire is the same feed, in full."""
+    """Intel is the feed. The Wire page is gone; old hashes still land here."""
     sidebar = _strip_comments(
         (WEB / "components" / "Sidebar.tsx").read_text(encoding="utf-8")
     )
     assert "'/intel', 'Intel'" in sidebar
+    assert "'/wire', 'Wire'" not in sidebar
     assert "'/situation', 'Situation'" not in sidebar
     intel = _strip_comments(
         (WEB / "components" / "IntelPage.tsx").read_text(encoding="utf-8")
@@ -161,12 +163,30 @@ def test_intel_and_the_wire_are_one_package() -> None:
     assert "Ask the desk" not in intel
     assert "situationLede" in intel
     assert "AgentDesk" in intel
-    wire = _strip_comments(
-        (WEB / "components" / "WirePage.tsx").read_text(encoding="utf-8")
-    )
-    assert "/intel" in wire
+    assert "WireFeedBeats" in intel
+    assert "getWireLive" in intel
+    assert "explanation[0]" not in intel
     app = _strip_comments((WEB / "App.tsx").read_text(encoding="utf-8"))
     assert "AgentModal" in app
+    assert "WirePage" not in app
+    assert "route.startsWith('/wire')" in app
+
+
+def test_the_desk_renders_an_article_not_a_preformatted_blob() -> None:
+    """The opening reading is grafs. Method is a disclosure, not a standfirst."""
+    desk = _strip_comments(
+        (WEB / "components" / "AgentDesk.tsx").read_text(encoding="utf-8")
+    )
+    assert "parseDeskProse" in desk
+    assert "desk-lede" in desk
+    assert "Disclosure" in desk
+    assert "white-space: pre-wrap" not in desk
+    assert "standfirst={method}" not in desk
+    css = (WEB / "styles.css").read_text(encoding="utf-8")
+    assert "white-space: pre-wrap" not in css
+    assert "--type-display" in css
+    assert css.count(".story-head h1") == 1
+    assert css.count(".beat-head h2") == 1
 
 
 def test_a_dyad_id_is_never_built_into_a_sentence() -> None:

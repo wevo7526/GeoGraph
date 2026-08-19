@@ -4,10 +4,10 @@
  *  rail of live departures beside the globe and a margin lane under it; the
  *  owner asked for the globe alone. That is the better instinct — the front
  *  door now makes ONE claim and the pages behind it make the rest, and the
- *  departures still have a home on the Wire.
+ *  departures still have a home on Intel.
  *
  *  Pulses and roster dots click through: a recent departure opens the pair,
- *  otherwise the wire. They used to be ornamental.
+ *  otherwise Intel. They used to be ornamental.
  *
  *  WHITE, as the rest of the surface is. The dark plate this briefly wore was
  *  an override of a dated decision; it is withdrawn.
@@ -54,7 +54,7 @@ export default function SituationPlate({
       return
     }
     const pack = node.packs[0] || region
-    onOpen(pack ? `/wire?region=${encodeURIComponent(pack)}` : '/wire')
+    onOpen(pack ? `/intel?region=${encodeURIComponent(pack)}` : '/intel')
   }
 
   if (board === undefined) {

@@ -10,7 +10,6 @@ import Sidebar from './components/Sidebar'
 const CaseStudyView = lazy(() => import('./components/CaseStudyView'))
 const Explorer = lazy(() => import('./components/Explorer'))
 const RelationshipPage = lazy(() => import('./components/RelationshipPage'))
-const WirePage = lazy(() => import('./components/WirePage'))
 const CasesPage = lazy(() => import('./components/CasesPage'))
 const GamesPage = lazy(() => import('./components/GamesPage'))
 const MarketsPage = lazy(() => import('./components/MarketsPage'))
@@ -102,10 +101,11 @@ export default function App() {
   ) {
     page = <RelationshipPage region={region} onNavigate={navigate} />
     scrollPage = true
-  } else if (route.startsWith('/wire')) {
-    page = <WirePage region={region} onNavigate={navigate} />
-    scrollPage = true
-  } else if (route.startsWith('/intel') || route.startsWith('/situation')) {
+  } else if (
+    route.startsWith('/intel') ||
+    route.startsWith('/situation') ||
+    route.startsWith('/wire')
+  ) {
     page = <IntelPage region={region} onNavigate={navigate} />
     scrollPage = true
   } else {

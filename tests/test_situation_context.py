@@ -131,3 +131,6 @@ def test_with_reader_pins_an_open_pair_and_drops_unknown_desks():
     assert "unknown" not in tagged["reader"]["looking_at"]
     ignored = situation_briefing.with_reader(briefing, surface="not-a-desk")
     assert "reader" not in ignored
+    # The Wire page folded into Intel; "wire" is no longer a desk name.
+    folded = situation_briefing.with_reader(briefing, surface="wire")
+    assert "reader" not in folded

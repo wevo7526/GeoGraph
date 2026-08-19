@@ -46,11 +46,9 @@ export default function Sidebar({
     }
   }, [])
 
-  // Intel and the Wire are one package: the desk, then the full feed.
-  // The desks that go deeper follow; the explorer is the archive instrument.
+  // Intel is the feed: the desk's reading, then the wire folded under it.
   const pages: Array<[string, string, string]> = [
     ['/intel', 'Intel', 'I'],
-    ['/wire', 'Wire', 'W'],
     ['/markets', 'Markets', 'M'],
     ['/games', 'Game theory', 'G'],
     ['/relationships', 'Relationships', 'R'],
@@ -98,7 +96,7 @@ export default function Sidebar({
           // Reading one case (/case/<slug>) is being IN Case studies.
           const active =
             route.startsWith(path) ||
-            (path === '/intel' && route.startsWith('/situation')) ||
+            (path === '/intel' && (route.startsWith('/situation') || route.startsWith('/wire'))) ||
             (path === '/cases' && route.startsWith('/case/')) ||
             (path === '/relationships' &&
               ['/relationship', '/reasoning'].some((r) => route.startsWith(r))) ||
@@ -183,7 +181,7 @@ function FindBox({
             label: head,
             route: item.dyad_id
               ? `/relationships?dyad=${encodeURIComponent(item.dyad_id)}&region=${encodeURIComponent(region)}`
-              : '/wire',
+              : '/intel',
           })
         }
         for (const a of actors?.rows ?? []) {
@@ -195,7 +193,7 @@ function FindBox({
             label: a.name,
             route: pair
               ? `/relationships?dyad=${encodeURIComponent(pair.node_id)}&region=${encodeURIComponent(region)}`
-              : '/wire',
+              : '/intel',
           })
         }
         const seen = new Set<string>()

@@ -1,54 +1,93 @@
 /** The desk itself — argument over numbers already on the archive.
  *
- *  Used full-page on Intel and as the body of the corner panel. Citations
- *  in square brackets become routes when they name a pair, event or market.
- *  The prose is the agent's; the figures it cites live on the board beside
- *  it, never in a token the surface-language test would ban. */
-import { useEffect, useRef, useState, type FormEvent, type ReactNode } from 'react'
-import { citeRoute, DEFAULT_QUESTION } from '../lib/desk'
-import { Empty } from '../ui'
+ *  Used full-page on Intel and as the body of the corner panel. The opening
+ *  reading is an article (grafs, a lede, named citations), not a chat log.
+ *  The default first question is not printed. Method sits under a disclosure. */
+import { useEffect, useRef, useState, type FormEvent } from 'react'
+import {
+  citeLabel,
+  citeRoute,
+  DEFAULT_QUESTION,
+  parseDeskProse,
+  type DeskBlock,
+  type DeskInline,
+} from '../lib/desk'
+import type { SituationBriefing } from '../types'
+import { Disclosure, Empty } from '../ui'
 import { useAgent } from './AgentSession'
 
-const CITE = /\[([^\]]{3,80})\]/g
-
-function Cited({
-  text,
+function Inline({
+  parts,
   region,
+  briefing,
   onNavigate,
 }: {
-  text: string
+  parts: DeskInline[]
   region: string
+  briefing: SituationBriefing | null
   onNavigate?: (route: string) => void
 }) {
-  const parts: ReactNode[] = []
-  let cursor = 0
-  CITE.lastIndex = 0
-  let match: RegExpExecArray | null
-  let key = 0
-  while ((match = CITE.exec(text)) !== null) {
-    if (match.index > cursor) {
-      parts.push(text.slice(cursor, match.index))
-    }
-    const id = match[1]
-    const route = onNavigate ? citeRoute(id, region) : null
-    if (route && onNavigate) {
-      parts.push(
-        <button
-          key={`c-${key++}`}
-          type="button"
-          className="article-link"
-          onClick={() => onNavigate(route)}
-        >
-          {id}
-        </button>,
-      )
-    } else {
-      parts.push(match[0])
-    }
-    cursor = match.index + match[0].length
-  }
-  if (cursor < text.length) parts.push(text.slice(cursor))
-  return <p className="desk-assessment">{parts}</p>
+  return (
+    <>
+      {parts.map((part, index) => {
+        if (part.kind === 'text') return <span key={index}>{part.value}</span>
+        if (part.kind === 'strong') return <strong key={index}>{part.value}</strong>
+        const route = onNavigate ? citeRoute(part.id, region) : null
+        const label = citeLabel(part.id, briefing)
+        if (route && onNavigate) {
+          return (
+            <button
+              key={index}
+              type="button"
+              className="article-link"
+              onClick={() => onNavigate(route)}
+            >
+              {label}
+            </button>
+          )
+        }
+        return <span key={index}>{label}</span>
+      })}
+    </>
+  )
+}
+
+function Blocks({
+  blocks,
+  lede,
+  region,
+  briefing,
+  onNavigate,
+}: {
+  blocks: DeskBlock[]
+  lede: boolean
+  region: string
+  briefing: SituationBriefing | null
+  onNavigate?: (route: string) => void
+}) {
+  return (
+    <>
+      {blocks.map((block, index) => {
+        if (block.kind === 'ul') {
+          return (
+            <ul key={index} className="desk-list">
+              {block.items.map((item, itemIndex) => (
+                <li key={itemIndex}>
+                  <Inline parts={item} region={region} briefing={briefing} onNavigate={onNavigate} />
+                </li>
+              ))}
+            </ul>
+          )
+        }
+        const cls = lede && index === 0 ? 'desk-lede' : 'desk-graf'
+        return (
+          <p key={index} className={cls}>
+            <Inline parts={block.children} region={region} briefing={briefing} onNavigate={onNavigate} />
+          </p>
+        )
+      })}
+    </>
+  )
 }
 
 export default function AgentDesk({
@@ -62,7 +101,7 @@ export default function AgentDesk({
   variant?: 'page' | 'panel'
   autofocus?: boolean
 }) {
-  const { messages, asking, error, darkReason, method, ask } = useAgent()
+  const { messages, asking, error, darkReason, method, briefing, ask } = useAgent()
   const [draft, setDraft] = useState('')
   const end = useRef<HTMLDivElement>(null)
   const field = useRef<HTMLTextAreaElement>(null)
@@ -83,6 +122,12 @@ export default function AgentDesk({
     ask(asked)
   }
 
+  const visible = messages.filter((turn, index) => {
+    if (index === 0 && turn.role === 'user' && turn.content === DEFAULT_QUESTION) return false
+    return true
+  })
+  const firstAssistant = visible.findIndex((turn) => turn.role === 'assistant')
+
   return (
     <div className={variant === 'panel' ? 'desk desk--panel' : 'desk'}>
       {darkReason ? (
@@ -90,30 +135,34 @@ export default function AgentDesk({
       ) : (
         <>
           <div className="desk-thread" aria-live="polite">
-            {messages.length === 0 && !asking && (
+            {visible.length === 0 && !asking && (
               <p className="figure-note">
-                The desk reads the same briefing as this page — wire, markets,
-                games, the globe. It argues; it does not measure.
+                The desk reads the briefing on this page. It argues; it does not measure.
               </p>
             )}
-            {messages.map((turn, index) =>
+            {visible.map((turn, index) =>
               turn.role === 'user' ? (
                 <p key={`u-${index}`} className="desk-ask-line">
                   {turn.content}
                 </p>
               ) : (
-                <Cited
-                  key={`a-${index}`}
-                  text={turn.content}
-                  region={region}
-                  onNavigate={onNavigate}
-                />
+                <article key={`a-${index}`} className="desk-reading">
+                  <Blocks
+                    blocks={parseDeskProse(turn.content)}
+                    lede={index === firstAssistant}
+                    region={region}
+                    briefing={briefing}
+                    onNavigate={onNavigate}
+                  />
+                </article>
               ),
             )}
             {asking && <p className="figure-note">Reading…</p>}
             {error && <Empty>{error}</Empty>}
-            {method && messages.some((t) => t.role === 'assistant') && (
-              <p className="figure-note">{method}</p>
+            {method && visible.some((turn) => turn.role === 'assistant') && (
+              <Disclosure label="how this was read">
+                <p className="figure-note">{method}</p>
+              </Disclosure>
             )}
             <div ref={end} />
           </div>
@@ -125,7 +174,7 @@ export default function AgentDesk({
               onChange={(event) => setDraft(event.target.value)}
               disabled={asking}
               placeholder={
-                messages.length ? 'A follow-up' : DEFAULT_QUESTION
+                visible.some((turn) => turn.role === 'assistant') ? 'A follow-up' : DEFAULT_QUESTION
               }
               aria-label="Question for the desk"
               onKeyDown={(event) => {

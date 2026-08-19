@@ -14,6 +14,7 @@ import {
 } from 'react'
 import { getHealth, postAssess } from '../api'
 import { DEFAULT_QUESTION, focusFromRoute, surfaceFromRoute, type DeskTurn } from '../lib/desk'
+import type { SituationBriefing } from '../types'
 
 type AgentApi = {
   messages: DeskTurn[]
@@ -21,6 +22,7 @@ type AgentApi = {
   error: string | null
   darkReason: string | null
   method: string | null
+  briefing: SituationBriefing | null
   ask: (question: string) => void
   brief: () => void
   reread: () => void
@@ -42,6 +44,7 @@ export function AgentProvider({
   const [error, setError] = useState<string | null>(null)
   const [darkReason, setDarkReason] = useState<string | null>(null)
   const [method, setMethod] = useState<string | null>(null)
+  const [briefing, setBriefing] = useState<SituationBriefing | null>(null)
   const gen = useRef(0)
   const messagesRef = useRef<DeskTurn[]>([])
   messagesRef.current = messages
@@ -62,6 +65,7 @@ export function AgentProvider({
     setError(null)
     setAsking(false)
     setMethod(null)
+    setBriefing(null)
   }, [region])
 
   const ask = useCallback(
@@ -87,6 +91,7 @@ export function AgentProvider({
           return
         }
         setMethod(response.result.method)
+        setBriefing(response.result.context ?? null)
         setMessages((prev) => [
           ...prev,
           { role: 'assistant', content: response.result!.assessment },
@@ -108,6 +113,7 @@ export function AgentProvider({
     setError(null)
     setAsking(false)
     setMethod(null)
+    setBriefing(null)
   }, [])
 
   const reread = useCallback(() => {
@@ -116,8 +122,8 @@ export function AgentProvider({
   }, [ask, reset])
 
   const value = useMemo(
-    () => ({ messages, asking, error, darkReason, method, ask, brief, reread }),
-    [messages, asking, error, darkReason, method, ask, brief, reread],
+    () => ({ messages, asking, error, darkReason, method, briefing, ask, brief, reread }),
+    [messages, asking, error, darkReason, method, briefing, ask, brief, reread],
   )
 
   return <AgentContext.Provider value={value}>{children}</AgentContext.Provider>

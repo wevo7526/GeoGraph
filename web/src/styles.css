@@ -31,6 +31,16 @@
   --accent: #2a5fa8;      /* the one flourish: links, active nav, gains */
   --alert: #9e3418;       /* loss, escalation, the thing that needs saying */
 
+  /* One type scale. Working pages inherit these; the landing keeps its own
+     hero clamp because it is the cover, not a desk. */
+  --type-kicker: 11px;
+  --type-display: clamp(2rem, 4.5vw, 2.75rem);
+  --type-lede: 1.15rem;
+  --type-section: 1.4rem;
+  --type-body: 1.05rem;
+  --type-caption: 0.88rem;
+  --type-figure: 0.95rem;
+
   /* Categorical series for the network view — actor types. Validated as a set
      (lightness band, chroma floor, CVD and normal-vision separation, contrast)
      against the WHITE PLATE, the surface they are drawn on. The UI tokens
@@ -211,12 +221,6 @@ body {
   opacity: 0.55;
   cursor: wait;
 }
-.desk-assessment {
-  margin: 1.25rem 0 0;
-  max-width: 68ch;
-  line-height: 1.5;
-  white-space: pre-wrap;
-}
 .desk {
   display: flex;
   flex-direction: column;
@@ -227,7 +231,31 @@ body {
   display: flex;
   flex-direction: column;
   gap: 0.35rem;
-  min-height: 8rem;
+  min-height: 0;
+}
+.desk-reading {
+  margin: 0.5rem 0 0;
+  max-width: 68ch;
+}
+.desk-lede {
+  margin: 0 0 0.85rem;
+  font-size: var(--type-lede);
+  line-height: 1.45;
+  color: var(--muted);
+  max-width: 68ch;
+}
+.desk-graf {
+  margin: 0 0 0.85rem;
+  font-size: var(--type-body);
+  line-height: 1.55;
+  max-width: 68ch;
+}
+.desk-list {
+  margin: 0 0 0.85rem;
+  padding-left: 1.25rem;
+  font-size: var(--type-body);
+  line-height: 1.55;
+  max-width: 68ch;
 }
 .desk-ask-line {
   margin: 1rem 0 0;
@@ -246,47 +274,8 @@ body {
   overflow-y: auto;
   padding-right: 0.35rem;
 }
-.desk--panel .desk-assessment {
-  margin-top: 0.85rem;
-}
-.intel {
-  display: grid;
-  grid-template-columns: minmax(0, 1.15fr) minmax(18rem, 0.85fr);
-  gap: 2rem 2.25rem;
-  align-items: start;
-  padding: 1.75rem 2rem 3.5rem;
-}
-@media (max-width: 980px) {
-  .intel { grid-template-columns: minmax(0, 1fr); padding: 1.25rem 1.1rem 3rem; }
-}
-.intel-desk { min-width: 0; }
-.intel-board {
-  min-width: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 1.75rem;
-  border-left: 1px solid var(--line);
-  padding-left: 2rem;
-}
-@media (max-width: 980px) {
-  .intel-board {
-    border-left: none;
-    padding-left: 0;
-    border-top: 1px solid var(--line);
-    padding-top: 1.5rem;
-  }
-}
-.intel-board-title {
-  font-size: 1.05rem;
-  margin: 0 0 0.65rem;
-}
-.intel-board-list {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 1rem;
+.desk--panel .desk-lede {
+  margin-top: 0.25rem;
 }
 .desk-fab {
   position: fixed;
@@ -422,6 +411,7 @@ body {
 }
 .ledger-figure {
   font-variant-numeric: tabular-nums;
+  font-size: var(--type-figure);
 }
 
 /* FIGURES ARE TABULAR EVERYWHERE, not only in a ledger. Proportional digits
@@ -471,7 +461,7 @@ body {
 /* A kicker: the small-caps tracked label above a section. Print's subhead. */
 .kicker {
   font-family: ui-monospace, 'Cascadia Code', Consolas, monospace;
-  font-size: 11px;
+  font-size: var(--type-kicker);
   letter-spacing: 0.22em;
   text-transform: uppercase;
   color: var(--muted);
@@ -651,16 +641,23 @@ input[type='range'].timeline:focus-visible {
   flex-wrap: wrap;
 }
 .story-head h1 {
-  font-size: clamp(1.9rem, 5vw, 2.9rem);
+  font-size: var(--type-display);
   line-height: 1.05;
   letter-spacing: -0.015em;
   margin: 0.35rem 0 0;
 }
+.story-standfirst {
+  margin: 0.65rem 0 0;
+  max-width: 52ch;
+  font-size: var(--type-lede);
+  line-height: 1.45;
+  color: var(--muted);
+}
 
 /* A numbered section, ruled off from the last — the working-paper beat. */
 .beat {
-  margin-top: 2.75rem;
-  padding-top: 1.5rem;
+  margin-top: 3.25rem;
+  padding-top: 1.75rem;
   border-top: 1px solid var(--line);
 }
 .beat--major { border-top: 2px solid var(--rule-strong); }
@@ -680,7 +677,7 @@ input[type='range'].timeline:focus-visible {
   gap: 0.75rem;
 }
 .beat-head h2 {
-  font-size: 1.35rem;
+  font-size: var(--type-section);
   letter-spacing: -0.01em;
   margin: 0;
   text-wrap: balance;
@@ -688,7 +685,7 @@ input[type='range'].timeline:focus-visible {
 .beat-aside {
   margin: 0;
   max-width: 68ch;
-  font-size: 0.95rem;
+  font-size: var(--type-caption);
   line-height: 1.45;
   color: var(--muted);
 }
@@ -859,29 +856,10 @@ input[type='range'].timeline:focus-visible {
    map (.plate / .globe-box, above) and one line of archive figures, all of
    which are styled where they are defined. */
 
-/* ── Visual hierarchy pass (2026-08-15) ─────────────────────────────────────
-   The pages had one voice: body text, dotted underlines, more body text. The
-   hierarchy now has four registers, and each element wears exactly one:
-     1. the story head — h1 large, standfirst muted, kicker above;
-     2. the beat — a numbered h2 with a rule, more air above than below;
-     3. the panel — `.boxed`/`.call` tinted plates for the thing to read first;
-     4. the control row — `.toolbar` with `.btn` (outlined) for secondary
-        actions, `.ink-button` for the primary one, `.article-link` ONLY inline
-        in running text, `.chip` for a state word (tone, status, concept).
-   Print's rules, not shadows; ink weight and size carry the order. */
-.story-head h1 {
-  font-size: clamp(2.1rem, 5.5vw, 3.2rem);
-}
-.beat {
-  margin-top: 3.25rem;
-  padding-top: 1.75rem;
-}
-.beat-head h2 {
-  font-size: 1.55rem;
-}
-.beat-head .kicker {
-  font-size: 12px;
-}
+/* ── Visual hierarchy (one scale, 2026-08-18) ───────────────────────────────
+   Working pages inherit the :root type tokens. This block is the remaining
+   furniture of the 2026-08-15 pass — buttons, toolbars, chips — not a second
+   set of sizes. The landing keeps its own hero clamp; it is the cover. */
 .btn {
   background: var(--ground);
   color: var(--text);
@@ -1149,7 +1127,7 @@ input[type='range'].timeline:focus-visible {
    sentence, not an 11px monospace fragment. */
 .figure-note {
   margin: 0.6rem 0 0;
-  font-size: 0.9rem;
+  font-size: var(--type-caption);
   color: var(--muted);
   max-width: 68ch;
 }
@@ -1192,7 +1170,7 @@ input[type='range'].timeline:focus-visible {
 }
 
 .wire-headline {
-  font-size: 1.08rem;
+  font-size: var(--type-body);
   line-height: 1.3;
   font-weight: 600;
   text-wrap: balance;
@@ -1204,6 +1182,7 @@ input[type='range'].timeline:focus-visible {
 .wire-read {
   color: var(--muted);
   max-width: 62ch;
+  font-size: var(--type-caption);
   line-height: 1.45;
   margin: 0 0 0.35rem;
 }

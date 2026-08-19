@@ -25,7 +25,7 @@ export function StoryHead({
         <div className="kicker">{kicker}</div>
         <h1>{title}</h1>
         {standfirst && (
-          <p className="mt-2 text-lg leading-snug" style={{ color: 'var(--muted)', maxWidth: '52ch' }}>
+          <p className="story-standfirst">
             {standfirst}
           </p>
         )}

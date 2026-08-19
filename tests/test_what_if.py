@@ -207,6 +207,8 @@ def test_conversation_messages_keep_prior_turns_and_the_briefing():
     )
     assert messages[0]["role"] == "system"
     assert "Never originate" in messages[0]["content"]
+    assert "Short paragraphs" in messages[0]["content"]
+    assert "Do not use markdown headings" in messages[0]["content"]
     assert messages[1] == {"role": "user", "content": "What is the situation?"}
     assert messages[2]["role"] == "assistant"
     last = messages[-1]
