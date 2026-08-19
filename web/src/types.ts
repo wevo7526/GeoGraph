@@ -908,6 +908,12 @@ export interface Assessment {
   context?: SituationBriefing
 }
 
+export interface AssessOptions {
+  history?: Array<{ role: 'user' | 'assistant'; content: string }>
+  surface?: string
+  focus?: Record<string, string>
+}
+
 export interface CaseStudyIndexEntry {
   slug: string
   pack: string

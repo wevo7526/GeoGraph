@@ -8,3 +8,7 @@ export function dyadId(actorA: string, actorB: string): string {
   const [a, b] = [bare(actorA), bare(actorB)].sort()
   return `dyad:${a}--${b}`
 }
+
+export function isPairId(id: string): boolean {
+  return id.startsWith('dyad:')
+}

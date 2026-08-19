@@ -26,91 +26,14 @@
 import { useEffect, useState } from 'react'
 
 import { getWire, getWireLive, lastFailureFor } from '../api'
-import { count, wireHeadline, wireKindWord, wireLede, wireRead } from '../lib/story'
+import { count, wireHeadline, wireKindWord, wireLede } from '../lib/story'
 import { useRegionLabel } from '../regions'
 import type { WireFeed, WireItem, WireLiveFeed, WireLiveItem } from '../types'
 import { Beat, Disclosure, Empty, StoryHead } from '../ui'
 import { Tiles } from './charts/Kit'
-import ImpactLine from './ImpactLine'
+import { baselineFigure, WireDeparture } from './WireList'
 
 const LIVE_POLL_MS = 60_000
-
-function baselineFigure(item: WireItem): string {
-  const points = item.points_from_baseline
-  if (points === null) return '—'
-  if (item.pair_baseline === null) return `${points.toFixed(1)} pts`
-  const bar = item.pair_baseline >= 0
-    ? `+${item.pair_baseline.toFixed(1)}`
-    : item.pair_baseline.toFixed(1)
-  return `${points.toFixed(1)} pts from ${bar}`
-}
-
-/** A departure, at full width: when, how far, what happened, what it means.
- *
- *  The figure is a dot-leader ledger row — the same device the markets page
- *  uses for a column of returns, because it is what makes figures scannable
- *  without a table's rules. Colour carries SIGN, as it does everywhere on this
- *  surface: alert for coercive, accent for cooperative. */
-function Departure({
-  item,
-  onOpen,
-  onEffects,
-  onStudy,
-  effectsOpen,
-}: {
-  item: WireItem
-  onOpen: () => void
-  onEffects: () => void
-  onStudy: () => void
-  effectsOpen: boolean
-}) {
-  const points = item.points_from_baseline
-  // COLOUR CARRIES THE DIRECTION OF THE DEPARTURE, not the act's absolute
-  // sign. `--accent` and `--alert` are a diverging pair meaning
-  // de-escalation/escalation, so keying them to the raw Goldstein sign would
-  // paint a Russia–Ukraine "disapprove" — 7.1 points CALMER than their war —
-  // in the escalation colour.
-  const sign =
-    item.escalation_direction === 'escalating'
-      ? 'var(--alert)'
-      : item.escalation_direction === 'deescalating'
-        ? 'var(--accent)'
-        : 'var(--text)'
-  return (
-    <article className="wire-entry">
-      <div className="ledger-row">
-        <time className="mono text-xs" style={{ color: 'var(--muted)' }} dateTime={item.event_time ?? undefined}>
-          {item.event_time}
-        </time>
-        <span className="ledger-leader" aria-hidden="true" />
-        <span className="ledger-figure" style={{ color: sign }}>
-          {points === null ? '—' : baselineFigure(item)}
-        </span>
-      </div>
-      <h3 className="wire-headline">{wireHeadline(item)}</h3>
-      <p className="wire-read">{wireRead(item)}</p>
-      <div className="toolbar mt-2" style={{ borderTop: 'none' }}>
-        {item.dyad_id && (
-          <button type="button" className="article-link" onClick={onOpen}>
-            open the relationship →
-          </button>
-        )}
-        <button type="button" className="article-link" onClick={onEffects}>
-          {effectsOpen ? 'hide measured vs typical' : 'measured vs typical →'}
-        </button>
-        <button type="button" className="article-link" onClick={onStudy}>
-          the study →
-        </button>
-      </div>
-      {effectsOpen && (
-        <ImpactLine
-          eventId={item.node_id}
-          onOpenPair={item.dyad_id ? onOpen : undefined}
-        />
-      )}
-    </article>
-  )
-}
 
 function LiveCard({ item }: { item: WireLiveItem }) {
   const outlook = item.market_outlook
@@ -221,7 +144,7 @@ export default function WirePage({
     return (
       <div className="reading-column py-10">
         <StoryHead
-          kicker={`The wire · ${label.toUpperCase()}`}
+          kicker={`Intel · Wire · ${label.toUpperCase()}`}
           title="The wire did not answer"
           standfirst={failure?.detail ?? 'The archive is not answering.'}
         />
@@ -232,7 +155,7 @@ export default function WirePage({
     return (
       <div className="reading-column py-10">
         <StoryHead
-          kicker={`The wire · ${label.toUpperCase()}`}
+          kicker={`Intel · Wire · ${label.toUpperCase()}`}
           title={`Nothing coded for ${label} yet`}
           standfirst="The wire fills as the harvest fetches each day and the archive codes it."
         />
@@ -257,9 +180,14 @@ export default function WirePage({
   return (
     <div className="reading-column py-8">
       <StoryHead
-        kicker={`The wire · ${label.toUpperCase()}`}
+        kicker={`Intel · Wire · ${label.toUpperCase()}`}
         title={lede?.headline ?? `The newest events in ${label}`}
         standfirst={lede?.support}
+        action={
+          <button type="button" className="article-link" onClick={() => onNavigate('/intel')}>
+            the desk →
+          </button>
+        }
       />
 
       {liveFeed?.rows.length ? (
@@ -306,7 +234,7 @@ export default function WirePage({
       >
         {departures.length ? (
           departures.map((item) => (
-            <Departure
+            <WireDeparture
               key={item.node_id}
               item={item}
               onOpen={() => open(item)}

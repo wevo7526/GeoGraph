@@ -46,12 +46,10 @@ export default function Sidebar({
     }
   }, [])
 
-  // One coherent front-of-house, organised around the user's question, not the
-  // machine's parts: the situation first (what broke, what it means, what
-  // happens next), then the desks that go deeper, with the 3D explorer as the
-  // archive instrument rather than the door.
+  // Intel and the Wire are one package: the desk, then the full feed.
+  // The desks that go deeper follow; the explorer is the archive instrument.
   const pages: Array<[string, string, string]> = [
-    ['/situation', 'Situation', 'S'],
+    ['/intel', 'Intel', 'I'],
     ['/wire', 'Wire', 'W'],
     ['/markets', 'Markets', 'M'],
     ['/games', 'Game theory', 'G'],
@@ -100,6 +98,7 @@ export default function Sidebar({
           // Reading one case (/case/<slug>) is being IN Case studies.
           const active =
             route.startsWith(path) ||
+            (path === '/intel' && route.startsWith('/situation')) ||
             (path === '/cases' && route.startsWith('/case/')) ||
             (path === '/relationships' &&
               ['/relationship', '/reasoning'].some((r) => route.startsWith(r))) ||

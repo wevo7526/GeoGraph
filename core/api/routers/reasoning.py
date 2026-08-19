@@ -11,11 +11,12 @@ The page has two halves and they degrade honestly:
   Nothing is persisted: a hypothetical writes nothing into an archive of
   things that happened.
 
-- The ASSESS half is the LLM agent narrating around the situation briefing
+- The ASSESS half is the LLM agent narrating around the intel briefing
   (wire, region games, markets, globe, frozen forecasts). GET
   /reasoning/situation serves that briefing with no model. Without
   OPENAI_API_KEY, POST /reasoning/assess is a 503 that names the key
-  and what still works; it never fakes an assessment.
+  and what still works; it never fakes an assessment. Follow-ups pass
+  prior turns; a `reader` block says which desk summoned the agent.
 """
 
 from __future__ import annotations
@@ -23,7 +24,7 @@ from __future__ import annotations
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Query, Request
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from core import packs
 from core.classifier import escalation
@@ -236,13 +237,21 @@ def what_if(
     }
 
 
+class AssessTurn(BaseModel):
+    role: str
+    content: str
+
+
 class AssessRequest(BaseModel):
     question: str = "What is the situation?"
     region: str = "mena"
+    history: list[AssessTurn] = Field(default_factory=list)
+    surface: str | None = None
+    focus: dict[str, str] | None = None
 
 
 def _briefing(request: Request, region: str) -> dict[str, Any]:
-    """The situation object — graph optional, pack required."""
+    """The intel object — graph optional, pack required."""
     try:
         packs.load(region)
     except packs.PackError as exc:
@@ -265,17 +274,28 @@ def situation(request: Request, region: str = "mena") -> dict[str, Any]:
 def assess(request: Request, body: AssessRequest) -> dict[str, Any]:
     """The agent's narrated assessment — key-gated, honest when dark.
 
-    The context handed to the agent is the situation briefing assembled
-    HERE, deterministically, from the same stores the Situation page reads:
-    wire departures, live overlay, persisted region games, packed markets,
-    globe coverage, frozen forecasts. Every number the agent cites
+    The context handed to the agent is the intel briefing assembled HERE,
+    deterministically, from the same stores Intel and the Wire read: wire
+    departures, live overlay, persisted region games, packed markets, globe
+    coverage, frozen forecasts. `reader` names the desk and the open pair
+    or market when the caller said so. Every number the agent cites
     pre-exists the call. A missing key is a 503 that names it; the
     briefing itself is still at GET /reasoning/situation.
     """
     question = (body.question or "").strip() or "What is the situation?"
-    context = _briefing(request, body.region)
+    context = situation_briefing.with_reader(
+        _briefing(request, body.region),
+        surface=body.surface,
+        focus=body.focus,
+    )
+    history = [turn.model_dump() for turn in body.history]
     try:
-        result = agent.assess(question, region_pack=body.region, context=context)
+        result = agent.assess(
+            question,
+            region_pack=body.region,
+            context=context,
+            history=history,
+        )
     except agent.AgentUnavailable as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     # THE CONTEXT COMES BACK WITH THE ANSWER. Section 17 says the agent never

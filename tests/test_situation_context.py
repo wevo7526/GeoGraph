@@ -107,3 +107,27 @@ def test_mcp_situation_tool_is_numbers_only():
     assert "explanation" not in _walk_keys(body)
     unknown = mcp_tools.situation(None, "no-such-pack")
     assert "error" in unknown
+
+
+def test_with_reader_pins_an_open_pair_and_drops_unknown_desks():
+    """The corner desk says where the reader is. That is not a measurement."""
+    briefing = {
+        "region": "mena",
+        "region_games": {
+            "ranking": [
+                {"dyad_id": "dyad:a--b", "dyad_name": "A–B", "coercive_events": 4},
+            ]
+        },
+        "markets": {"headlines": [{"ticker": "CL=F", "median": 0.01}]},
+    }
+    tagged = situation_briefing.with_reader(
+        briefing,
+        surface="relationships",
+        focus={"dyad_id": "dyad:a--b", "unknown": "drop me"},
+    )
+    assert tagged["reader"]["surface"] == "relationships"
+    assert tagged["reader"]["looking_at"] == {"dyad_id": "dyad:a--b"}
+    assert tagged["reader"]["pair"]["dyad_name"] == "A–B"
+    assert "unknown" not in tagged["reader"]["looking_at"]
+    ignored = situation_briefing.with_reader(briefing, surface="not-a-desk")
+    assert "reader" not in ignored

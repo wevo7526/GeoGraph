@@ -54,6 +54,58 @@ _NOTE = (
     "a figure that is not in this object."
 )
 
+_SURFACES = frozenset({
+    "intel", "wire", "markets", "games", "relationships", "explorer", "cases",
+})
+_FOCUS_KEYS = ("dyad_id", "event_id", "ticker", "slug")
+
+
+def with_reader(
+    briefing: dict[str, Any],
+    *,
+    surface: str | None = None,
+    focus: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Where the reader is sitting — not a new measurement.
+
+    Intel and the corner desk share one briefing. `reader` tells the agent
+    which desk they summoned it from and which pair, market or event is
+    open, pinning already-assembled ranking/headline rows when the ids
+    match. Unknown surfaces and keys drop; nothing is invented.
+    """
+    reader: dict[str, Any] = {}
+    name = (surface or "").strip().lower()
+    if name in _SURFACES:
+        reader["surface"] = name
+    looking: dict[str, str] = {}
+    if isinstance(focus, dict):
+        for key in _FOCUS_KEYS:
+            value = focus.get(key)
+            if value is None:
+                continue
+            text = str(value).strip()
+            if text:
+                looking[key] = text[:120]
+    if looking:
+        reader["looking_at"] = looking
+        wanted_pair = looking.get("dyad_id")
+        if wanted_pair:
+            for row in (briefing.get("region_games") or {}).get("ranking") or []:
+                if isinstance(row, dict) and row.get("dyad_id") == wanted_pair:
+                    reader["pair"] = row
+                    break
+        ticker = looking.get("ticker")
+        if ticker:
+            for row in (briefing.get("markets") or {}).get("headlines") or []:
+                if isinstance(row, dict) and row.get("ticker") == ticker:
+                    reader["market"] = row
+                    break
+    if not reader:
+        return briefing
+    out = dict(briefing)
+    out["reader"] = reader
+    return out
+
 
 def assemble(conn: Any | None, region: str) -> dict[str, Any]:
     """Compact situation briefing for `region`.

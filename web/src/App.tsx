@@ -1,5 +1,7 @@
 import { Suspense, lazy, useEffect, useState } from 'react'
 import ApiHealthBanner from './components/ApiHealthBanner'
+import AgentModal from './components/AgentModal'
+import { AgentProvider } from './components/AgentSession'
 import Landing from './components/Landing'
 import Sidebar from './components/Sidebar'
 
@@ -12,7 +14,7 @@ const WirePage = lazy(() => import('./components/WirePage'))
 const CasesPage = lazy(() => import('./components/CasesPage'))
 const GamesPage = lazy(() => import('./components/GamesPage'))
 const MarketsPage = lazy(() => import('./components/MarketsPage'))
-const SituationPage = lazy(() => import('./components/SituationPage'))
+const IntelPage = lazy(() => import('./components/IntelPage'))
 
 // Hash routing rather than a router dependency: a handful of views, and the
 // hash keeps URLs shareable — a reader can send someone the case study, which
@@ -103,22 +105,25 @@ export default function App() {
   } else if (route.startsWith('/wire')) {
     page = <WirePage region={region} onNavigate={navigate} />
     scrollPage = true
-  } else if (route.startsWith('/situation')) {
-    page = <SituationPage region={region} onNavigate={navigate} />
+  } else if (route.startsWith('/intel') || route.startsWith('/situation')) {
+    page = <IntelPage region={region} onNavigate={navigate} />
     scrollPage = true
   } else {
     page = <Explorer region={region} onNavigate={navigate} />
   }
 
   return (
-    <div className="app-frame">
-      <Sidebar route={route} region={region} onRegion={chooseRegion} onNavigate={navigate} />
-      <div className="app-body">
-        <ApiHealthBanner />
-        <div className={scrollPage ? 'app-page app-page--scroll' : 'app-page'}>
-          <Suspense fallback={<Loading />}>{page}</Suspense>
+    <AgentProvider region={region} route={route}>
+      <div className="app-frame">
+        <Sidebar route={route} region={region} onRegion={chooseRegion} onNavigate={navigate} />
+        <div className="app-body">
+          <ApiHealthBanner />
+          <div className={scrollPage ? 'app-page app-page--scroll' : 'app-page'}>
+            <Suspense fallback={<Loading />}>{page}</Suspense>
+          </div>
         </div>
+        <AgentModal region={region} route={route} onNavigate={navigate} />
       </div>
-    </div>
+    </AgentProvider>
   )
 }

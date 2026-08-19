@@ -160,3 +160,57 @@ def test_the_agent_is_honestly_dark_without_a_key(seeded_graph, monkeypatch):
         detail = response.json()["detail"]
         assert "OPENAI_API_KEY" in detail
         assert "deterministic" in detail  # says what still works
+
+
+def test_follow_ups_are_still_dark_without_a_key(seeded_graph, monkeypatch):
+    from fastapi.testclient import TestClient
+
+    monkeypatch.setenv("KUZU_DB_PATH", str(seeded_graph))
+    monkeypatch.delenv("DATABASE_URL", raising=False)
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    from core.api.app import create_app
+
+    with TestClient(create_app()) as client:
+        response = client.post(
+            "/api/reasoning/assess",
+            json={
+                "question": "And the yields?",
+                "region": "mena",
+                "history": [
+                    {"role": "user", "content": "What is the situation?"},
+                    {"role": "assistant", "content": "A prior argument."},
+                    {"role": "system", "content": "drop this"},
+                ],
+                "surface": "markets",
+                "focus": {"ticker": "CL=F"},
+            },
+        )
+        assert response.status_code == 503
+        assert "OPENAI_API_KEY" in response.json()["detail"]
+
+
+def test_conversation_messages_keep_prior_turns_and_the_briefing():
+    from core.reasoning import agent
+
+    messages = agent.conversation_messages(
+        "What happens next?",
+        region_pack="mena",
+        context={
+            "note": "cite ids",
+            "reader": {"surface": "intel", "looking_at": {"dyad_id": "dyad:a--b"}},
+        },
+        history=[
+            {"role": "user", "content": "What is the situation?"},
+            {"role": "assistant", "content": "An argument over the briefing."},
+            {"role": "tool", "content": "ignore"},
+        ],
+    )
+    assert messages[0]["role"] == "system"
+    assert "Never originate" in messages[0]["content"]
+    assert messages[1] == {"role": "user", "content": "What is the situation?"}
+    assert messages[2]["role"] == "assistant"
+    last = messages[-1]
+    assert last["role"] == "user"
+    assert "What happens next?" in last["content"]
+    assert "intel desk" in last["content"]
+    assert "cite ids" in last["content"]

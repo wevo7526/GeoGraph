@@ -4,6 +4,7 @@ import type {
   WireLiveFeed,
   CalibrationWalk,
   Assessment,
+  AssessOptions,
   BacktestLedger,
   CaseStudy,
   CaseStudyIndexEntry,
@@ -289,12 +290,19 @@ export const getPaperBook = (nodeId: string) =>
 export async function postAssess(
   question: string,
   region: string,
+  options: AssessOptions = {},
 ): Promise<{ ok: boolean; detail?: string; result?: Assessment }> {
   try {
     const res = await fetch('/api/reasoning/assess', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ question, region }),
+      body: JSON.stringify({
+        question,
+        region,
+        history: options.history ?? [],
+        surface: options.surface,
+        focus: options.focus,
+      }),
     })
     const body = await res.json().catch(() => null)
     if (!res.ok) {

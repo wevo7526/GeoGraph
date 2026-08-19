@@ -145,6 +145,28 @@ def test_the_landing_lede_opens_at_the_archive_floor() -> None:
     )
     assert "1972" in landing
     assert "priced." not in landing
+    assert "/intel" in landing
+
+
+def test_intel_and_the_wire_are_one_package() -> None:
+    """Situation became Intel; the Wire is the same feed, in full."""
+    sidebar = _strip_comments(
+        (WEB / "components" / "Sidebar.tsx").read_text(encoding="utf-8")
+    )
+    assert "'/intel', 'Intel'" in sidebar
+    assert "'/situation', 'Situation'" not in sidebar
+    intel = _strip_comments(
+        (WEB / "components" / "IntelPage.tsx").read_text(encoding="utf-8")
+    )
+    assert "Ask the desk" not in intel
+    assert "situationLede" in intel
+    assert "AgentDesk" in intel
+    wire = _strip_comments(
+        (WEB / "components" / "WirePage.tsx").read_text(encoding="utf-8")
+    )
+    assert "/intel" in wire
+    app = _strip_comments((WEB / "App.tsx").read_text(encoding="utf-8"))
+    assert "AgentModal" in app
 
 
 def test_a_dyad_id_is_never_built_into_a_sentence() -> None:
