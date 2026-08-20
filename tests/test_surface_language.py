@@ -124,6 +124,28 @@ def test_the_wire_does_not_render_coded_event_names() -> None:
     assert not (WEB / "components" / "WirePage.tsx").exists()
 
 
+def test_the_relationship_timeline_does_not_render_coded_event_names() -> None:
+    """US–UK 'assault' / 'use of military force' is a CAMEO title. The
+    relationship page composes a reader sentence, same as the wire."""
+    rel = _strip_comments(
+        (WEB / "components" / "RelationshipPage.tsx").read_text(encoding="utf-8")
+    )
+    assert "eventHeadline" in rel
+    assert "ev.name" not in rel
+    story = _strip_comments((WEB / "lib" / "story.ts").read_text(encoding="utf-8"))
+    assert "alliedPresence" in story
+    assert "not a fight between them" in story
+
+
+def test_the_games_method_is_on_the_page_not_in_a_disclosure() -> None:
+    """'How this was solved' is a beat, not a closed <details>."""
+    games = _strip_comments(
+        (WEB / "components" / "GamesPage.tsx").read_text(encoding="utf-8")
+    )
+    assert "How this was solved" in games
+    assert "Disclosure" not in games
+
+
 def test_the_relationship_page_leads_with_three_reads_not_a_hostility_ladder() -> None:
     """Standing, posture, intensity — not tensionSentence over the bands."""
     rel = _strip_comments(
@@ -205,7 +227,8 @@ def test_wire_headlines_use_cameo_roots_not_only_quad_four() -> None:
     story = _strip_comments((WEB / "lib" / "story.ts").read_text(encoding="utf-8"))
     assert "CAMEO_ACT" in story
     assert "exhibited force toward" in story
-    assert "thirdCountryForce" in story
+    assert "alliedPresence" in story
+    assert "eventHeadline" in story
     assert "used force in" in story
     # The quad fallback may still exist; it must not be the only verb.
     assert story.count("used force toward") == 1

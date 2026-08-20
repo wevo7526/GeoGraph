@@ -156,6 +156,24 @@ relations:
     note: >-
       The 1962 war and the unresolved Line of Actual Control; Galwan (2020) is
       the same boundary.
+
+# Bilateral defence treaties. Expanded by ally_windows; not RELATES_TO rows
+# (COW already carries these start dates). US–Australia "use of military
+# force" on the wire is co-participation in third-country operations.
+alliance_blocs:
+  - name: US–Japan security treaty
+    valid_from: "1951-09-08"
+    members: ["actor:cow-2", "actor:cow-740"]
+  - name: US–ROK mutual defense
+    valid_from: "1953-10-01"
+    members: ["actor:cow-2", "actor:cow-732"]
+  - name: US–Philippines mutual defense
+    valid_from: "1951-08-30"
+    members: ["actor:cow-2", "actor:cow-840"]
+  - name: ANZUS
+    valid_from: "1951-09-01"
+    members: ["actor:cow-2", "actor:cow-900"]
+
 igo_spotlight:
   - actor:igo-asean
   - actor:igo-apec

@@ -9,6 +9,7 @@ model; China/Taiwan is pack two and proves the contract.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from functools import lru_cache
 from pathlib import Path
 from typing import Any, cast
 
@@ -64,6 +65,20 @@ class Pack:
     def relations(self) -> list[dict[str, Any]]:
         """Durable RELATES_TO rows declared beside the roster they connect."""
         return cast(list[dict[str, Any]], self.data["actors"].get("relations", []))
+
+    @property
+    def alliance_blocs(self) -> list[dict[str, Any]]:
+        """Defence pacts declared as membership lists, not C(n,2) pair rows.
+
+        `ally_windows` expands these into pairwise year windows so the
+        co-participation / allied-presence reading does not depend on the
+        COW alliance CSV being on disk. They are NOT written as RELATES_TO
+        — COW already carries NATO at 1949-04-04, and a pack row with that
+        start date would be the same edge.
+        """
+        return cast(
+            list[dict[str, Any]], self.data["actors"].get("alliance_blocs", [])
+        )
 
     @property
     def marquee_events(self) -> list[dict[str, Any]]:
@@ -180,6 +195,38 @@ def load(name: str) -> Pack:
     return pack
 
 
+def roster_names() -> tuple[dict[str, str], dict[str, str], dict[str, str]]:
+    """actor id → name, iso3 → name, actor id → iso3, from every installed pack.
+
+    FROM THE PACKS, NOT THE GRAPH. The graph is not always open (a child
+    process holds Kuzu's write lock), and a wire that sourced names from it
+    would print events with no actors for that window.
+    """
+    return _roster_names()
+
+
+@lru_cache(maxsize=1)
+def _roster_names() -> tuple[dict[str, str], dict[str, str], dict[str, str]]:
+    names: dict[str, str] = {}
+    geo: dict[str, str] = {}
+    iso3_by_actor: dict[str, str] = {}
+    for pack_name in available():
+        try:
+            pack = load(pack_name)
+        except PackError:
+            continue
+        for actor in pack.actors:
+            node_id, name = str(actor.get("id") or ""), actor.get("name")
+            if node_id and name:
+                names.setdefault(node_id, str(name))
+            iso3 = str(actor.get("iso3") or "").strip().upper()
+            if iso3 and name:
+                geo.setdefault(iso3, str(name))
+            if node_id and iso3:
+                iso3_by_actor.setdefault(node_id, iso3)
+    return names, geo, iso3_by_actor
+
+
 def _validate(pack: Pack) -> None:
     # Markets without inception dates are how a deep-past event study silently
     # "measures" a market that did not exist. Refused at load, not discovered
@@ -225,6 +272,26 @@ def _validate(pack: Pack) -> None:
                 f"cites {rel['source']!r}, which is not in sources.yaml. Sourced "
                 "edges cite sources that exist (build-spec section 17)."
             )
+    for bloc in pack.alliance_blocs:
+        members = bloc.get("members") or []
+        if len(members) < 2:
+            raise PackError(
+                f"packs/{pack.name}/actors.yaml: alliance bloc "
+                f"{bloc.get('name', bloc)!r} needs at least two members."
+            )
+        if not bloc.get("valid_from"):
+            raise PackError(
+                f"packs/{pack.name}/actors.yaml: alliance bloc "
+                f"{bloc.get('name', bloc)!r} is missing valid_from."
+            )
+        for member in members:
+            node_id = member if isinstance(member, str) else member.get("id")
+            if node_id not in actor_ids:
+                raise PackError(
+                    f"packs/{pack.name}/actors.yaml: alliance bloc "
+                    f"{bloc.get('name', bloc)!r} names {node_id!r}, which is not "
+                    "an actor in this pack's roster."
+                )
     for event in pack.marquee_events:
         for required in ("id", "date", "name"):
             if not event.get(required):

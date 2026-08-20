@@ -343,10 +343,6 @@ relations:
     note: >-
       The Collective Security Treaty — the stepland's standing structure, and
       the frame the January 2022 Almaty deployment ran through.
-
-# ── IGO spotlight ────────────────────────────────────────────────────────────
-# The organisations whose membership edges the COW IGO layer supplies; listed
-# so a reader of this pack knows which blocs the network view is drawing.
   # ── added 2026-08-16: see packs/mena/actors.yaml. UK–Russia sat third on
   # eurasia's coercion ranking with no standing declared at all.
   - a: actor:cow-200            # United Kingdom
@@ -358,6 +354,38 @@ relations:
       The Salisbury poisoning and the coordinated expulsions that followed.
       Dated there rather than at Litvinenko (2006) because 2018 is when the
       rupture became declared policy on both sides.
+
+# Defence-pact MEMBERSHIP, not pair rows. `ally_windows` expands these so
+# GDELT's US–UK "assault" / "use of military force" coding is read as
+# co-participation or presence, even when the COW alliance CSV is not on
+# disk. Not written as RELATES_TO — COW already carries NATO at 1949-04-04.
+alliance_blocs:
+  - name: NATO
+    valid_from: "1949-04-04"
+    members:
+      - {id: actor:cow-2, valid_from: "1949-04-04"}      # United States
+      - {id: actor:cow-200, valid_from: "1949-04-04"}    # United Kingdom
+      - {id: actor:cow-220, valid_from: "1949-04-04"}    # France
+      - {id: actor:cow-325, valid_from: "1949-04-04"}    # Italy
+      - {id: actor:cow-385, valid_from: "1949-04-04"}    # Norway
+      - {id: actor:cow-640, valid_from: "1952-02-18"}    # Turkey
+      - {id: actor:cow-260, valid_from: "1955-05-09", valid_to: "1990-10-03"}  # FRG
+      - {id: actor:cow-255, valid_from: "1990-10-03"}    # Germany
+      - {id: actor:cow-290, valid_from: "1999-03-12"}    # Poland
+      - {id: actor:cow-310, valid_from: "1999-03-12"}    # Hungary
+      - {id: actor:cow-316, valid_from: "1999-03-12"}    # Czech Republic
+      - {id: actor:cow-355, valid_from: "2004-03-29"}    # Bulgaria
+      - {id: actor:cow-360, valid_from: "2004-03-29"}    # Romania
+      - {id: actor:cow-366, valid_from: "2004-03-29"}    # Estonia
+      - {id: actor:cow-367, valid_from: "2004-03-29"}    # Latvia
+      - {id: actor:cow-368, valid_from: "2004-03-29"}    # Lithuania
+      - {id: actor:cow-317, valid_from: "2004-03-29"}    # Slovakia
+      - {id: actor:cow-375, valid_from: "2023-04-04"}    # Finland
+      - {id: actor:cow-380, valid_from: "2024-03-07"}    # Sweden
+
+# ── IGO spotlight ────────────────────────────────────────────────────────────
+# The organisations whose membership edges the COW IGO layer supplies; listed
+# so a reader of this pack knows which blocs the network view is drawing.
 igo_spotlight:
   - actor:igo-nato
   - actor:igo-eu

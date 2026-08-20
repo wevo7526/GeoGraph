@@ -26,6 +26,7 @@ import Graph3D, {
   type LinkSelection,
 } from './Graph3D'
 import { citableUrl } from '../lib/cite'
+import { eventHeadline } from '../lib/story'
 import ImpactLine from './ImpactLine'
 import TimeSlider, { YEAR_MIN, YEAR_NOW } from './TimeSlider'
 import { LineBand } from './charts/Charts'
@@ -109,7 +110,7 @@ function Trajectoryline({ trajectory }: { trajectory: Trajectory }) {
         {points.map((p, i) => (
           <circle key={p.node_id} cx={x(i)} cy={y(p.goldstein!)} r={2.5} fill="var(--accent)">
             <title>
-              {p.event_time} · {p.name} · {num(p.goldstein, 1)}
+              {p.event_time} · {eventHeadline(p)} · {num(p.goldstein, 1)}
             </title>
           </circle>
         ))}
@@ -228,7 +229,7 @@ function EventDetailPanel({
       <div className="mono text-xs" style={{ color: 'var(--accent)' }}>
         {detail.event_time}
       </div>
-      <h3 className="text-lg mt-1 leading-snug">{detail.name}</h3>
+      <h3 className="text-lg mt-1 leading-snug">{eventHeadline(detail)}</h3>
 
       <dl className="mt-4 space-y-2 text-sm">
         <div className="flex justify-between gap-4">
@@ -439,7 +440,7 @@ function DyadPanel({
                 <span className="mono text-xs" style={{ color: 'var(--accent)' }}>
                   {e.event_time}
                 </span>
-                <span className="text-sm block">{e.name}</span>
+                <span className="text-sm block">{eventHeadline(e)}</span>
               </button>
             </li>
           ))}
@@ -594,7 +595,7 @@ function ActorPanel({
                   <span className="mono text-xs" style={{ color: 'var(--accent)' }}>
                     {e.event_time}
                   </span>
-                  <span className="text-sm block">{e.name}</span>
+                  <span className="text-sm block">{eventHeadline(e)}</span>
                 </button>
               </li>
             ))}
@@ -1103,7 +1104,7 @@ export default function Explorer({
                       <span className="mono text-xs block" style={{ color: 'var(--muted)' }}>
                         {e.event_time} · {num(e.goldstein, 1)}
                       </span>
-                      {e.name}
+                      {eventHeadline(e)}
                     </button>
                   </li>
                 )

@@ -278,6 +278,17 @@ def dyad_timeline(conn: Any, dyad_id: str, *, limit: int = 40) -> dict[str, Any]
                 "fidelity_tier": row.get("fidelity_tier"),
                 "initiator_id": row.get("initiator_id"),
                 "target_id": row.get("target_id"),
+                "initiator_name": row.get("initiator_name"),
+                "target_name": row.get("target_name"),
+                "cameo_code": row.get("action_cameo_code") or row.get("cameo_code"),
+                "action_cameo_code": row.get("action_cameo_code") or row.get("cameo_code"),
+                "quad_class": row.get("quad_class"),
+                "action_geo": row.get("action_geo"),
+                "initiator_iso3": row.get("initiator_iso3"),
+                "target_iso3": row.get("target_iso3"),
+                "coercion": row.get("coercion"),
+                "co_participation": row.get("co_participation"),
+                "region_pack": row.get("region_pack"),
                 "first_mover": None,
                 "markets": [],
             },
@@ -293,7 +304,33 @@ def dyad_timeline(conn: Any, dyad_id: str, *, limit: int = 40) -> dict[str, Any]
             "first_mover": bool(row.get("first_mover")),
         })
     events = sorted(by_event.values(), key=lambda e: e["date"], reverse=True)[:limit]
-    return {"dyad": dyad_id, "events": events, "total": len(by_event)}
+    from core import packs
+    from core.games import family as family_module
+    from core.wire import headline as wire_headline
+
+    actor_names, geo_names, iso3_by_actor = packs.roster_names()
+    windows: dict[str, list[tuple[int, int]]] = {}
+    for pack_name in packs.available():
+        try:
+            pack_windows, _ = family_module.ally_windows(packs.load(pack_name))
+        except packs.PackError:
+            continue
+        for key, spans in pack_windows.items():
+            windows.setdefault(key, []).extend(spans)
+    decorated: list[dict[str, Any]] = []
+    for event in events:
+        flag = family_module.allied_in(
+            windows.get(str(dyad_id)), family_module._year_of(event.get("date"), 0)
+        )
+        shaped = wire_headline.decorate(
+            {**event, "event_time": event.get("date")},
+            actor_names=actor_names,
+            geo_names=geo_names,
+            iso3_by_actor=iso3_by_actor,
+            allied=flag,
+        )
+        decorated.append({**event, **shaped})
+    return {"dyad": dyad_id, "events": decorated, "total": len(by_event)}
 
 
 def hypothetical_impact(

@@ -431,6 +431,8 @@ const FORCE_ROOTS = new Set(['15', '18', '19', '20'])
 export type WireHeadlineFields = {
   initiator_name?: string | null
   target_name?: string | null
+  name?: string | null
+  headline?: string | null
   quad_class?: string | null
   cameo_code?: string | null
   action_geo?: string | null
@@ -438,7 +440,9 @@ export type WireHeadlineFields = {
   initiator_iso3?: string | null
   target_iso3?: string | null
   third_country_force?: boolean
+  allied_presence?: boolean
   pair_fight?: boolean
+  coercion?: boolean | null
   dyad_id?: string | null
 }
 
@@ -447,8 +451,9 @@ export function cameoRoot(code?: string | null): string | null {
   return digits.length >= 2 ? digits.slice(0, 2) : null
 }
 
-/** Fight/use-of-force coded on a roster country that is neither side.
- *  Display only — does not retarget the stored pair. */
+/** Fight/use-of-force coded on a country that is neither side.
+ *  Display only — does not retarget the stored pair. A geo off the pack is
+ *  still a third country; we just cannot name it. */
 export function thirdCountryForce(item: WireHeadlineFields): boolean {
   if (item.third_country_force === true) return true
   if (item.third_country_force === false) return false
@@ -456,16 +461,26 @@ export function thirdCountryForce(item: WireHeadlineFields): boolean {
   const left = item.initiator_iso3?.trim().toUpperCase() || ''
   const right = item.target_iso3?.trim().toUpperCase() || ''
   if (!geo || !left || !right || geo === left || geo === right) return false
+  return FORCE_ROOTS.has(cameoRoot(item.cameo_code) ?? '')
+}
+
+/** Defence-pact partners coded in a force event — presence, not a war. */
+export function alliedPresence(item: WireHeadlineFields): boolean {
+  if (item.allied_presence === true) return true
+  if (item.allied_presence === false) return false
   if (!FORCE_ROOTS.has(cameoRoot(item.cameo_code) ?? '')) return false
-  // Without a resolved roster name the geo is not confirmed as a pack country.
-  return Boolean(item.action_geo_name)
+  const geo = item.action_geo?.trim().toUpperCase() || ''
+  const left = item.initiator_iso3?.trim().toUpperCase() || ''
+  const right = item.target_iso3?.trim().toUpperCase() || ''
+  const onHome = Boolean(geo && (geo === left || geo === right))
+  return item.coercion === false && onHome
 }
 
 /** Whether the surface may offer this row as an A–B fight relationship. */
 export function offersPairNav(item: WireHeadlineFields): boolean {
   if (!item.dyad_id) return false
   if (item.pair_fight === false) return false
-  return !thirdCountryForce(item)
+  return !thirdCountryForce(item) && !alliedPresence(item)
 }
 
 export function wireHeadline(item: WireHeadlineFields): string {
@@ -475,11 +490,48 @@ export function wireHeadline(item: WireHeadlineFields): string {
     const place = item.action_geo_name?.trim() || item.action_geo?.trim() || 'a third country'
     return `${left} used force in ${place}`
   }
+  const notPair = item.pair_fight === false || alliedPresence(item)
+  if (notPair && left && right) {
+    const root = cameoRoot(item.cameo_code)
+    if (root && FORCE_ROOTS.has(root)) {
+      const place = item.action_geo_name?.trim() || null
+      if (place && thirdCountryForce(item)) return `${left} used force in ${place}`
+      if (place) {
+        return `${left} and ${right} — a force coding in ${place}, not a fight between them`
+      }
+      return `${left} and ${right} — a force coding, not a fight between them`
+    }
+    if (item.coercion === false) {
+      return `${left} and ${right} — a coded event, not interstate coercion`
+    }
+  }
   const root = cameoRoot(item.cameo_code)
   const act = (root && CAMEO_ACT[root]) || QUAD_ACT[item.quad_class ?? ''] || 'interacted with'
   if (left && right) return `${left} ${act} ${right}`
   if (left) return `${left} ${act} an unnamed counterpart`
   return 'A coded event between unnamed actors'
+}
+
+function namesFromCodedTitle(name?: string | null): { left: string | null; right: string | null } {
+  const text = name ?? ''
+  if (!text.includes(':') || !text.includes('→')) return { left: null, right: null }
+  const rest = text.slice(text.indexOf(':') + 1)
+  const parts = rest.split('→').map((s) => s.trim())
+  if (parts.length < 2 || !parts[0] || !parts[1]) return { left: null, right: null }
+  return { left: parts[0], right: parts[1] }
+}
+
+/** Reader sentence for any event payload — never the CAMEO `name` title. */
+export function eventHeadline(
+  item: WireHeadlineFields & { name?: string | null; headline?: string | null },
+): string {
+  if (item.headline?.trim()) return item.headline.trim()
+  const parsed = namesFromCodedTitle(item.name)
+  return wireHeadline({
+    ...item,
+    initiator_name: item.initiator_name || parsed.left,
+    target_name: item.target_name || parsed.right,
+  })
 }
 
 /** The live wire's implied kind, as a noun phrase — not the raw token. */
@@ -519,6 +571,17 @@ export function wireRead(item: WireItem): string {
       return `${who} acted in ${place}; GDELT attached another roster flag, which is not a fight between those two states.`
     }
     return `${who} acted in ${place} — ${off.toFixed(1)} points from the coded pair's usual level, which is who GDELT attached, not a fight between them.`
+  }
+  if (
+    alliedPresence(item)
+    || (item.pair_fight === false && FORCE_ROOTS.has(cameoRoot(item.cameo_code) ?? ''))
+  ) {
+    const pair =
+      item.initiator_name && item.target_name
+        ? `${item.initiator_name} and ${item.target_name}`
+        : 'the coded pair'
+    const where = place ? ` in ${place}` : ''
+    return `A force coding involving ${pair}${where} — not a fight between those two states.`
   }
   const pair =
     item.initiator_name && item.target_name

@@ -182,6 +182,23 @@ def test_a_key_is_never_shown_as_a_caption():
     assert (eurasia.name, eurasia.label) == ("eurasia", "Eurasia")
 
 
+def test_eurasia_nato_windows_cover_us_uk():
+    """ally_windows used to miss NATO unless the COW CSV was on disk, so
+    US–UK force coding counted as interstate coercion."""
+    from core.classifier import escalation
+    from core.games import family
+
+    windows, sources = family.ally_windows(packs.load("eurasia"))
+    did = escalation.dyad_id("actor:cow-2", "actor:cow-200")
+    assert family.allied_in(windows.get(did), 2026)
+    assert family.allied_in(windows.get(did), 1949)
+    assert not family.allied_in(windows.get(did), 1948)
+    assert "packs" in sources
+    china = family.ally_windows(packs.load("china"))[0]
+    anzus = escalation.dyad_id("actor:cow-2", "actor:cow-900")
+    assert family.allied_in(china.get(anzus), 2026)
+
+
 # ── externality is a property of the lens, not of the world ──────────────────
 
 

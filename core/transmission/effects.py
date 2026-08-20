@@ -177,6 +177,15 @@ def _panel_effects_for_dyad(conn: kuzu.Connection, dyad_id: str) -> list[dict[st
             "region_pack": meta.get("region_pack"),
             "initiator_id": meta.get("initiator_id"),
             "target_id": meta.get("target_id"),
+            "initiator_name": meta.get("initiator_name"),
+            "target_name": meta.get("target_name"),
+            "action_cameo_code": meta.get("action_cameo_code") or meta.get("cameo_code"),
+            "quad_class": meta.get("quad_class"),
+            "action_geo": meta.get("action_geo"),
+            "initiator_iso3": meta.get("initiator_iso3"),
+            "target_iso3": meta.get("target_iso3"),
+            "coercion": meta.get("coercion"),
+            "co_participation": meta.get("co_participation"),
             "market_id": market.get("market_id") or ticker,
             "market_name": market.get("market_name") or ticker,
             "ticker": ticker,
@@ -227,7 +236,9 @@ def effects_for_dyad(conn: kuzu.Connection, dyad_id: str) -> list[dict[str, Any]
         "e.escalation_direction AS escalation_direction, "
         "e.escalation_magnitude AS escalation_magnitude, "
         "e.fidelity_tier AS fidelity_tier, e.region_pack AS region_pack, "
+        "e.action_cameo_code AS action_cameo_code, e.quad_class AS quad_class, "
         "x.node_id AS initiator_id, y.node_id AS target_id, "
+        "x.name AS initiator_name, y.name AS target_name, "
         "m.node_id AS market_id, m.name AS market_name, "
         "m.ticker AS ticker, m.market_type AS market_type, "
         "a.abnormal_return AS abnormal_return, a.raw_return AS raw_return, "

@@ -165,6 +165,7 @@ def test_refresh_pack_keeps_this_event_measurements(monkeypatch):
     class _Pack:
         name = "mena"
         actors = []
+        relations = []
 
     live_overlay._PACK["mena"] = {"rows": [{
         "node_id": "event:gdelt-1",
