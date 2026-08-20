@@ -852,7 +852,7 @@ export default function Explorer({
     setFocusActor(null)
     getRegimes().then((r) => active && setRegimes(r))
     getPack(region).then((r) => active && setPack(r))
-    getDyads().then((r) => active && setDyads(r?.rows ?? []))
+    getDyads(region).then((r) => active && setDyads(r?.rows ?? []))
     getFlows().then((r) => active && setFlows(r?.rows ?? []))
     getCoverage(region).then((r) => {
       if (!active) return

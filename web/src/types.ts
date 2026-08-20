@@ -1565,6 +1565,26 @@ export interface NetworkActorRank {
   value: number
 }
 
+export interface NetworkRosterRow {
+  subject_id: string
+  name: string
+  betweenness: number | null
+  constraint: number | null
+  degree: number | null
+  eigenvector: number | null
+  community: number | null
+}
+
+export interface NetworkDecade {
+  window_start: string
+  window_end: string
+  label: string
+  n: number
+  broker: NetworkActorRank | null
+  hole: NetworkActorRank | null
+  degree: NetworkActorRank | null
+}
+
 export interface NetworkSnapshot {
   region: string
   region_label?: string
@@ -1573,7 +1593,11 @@ export interface NetworkSnapshot {
   brokers: NetworkActorRank[]
   holes: NetworkActorRank[]
   degree: NetworkActorRank[]
+  eigenvector?: NetworkActorRank[]
   communities: Array<{ id: number; members: string[]; size: number }>
+  roster?: NetworkRosterRow[]
+  decades?: NetworkDecade[]
+  brokerage_over_time?: Array<{ x: string; y: number }>
   n?: number
   note?: string
   method?: string

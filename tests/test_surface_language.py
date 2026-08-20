@@ -263,6 +263,19 @@ def test_working_pages_use_the_desk_layout_not_a_reading_column() -> None:
         text = _strip_comments((WEB / "components" / name).read_text(encoding="utf-8"))
         assert "desk-page" in text, f"{name} never took the desk-page shell"
         assert "reading-column" not in text, f"{name} still wraps in reading-column"
+    network = _strip_comments((WEB / "components" / "NetworkPage.tsx").read_text(encoding="utf-8"))
+    assert "rule-table" in network
+    assert "SeriesLine" in network
+    assert "Tiles" in network
+    assert "BoxRow" not in network
+    assert "histogram" not in network.lower()
+    assert "DotWhisker" not in network
+    explorer = (WEB / "components" / "Explorer.tsx").read_text(encoding="utf-8")
+    assert "Graph3D" in explorer
+    assert "getDyads(region)" in explorer
+    desk = (WEB / "lib" / "desk.ts").read_text(encoding="utf-8")
+    assert "network" in desk
+    assert "path.startsWith('/network')" in desk
     css = (WEB / "styles.css").read_text(encoding="utf-8")
     assert ".desk-page" in css
     assert ".desk-grid" in css
