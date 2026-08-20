@@ -17,6 +17,7 @@ monthly → yfinance daily for US equities). Deep-past series may carry a single
 from __future__ import annotations
 
 import math
+import os
 from typing import Any
 
 from core.settings import Settings
@@ -164,7 +165,28 @@ DDL: tuple[str, ...] = (
     CREATE INDEX IF NOT EXISTS event_study_runs_by_ticker
         ON event_study_runs (market_ticker, status)
     """,
+    # THE WATERMARK THAT LETS GDELT SKIP-ROWS DIE. An attempt against a
+    # ticker used to be a full event_study_runs row (method text, eight
+    # numerics, unique index) even when the status was skipped_no_data.
+    # Production held ~1.4 million of those on a 5 GB Postgres volume, which
+    # is what made "let the study finish" look like it would blast the
+    # panel. Coverage is two TEXT columns: the study looked, this ticker,
+    # this event. Computed numbers still live in event_study_runs.
+    """
+    CREATE TABLE IF NOT EXISTS event_study_coverage (
+        event_node_id TEXT NOT NULL,
+        market_ticker TEXT NOT NULL,
+        PRIMARY KEY (event_node_id, market_ticker)
+    )
+    """,
 )
+
+#: Railway's Postgres volume is 5 GB, same as the graph. The study finishing
+#: into this store is only safe if we stop before the last 400 MB — Kuzu
+#: taught us that a full volume is an uncatchable kill, and Postgres WAL
+#: needs the same headroom.
+PANEL_CAP_BYTES = int(os.getenv("GEOGRAPH_PANEL_CAP_BYTES", str(5 * 2**30)))
+PANEL_FLOOR_BYTES = int(os.getenv("GEOGRAPH_PANEL_FLOOR_BYTES", str(400 << 20)))
 
 
 class PanelUnavailable(RuntimeError):
@@ -249,11 +271,14 @@ def record_runs(
     conn: Any, effects: list[Any], skips: list[Any],
     *, source_of: Any = None,
 ) -> int:
-    """The event-study working set: every ATTEMPT, computed or skipped.
+    """The event-study working set: computed numbers, plus a coverage stamp.
 
-    A skip is a row, not an absence. "Tadawul has no 1973 reaction" and "we
-    never looked" are different claims, and only a recorded skip can tell them
-    apart — so coverage becomes something you query rather than infer.
+    A skip is still a claim ("we looked and there was no market"), and the
+    spine still stores that claim as a row so a case study can say so. The
+    GDELT wire does not: at archive scale a skip is most of the table, ~200
+    bytes each, and the 5 GB panel cannot hold both the numbers and the
+    absences. Coverage (`event_study_coverage`) is the watermark for both;
+    GDELT skip rows are not inserted.
     """
     sql = """
         INSERT INTO event_study_runs
@@ -290,7 +315,8 @@ def record_runs(
             "first_mover": bool(getattr(e, "first_mover", False)),
         }
         for e in effects
-    ] + [
+    ]
+    skip_rows: list[dict[str, Any]] = [
         {
             "event_node_id": s.event_node_id, "market_ticker": s.market_ticker,
             "effect_window": s.window, "resolution": s.resolution,
@@ -303,22 +329,42 @@ def record_runs(
             "source_id": None, "first_mover": None,
         }
         for s in skips
+        # Spine skips stay rows: a case study is entitled to "we looked".
+        # GDELT skips are the volume blast — coverage stamps them instead.
+        if not str(s.event_node_id).startswith("event:gdelt-")
     ]
+    coverage = {
+        (str(item["event_node_id"]), str(item["market_ticker"]))
+        for item in rows + skip_rows
+    }
+    coverage.update(
+        (str(s.event_node_id), str(s.market_ticker)) for s in skips
+    )
+    cover_sql = """
+        INSERT INTO event_study_coverage (event_node_id, market_ticker)
+        VALUES (%s, %s)
+        ON CONFLICT (event_node_id, market_ticker) DO NOTHING
+    """
     # executemany, not a Python loop of round trips: at GDELT scale the
     # working set is hundreds of thousands of attempts per full study.
     with conn.cursor() as cur:
         if rows:
             cur.executemany(sql, rows)
+        if skip_rows:
+            cur.executemany(sql, skip_rows)
+        if coverage:
+            cur.executemany(cover_sql, sorted(coverage))
     conn.commit()
-    return len(rows)
+    return len(rows) + len(skip_rows)
 
 
 def measured_events(conn: Any, market_tickers: list[str] | None = None) -> set[str]:
     """Event ids already measured — the study's watermark.
 
-    An attempt (computed OR skipped) means the engine already looked with the
-    panel it had; determinism makes re-looking a no-op, so the watermark is what
-    lets a hundred-thousand-event archive boot in seconds.
+    Coverage is the stamp that the engine looked, per ticker. Computed and
+    (spine) skip rows remain in `event_study_runs`; GDELT skips live only
+    here, so the UNION is what keeps a pack from re-measuring an event it
+    already finished against its markets.
 
     PER-MARKET, when `market_tickers` is given. The watermark used to be a bare
     `DISTINCT event_node_id`, which let packs SHADOW each other: packs seed
@@ -332,15 +378,23 @@ def measured_events(conn: Any, market_tickers: list[str] | None = None) -> set[s
     idempotent no-op it always was."""
     with conn.cursor() as cur:
         if not market_tickers:
-            cur.execute("SELECT DISTINCT event_node_id FROM event_study_runs")
+            cur.execute(
+                "SELECT event_node_id FROM event_study_coverage "
+                "UNION SELECT event_node_id FROM event_study_runs"
+            )
             return {row[0] for row in cur.fetchall()}
         wanted = sorted(set(market_tickers))
         cur.execute(
+            "SELECT event_node_id FROM event_study_coverage "
+            "WHERE market_ticker = ANY(%s) "
+            "GROUP BY event_node_id "
+            "HAVING COUNT(DISTINCT market_ticker) >= %s "
+            "UNION "
             "SELECT event_node_id FROM event_study_runs "
             "WHERE market_ticker = ANY(%s) "
             "GROUP BY event_node_id "
             "HAVING COUNT(DISTINCT market_ticker) >= %s",
-            (wanted, len(wanted)),
+            (wanted, len(wanted), wanted, len(wanted)),
         )
         return {row[0] for row in cur.fetchall()}
 
@@ -406,38 +460,65 @@ def computed_run_count(conn: Any) -> int:
 #: Windows the live surfaces actually read for GDELT measurements.
 #: Pricing and the headline map use car_0_3; the sessions-2–3 measurement
 #: uses car_0_1 against car_0_3. car_0_5 on the wire is unused weight.
-GDELT_KEEP_WINDOWS = ("car_0_1", "car_0_3")
+GDELT_KEEP_WINDOWS = ("car_0_1", "car_0_3", "intraday_open_close")
 PRUNE_GDELT_LIMIT = 20_000
 
 
 def prune_gdelt_runs(
     conn: Any, *, limit: int = PRUNE_GDELT_LIMIT, drop_skips: bool = True,
 ) -> dict[str, int | bool]:
-    """Delete GDELT working-set rows the frozen snapshot no longer needs.
+    """Delete GDELT working-set rows the 5 GB panel no longer needs.
 
-    Skip rows watermark a GROWING study. With the snapshot frozen they are
-    dead weight (production held ~1.4 million of them on a 5 GB Postgres
-    volume). Extra windows on the wire (car_0_5) are unused. Spine and
-    deep-tier events are untouched — their windows still feed the studies.
-    Bounded so a tick cannot lock the 2.7 GB table for its whole life.
+    Skip rows used to watermark a growing study. Coverage now does that, so
+    GDELT skips are dead weight (production held ~1.4 million of them). Extra
+    windows on the wire (car_0_5) are unused. Spine and deep-tier events are
+    untouched. Bounded so a tick cannot lock the table for its whole life.
+
+    Coverage is stamped FROM the doomed skip rows in the same statement, so
+    pruning never un-does a watermark and the study does not re-measure what
+    it already finished.
     """
     extra = (
         " OR status IN ('skipped_no_data', 'skipped_no_market')"
         if drop_skips else ""
     )
     keep = ", ".join(f"'{w}'" for w in GDELT_KEEP_WINDOWS)
+    stamp = (
+        """,
+        stamped AS (
+            INSERT INTO event_study_coverage (event_node_id, market_ticker)
+            SELECT event_node_id, market_ticker FROM doomed
+            ON CONFLICT (event_node_id, market_ticker) DO NOTHING
+        )"""
+        if drop_skips else ""
+    )
     sql = (
-        "DELETE FROM event_study_runs WHERE run_id IN ("
-        "SELECT run_id FROM event_study_runs "
+        "WITH doomed AS ("
+        "SELECT run_id, event_node_id, market_ticker FROM event_study_runs "
         "WHERE event_node_id LIKE 'event:gdelt-%' "
         f"AND (effect_window NOT IN ({keep}){extra}) "
-        "LIMIT %s)"
+        "LIMIT %s"
+        f"){stamp} "
+        "DELETE FROM event_study_runs WHERE run_id IN (SELECT run_id FROM doomed)"
     )
     with conn.cursor() as cur:
         cur.execute(sql, (int(limit),))
         deleted = int(cur.rowcount or 0)
     conn.commit()
     return {"deleted": deleted, "drop_skips": drop_skips, "limit": int(limit)}
+
+
+def database_bytes(conn: Any) -> int:
+    """What this database occupies, including indexes and TOAST."""
+    with conn.cursor() as cur:
+        cur.execute("SELECT pg_database_size(current_database())")
+        row = cur.fetchone()
+    return int(row[0] if row else 0)
+
+
+def panel_is_tight(conn: Any, *, cap: int = PANEL_CAP_BYTES, floor: int = PANEL_FLOOR_BYTES) -> bool:
+    """Would another study tick risk filling the 5 GB Postgres volume?"""
+    return database_bytes(conn) > max(0, cap - floor)
 
 
 def computed_event_ids(conn: Any, *, ticker: str | None = None) -> set[str]:
@@ -760,6 +841,27 @@ def series(
     return out
 
 
+def series_intraday(
+    conn: Any, ticker: str, *, start: str, end: str,
+) -> list[dict[str, Any]]:
+    """Hourly prints in `[start, end)`, ts as ISO strings."""
+    sql = """
+        SELECT ts, price FROM market_intraday
+        WHERE market_ticker = %s AND ts >= %s AND ts < %s
+        ORDER BY ts
+    """
+    with conn.cursor() as cur:
+        cur.execute(sql, (ticker, start, end))
+        rows = cur.fetchall()
+    return [
+        {
+            "ts": (ts.isoformat() if hasattr(ts, "isoformat") else str(ts)),
+            "price": float(price),
+        }
+        for ts, price in rows if price is not None
+    ]
+
+
 def backfill_effect_sources(conn: Any) -> int:
     """Stamp provenance on measurements recorded before the column existed.
 
@@ -863,10 +965,24 @@ def storage_report(conn: Any) -> dict[str, Any]:
             "SELECT status, count(*) FROM event_study_runs GROUP BY status ORDER BY 2 DESC"
         )
         by_status = {str(r[0]): int(r[1]) for r in cur.fetchall()}
+        cur.execute("SELECT count(*) FROM event_study_coverage")
+        coverage_rows = int((cur.fetchone() or [0])[0])
+    used = int((row[0] if row else 0) or 0)
+    headroom = max(0, PANEL_CAP_BYTES - PANEL_FLOOR_BYTES - used)
     return {
         "database_mb": database_mb,
+        "cap_gb": round(PANEL_CAP_BYTES / 2**30, 2),
+        "floor_mb": round(PANEL_FLOOR_BYTES / 1e6, 1),
+        "headroom_mb": round(headroom / 1e6, 1),
+        "tight": used > PANEL_CAP_BYTES - PANEL_FLOOR_BYTES,
         "tables": tables,
         "event_study_runs_by_status": by_status,
+        "event_study_coverage_rows": coverage_rows,
+        "note": (
+            "The study finishes here, not in Kuzu. GDELT skip-rows are not "
+            "stored; event_study_coverage is the watermark. AFFECTED on the "
+            "graph is a spine-only mirror."
+        ),
     }
 
 

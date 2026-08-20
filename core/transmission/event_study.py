@@ -208,6 +208,7 @@ def compute_effects(
     prices: dict[str, list[dict[str, Any]]],
     other_event_dates: dict[str, dt.date] | None = None,
     windows: tuple[str, ...] | None = None,
+    intraday: dict[str, list[dict[str, Any]]] | None = None,
 ) -> tuple[list[EffectResult], list[Skip]]:
     """Run the study for one event across every market alive at its date.
 
@@ -282,9 +283,10 @@ def compute_effects(
         window_names = windows or WINDOWS_BY_RESOLUTION.get(resolution, ("car_0_1",))
         series = prices.get(ticker) or []
         # Daily, monthly and annual all measure through the same constant-mean
-        # machinery below; intraday_open_close alone waits for Phase 4's
-        # intraday panel, and saying so beats emitting a daily number under an
-        # intraday label.
+        # machinery below. `intraday_open_close` is an EXTRA window from
+        # market_intraday prints, not a native_frequency — missing prints
+        # omit it rather than writing a skip-row (or a daily number under an
+        # intraday label).
         measurable = [w for w in window_names if w in WINDOW_SESSIONS]
         if not measurable:
             skips.append(Skip(
@@ -292,8 +294,9 @@ def compute_effects(
                 window=window_names[0], resolution=resolution,
                 status="skipped_no_data",
                 reason=(
-                    f"{resolution} resolution is not measurable yet (Phase 4 — "
-                    "the intraday window needs the intraday panel)."
+                    f"{resolution} resolution is not measurable yet ("
+                    "the intraday window is an extra from market_intraday, "
+                    "not a native_frequency)."
                 ),
             ))
             continue
@@ -391,4 +394,58 @@ def compute_effects(
                 ),
             ))
 
+        prints = (intraday or {}).get(ticker) or []
+        open_close = _session_open_close(prints, expected_session)
+        if open_close is not None:
+            first_px, last_px, session_day = open_close
+            raw = last_px / first_px - 1.0
+            expected = mean
+            abnormal = raw - expected
+            t_stat = abnormal / sigma if sigma > 0 else float("nan")
+            p_value, distribution = _p_value(t_stat, df)
+            overlapping = any(
+                other_id != event["node_id"] and event_date <= other_date <= session_day
+                for other_id, other_date in others.items()
+            )
+            effects.append(EffectResult(
+                event_node_id=event["node_id"],
+                market_ticker=ticker,
+                window="intraday_open_close",
+                resolution="intraday",
+                raw_return=raw,
+                expected_return=expected,
+                abnormal_return=abnormal,
+                t_stat=t_stat,
+                p_value=p_value,
+                first_mover=bool(movers.get(ticker, False)),
+                overlapping=overlapping,
+                method=(
+                    f"session-open-close;session0={session_day.isoformat()};"
+                    f"est_mean_daily={mean:.6f};calendar={session_calendar};"
+                    f"dist={distribution}"
+                ),
+            ))
+
     return effects, skips
+
+
+def _session_open_close(
+    prints: list[dict[str, Any]], session: dt.date,
+) -> tuple[float, float, dt.date] | None:
+    """First and last print on `session`. Needs two distinct prices."""
+    day = session.isoformat()
+    prices = [
+        float(row["price"])
+        for row in prints
+        if str(row.get("ts") or "")[:10] == day and _is_finite(row.get("price"))
+    ]
+    if len(prices) < 2 or prices[0] == 0:
+        return None
+    return prices[0], prices[-1], session
+
+
+def _is_finite(value: Any) -> bool:
+    try:
+        return math.isfinite(float(value))
+    except (TypeError, ValueError):
+        return False

@@ -1094,7 +1094,9 @@ def test_prune_gdelt_runs_drops_skips_and_unused_windows():
     assert out == {"deleted": 11, "drop_skips": True, "limit": 50}
     assert "event:gdelt-%" in panel.sql
     assert "skipped_no_data" in panel.sql
+    assert "event_study_coverage" in panel.sql
     assert "car_0_1" in panel.sql and "car_0_3" in panel.sql
+    assert "intraday_open_close" in panel.sql
     assert "LIMIT %s" in panel.sql
     assert panel.params == (50,)
     assert panel.committed
@@ -1102,6 +1104,7 @@ def test_prune_gdelt_runs_drops_skips_and_unused_windows():
     keep_skips = _Panel()
     pg_store.prune_gdelt_runs(keep_skips, drop_skips=False)
     assert "skipped_no_data" not in keep_skips.sql
+    assert "event_study_coverage" not in keep_skips.sql
 
 
 def test_network_windows_open_at_the_archive_floor():
@@ -1111,3 +1114,75 @@ def test_network_windows_open_at_the_archive_floor():
     text = src.read_text(encoding="utf-8")
     assert "archive_bounds.START_YEAR" in text
     assert "_ARCHIVE_START = 1905" not in text
+
+
+def test_record_runs_stamps_coverage_and_drops_gdelt_skip_rows():
+    """GDELT skip-rows are the 5 GB blast. Coverage is the watermark."""
+    from core.panel import pg_store
+    from core.transmission.event_study import EffectResult, Skip
+
+    class _Panel:
+        def __init__(self) -> None:
+            self.calls: list[tuple[str, list[Any]]] = []
+            self.committed = False
+
+        def cursor(self) -> Any:
+            panel = self
+
+            class _Cur:
+                def __enter__(self) -> Any:
+                    return self
+
+                def __exit__(self, *exc: object) -> bool:
+                    return False
+
+                def executemany(self, sql: str, rows: Any) -> None:
+                    panel.calls.append((sql, list(rows)))
+
+            return _Cur()
+
+        def commit(self) -> None:
+            self.committed = True
+
+    effect = EffectResult(
+        event_node_id="event:gdelt-1", market_ticker="BZ=F", window="car_0_3",
+        resolution="day", raw_return=0.01, expected_return=0.0,
+        abnormal_return=0.01, t_stat=1.0, p_value=0.3, first_mover=False,
+        overlapping=False, method="test",
+    )
+    gdelt_skip = Skip(
+        event_node_id="event:gdelt-1", market_ticker="^GSPC", window="car_0_1",
+        resolution="day", status="skipped_no_data", reason="no bars",
+    )
+    spine_skip = Skip(
+        event_node_id="event:mena-1", market_ticker="^GSPC", window="car_0_1",
+        resolution="day", status="skipped_no_data", reason="no bars",
+    )
+    panel = _Panel()
+    written = pg_store.record_runs(panel, [effect], [gdelt_skip, spine_skip])
+    assert written == 2  # computed row + spine skip; GDELT skip is coverage only
+    assert panel.committed
+    run_rows = [rows for sql, rows in panel.calls if "event_study_runs" in sql]
+    cover_rows = [rows for sql, rows in panel.calls if "event_study_coverage" in sql]
+    assert run_rows
+    inserted_ids = {row["event_node_id"] for rows in run_rows for row in rows}
+    assert "event:gdelt-1" in inserted_ids
+    statuses = {row["status"] for rows in run_rows for row in rows}
+    assert "skipped_no_data" in statuses
+    skip_tickers = {
+        row["market_ticker"]
+        for rows in run_rows for row in rows
+        if row["status"] == "skipped_no_data"
+    }
+    assert skip_tickers == {"^GSPC"}
+    # The GDELT skip's ticker is not a skip ROW — it is a coverage stamp.
+    gdelt_skip_rows = [
+        row for rows in run_rows for row in rows
+        if row["event_node_id"] == "event:gdelt-1" and row["status"] != "computed"
+        and row["status"] != "overlapping"
+    ]
+    assert gdelt_skip_rows == []
+    stamped = {tuple(row) for rows in cover_rows for row in rows}
+    assert ("event:gdelt-1", "BZ=F") in stamped
+    assert ("event:gdelt-1", "^GSPC") in stamped
+    assert ("event:mena-1", "^GSPC") in stamped

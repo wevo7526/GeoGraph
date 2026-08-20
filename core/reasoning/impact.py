@@ -55,9 +55,9 @@ def _summary(values: list[float]) -> dict[str, Any]:
 
 def _event_context(conn: Any, event_id: str) -> dict[str, Any] | None:
     """Resolve the event to its dyad, actors, date, band and regime. None when
-    the event is missing or carries no actor edges (the provenance invariant
-    guarantees INITIATED_BY/DIRECTED_AT, so their absence means 'no such
-    event')."""
+    the event is missing from both the graph and the corpus, or carries no
+    actor edges (the provenance invariant guarantees INITIATED_BY/DIRECTED_AT
+    on graph events; the corpus row carries the same pair)."""
     rows = kuzu_store.query(
         conn,
         "MATCH (i:Actor)<-[:INITIATED_BY]-(e:Event {node_id: $id})"
@@ -69,7 +69,25 @@ def _event_context(conn: Any, event_id: str) -> dict[str, Any] | None:
         {"id": event_id},
     )
     if not rows:
-        return None
+        from core.wire import serving as wire_serving
+
+        wire = wire_serving.event(event_id)
+        if not wire or not wire.get("initiator_id") or not wire.get("target_id"):
+            return None
+        initiator = str(wire["initiator_id"])
+        target = str(wire["target_id"])
+        return {
+            "id": event_id,
+            "date": str(wire.get("event_time") or ""),
+            "dyad": escalation.dyad_id(initiator, target),
+            "actors": {"initiator": initiator, "target": target},
+            "region": wire.get("region_pack"),
+            "escalation": {
+                "direction": wire.get("escalation_direction"),
+                "magnitude": wire.get("escalation_magnitude"),
+            },
+            "goldstein": wire.get("goldstein"),
+        }
     row = rows[0]
     return {
         "id": event_id,
@@ -86,7 +104,7 @@ def _event_context(conn: Any, event_id: str) -> dict[str, Any] | None:
 
 
 def _measured_for_event(conn: Any, event_id: str) -> dict[str, dict[str, Any]]:
-    """This event's own AFFECTED edges, keyed by market. What markets DID."""
+    """This event's own measured effects, keyed by market. What markets DID."""
     rows = kuzu_store.query(
         conn,
         "MATCH (e:Event {node_id: $id})-[a:AFFECTED]->(m:Market) "
@@ -95,6 +113,20 @@ def _measured_for_event(conn: Any, event_id: str) -> dict[str, dict[str, Any]]:
         "a.first_mover AS first_mover, a.resolution AS resolution",
         {"id": event_id},
     )
+    if not rows:
+        from core.api.routers.events import _effects_from_panel
+
+        rows = [
+            {
+                "market_id": r.get("market_node_id") or r.get("ticker"),
+                "market_name": r.get("market") or r.get("ticker"),
+                "abnormal_return": r.get("abnormal_return"),
+                "window": r.get("window"),
+                "first_mover": r.get("first_mover"),
+                "resolution": r.get("resolution"),
+            }
+            for r in _effects_from_panel(conn, event_id)
+        ]
     measured: dict[str, dict[str, Any]] = {}
     for row in rows:
         if row["abnormal_return"] is None:

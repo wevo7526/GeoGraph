@@ -28,6 +28,7 @@ import {
   headlineWord,
   kindName,
   postureClause,
+  pricingTrustSentence,
   regionLede,
   signedPct,
   standingPhrase,
@@ -151,6 +152,10 @@ function RegionGames({ region, onPick }: { region: string; onPick: (dyad: string
           </span>
         }
       />
+
+      {pricingTrustSentence(map.pricing_trust) && (
+        <p className="figure-note mt-4">{pricingTrustSentence(map.pricing_trust)}</p>
+      )}
 
       <Beat
         title="Who is pressing whom"

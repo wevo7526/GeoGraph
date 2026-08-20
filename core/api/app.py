@@ -532,6 +532,13 @@ def create_app() -> FastAPI:
                    games.router, impact.router, globe.router):
         app.include_router(router, prefix="/api")
 
+    # MCP ON THIS PROCESS, not a Mount and not a second graph. POST /mcp
+    # has to land here before the SPA GET catch-all is even registered —
+    # see core.mcp.http.
+    from core.mcp import http as mcp_http
+
+    mcp_http.attach(app)
+
     if _WEB_DIST.exists():
         app.mount("/assets", _ImmutableStaticFiles(directory=_WEB_DIST / "assets"), name="assets")
 

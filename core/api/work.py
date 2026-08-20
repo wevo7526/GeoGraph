@@ -396,12 +396,32 @@ def _study_in_process(
 
             Disk: when this slice is still mirroring AFFECTED into the graph,
             stop at the 400 MB floor rather than filling to zero. A later tick
-            continues into Postgres with `write_graph=False`. Memory still
-            always stops the slice — that kill is uncatchable.
+            continues into Postgres with `write_graph=False`. The panel has
+            the same 5 GB cap: stop a tick that would fill it, prune GDELT
+            skips, and resume. Memory still always stops the slice — that
+            kill is uncatchable.
             """
             if jobs_tight():
                 return True
+            if pg_store.panel_is_tight(panel):
+                return True
             return write_graph and _store.disk_is_tight(graph_path)
+
+        if pg_store.panel_is_tight(panel):
+            pruned = pg_store.prune_gdelt_runs(panel, drop_skips=True)
+            if pg_store.panel_is_tight(panel):
+                return {
+                    "stopped": "panel volume nearly full",
+                    "postgres": pg_store.storage_report(panel),
+                    "pruned": pruned,
+                    "remaining_total": remaining_total,
+                    "note": (
+                        "The study writes computed CARs into Postgres, not "
+                        "AFFECTED. GDELT skip-rows are the blast; they are "
+                        "pruned into event_study_coverage. If this still "
+                        "fires, the panel itself is full of numbers."
+                    ),
+                }
 
         slice_events = left[:_events_per_tick]
         outcome = runner.measure(
@@ -1507,7 +1527,30 @@ def prices(conn: Any, deadline: float) -> dict[str, Any]:
         "refreshed_from": start,
         "was_stale_days": stale_days,
         "packs": refreshed,
+        "intraday": _refresh_intraday(deadline),
     }
+
+
+def _refresh_intraday(deadline: float) -> list[dict[str, Any]]:
+    """~60 days of hourly prints — the ceiling yfinance actually keeps.
+
+    Recent events get a real `intraday_open_close` only if these rows exist.
+    A miss omits the window — not a skip-row, and never a daily number
+    under an intraday label.
+    """
+    from core.ingestion import market_data
+
+    settings = settings_module.load()
+    out: list[dict[str, Any]] = []
+    for name in _pack_names():
+        if time.monotonic() >= deadline:
+            break
+        try:
+            written = market_data.load_intraday(settings, region_pack=name)
+            out.append({"pack": name, "ok": True, "rows": written})
+        except Exception as exc:  # noqa: BLE001 - one pack must not stop the others
+            out.append({"pack": name, "ok": False, "error": str(exc)[-160:]})
+    return out
 
 
 def counts(conn: Any, deadline: float) -> dict[str, Any]:
@@ -1676,9 +1719,9 @@ def reclaim(conn: Any, deadline: float) -> dict[str, Any]:
     gone before writers stop — the boot's reclaim only fires below 64 MB,
     which is already the crash-loop zone. Takes no graph lock.
 
-    The panel half drops GDELT skip rows and unused windows. Those rows are
-    the watermark of a growing study; with the snapshot frozen they are
-    dead weight on the OTHER 5 GB volume.
+    The panel half drops GDELT skip rows and unused windows. Coverage is
+    the watermark now, so those skip rows are dead weight on the OTHER
+    5 GB volume whether or not the snapshot is frozen.
     """
     del conn, deadline
     from core.graph import kuzu_store
@@ -1699,7 +1742,7 @@ def reclaim(conn: Any, deadline: float) -> dict[str, Any]:
     else:
         try:
             panel_out = pg_store.prune_gdelt_runs(
-                panel, drop_skips=snapshot.frozen(),
+                panel, drop_skips=True,
             )
         finally:
             panel.close()

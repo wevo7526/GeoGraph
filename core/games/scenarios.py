@@ -590,8 +590,13 @@ def solve_dyad(
             classify=lambda steps: classify_course(steps, band, space)[0],
             space=space,
         )
+        trust = context.setdefault(
+            "pricing_trust",
+            pricing_module.trust_from_effects(context.get("effects") or []),
+        )
         priced = pricing_module.price_paths(
-            walked, context["effects"], as_of=context["as_of"], scale=scale or 1.0
+            walked, context["effects"], as_of=context["as_of"], scale=scale or 1.0,
+            trust=trust,
         )
         marginal = paths_module.marginal_intensity(priced, horizon)
         concepts[solver] = {
@@ -655,12 +660,9 @@ def solve_dyad(
             "standing": standing_now,
             "posture": read,
             # WHICH GAME THIS PAIR PLAYS, from what it IS and how it BEHAVES.
-            # The solver has one game — a crisis-bargaining model — and it was
-            # being applied to treaty allies, which is how US-Japan came to
-            # carry a 0.77 "escalation probability" and a modal course of
-            # "probe and retreat". Naming the family is the honest half of the
-            # fix; giving each family its own actions and fitted payoffs is
-            # the other, and is not done yet.
+            # Allies play burden-sharing, rivals play repeated competition,
+            # adversaries play crisis bargaining. The action names, the
+            # private types, and the stage payoffs all follow the family.
             "family": classification,
             "latest_intensity": round(float(latest["intensity"]), 3),
             "scale": round(float(scale or 0.0), 3),
@@ -1201,6 +1203,7 @@ def region_map(
         "scenarios_calming": calming[:12],
         "scenarios_all": sorted(all_scenarios, key=lambda sc: -sc["likelihood"])[:40],
         "boundary_statement": BOUNDARY_STATEMENT,
+        "pricing_trust": context.get("pricing_trust"),
     }
     aggregate["explanation"] = explain_region(aggregate)
     return {"region": aggregate, "dyads": solutions}

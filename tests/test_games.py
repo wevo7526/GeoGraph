@@ -470,6 +470,27 @@ def test_paths_without_measured_effects_say_so_rather_than_pricing_nothing():
     assert priced["paths"][0]["steps"][0]["market"] == []
 
 
+def test_price_paths_stamps_untrusted_on_market_rows():
+    from core.games import pricing
+
+    effects = [
+        _effect(f"e{i}", "material_conflict", 9.0, "market:brent", 0.01 + i * 0.002)
+        for i in range(12)
+    ]
+    band = state.intensity_band(9.0, 9.0)
+    priced = pricing.price_paths(
+        {"paths": [{"probability": 1.0, "steps": [
+            {"period": 1, "quad": "material_conflict", "intensity_band": band}]}]},
+        effects, as_of="2019-12-31", scale=9.0,
+        trust={"trusted": False, "note": "oracle-class cells have no skill",
+               "bottleneck": "transmission"},
+    )
+    rows = priced["paths"][0]["steps"][0]["market"]
+    assert rows and all(row["trusted"] is False for row in rows)
+    assert priced["pricing"]["trust"]["trusted"] is False
+    assert "UNTRUSTED" in priced["pricing"]["method"]
+
+
 # ── counterfactuals ──────────────────────────────────────────────────────────
 
 
@@ -1504,6 +1525,7 @@ def test_an_ally_pair_is_solved_in_the_ally_space(monkeypatch):
         graph_conn=None, horizon=2,
     )
     assert rival is not None
+    assert rival["opening"]["family"]["native"] is True
     assert rival["space"]["actions"] == list(family.RIVAL.actions)
     assert rival["payoffs"]["cost_resolute"] == solve.RIVAL_DEFAULTS.cost_resolute
     assert set(rival["concepts"]["lp"]["opening_matrix"]) == {"accommodating", "hardliner"}

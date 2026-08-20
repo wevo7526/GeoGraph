@@ -247,6 +247,39 @@ def iter_rows_of(pack: str) -> Iterator[dict[str, Any]]:
         yield _unslim(line)
 
 
+def events_for_dyad(dyad_id: str, *, limit: int = 400) -> list[dict[str, Any]]:
+    """Wire events on one dyad, from the slim corpus view.
+
+    The graph no longer holds a GDELT copy, so a case built on a roster
+    pair cannot walk INITIATED_BY to find membership. This scan is the
+    membership test: tab-contains then unslim, capped, deduped by id.
+    Empty means the corpus is dark or this pair has no coded wire, never
+    that nothing happened.
+    """
+    if not available() or not dyad_id:
+        return []
+    if not _WARMED:
+        warm()
+    needle = f"\t{dyad_id}\t"
+    out: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for slim in _EVENTS.values():
+        for line in slim:
+            if needle not in line:
+                continue
+            row = _unslim(line)
+            if str(row.get("dyad_id") or "") != dyad_id:
+                continue
+            node_id = str(row.get("node_id") or "")
+            if not node_id or node_id in seen:
+                continue
+            seen.add(node_id)
+            out.append(row)
+            if len(out) >= limit:
+                return out
+    return out
+
+
 # ── the explorer view: window queries over the wire ─────────────────────────
 
 

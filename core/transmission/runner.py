@@ -53,14 +53,13 @@ PANEL_FREQUENCY: dict[str, str] = {
 #: 400-700s of pure round-trip latency per region.
 DEFAULT_CHUNK = int(os.getenv("GEOGRAPH_STUDY_CHUNK", "500"))
 
-#: Does the study still mirror its measurements into the graph as AFFECTED
-#: edges? Default ON, so nothing changes until it is deliberately turned off.
+#: Does the study still mirror spine measurements into the graph as AFFECTED
+#: edges? Default ON for the curated spine (a handful of events). The GDELT
+#: wire is never mirrored — `graph_mirror_ids` excludes it — because an edge
+#: costs ~2 KB of a 5 GB volume against ~40 bytes for the panel row.
 #:
-#: AFFECTED is a projection of `event_study_runs`, and the projection is what
-#: does not fit: an edge costs ~2 KB of a 4.51 GB volume against ~40 bytes for
-#: the row it duplicates, so the graph tops out near two million edges against
-#: the ten million full coverage needs. The knowledge graph keeps every actor,
-#: event, dyad and relationship; only the measurement mirror is optional.
+#: AFFECTED is a projection of `event_study_runs`. The knowledge graph keeps
+#: actors, dyads, relations and the spine; the study finishes in Postgres.
 WRITE_GRAPH_EFFECTS = os.getenv("GEOGRAPH_GRAPH_EFFECTS", "1").strip().lower() not in {
     "0", "false", "no",
 }
@@ -155,17 +154,18 @@ def select_all(
     ever get to. The watermark is unchanged and so is the total work; what
     changes is WHICH events a truncated pass covers.
 
-    NEWEST-FIRST FOR THE UNCURATED TAIL, changed 2026-08-17, because
-    truncation stopped being temporary. Putting the curated spine first fixed
-    the narrated pages; everything else still walked 1979 forward on the
-    assumption that the pass would eventually finish. It will not. Measured
-    at production scale, an AFFECTED edge costs ~2 KB of volume — 127,071
-    edges took 250 MB — so the 4.51 GB volume tops out around two million
-    edges against the ten million full coverage would need, and the study
-    stops itself at the 400 MB floor. A permanent 20% is a CHOICE about which
-    20%, and oldest-first chooses the 1980s: the wire feed, the scenario
-    pricing, the transmission map and the biggest-moves list all read the
-    recent end and would have found it empty forever.
+    NEWEST-FIRST FOR THE UNCURATED TAIL, changed 2026-08-17, because a
+    truncated tick still has to serve the live surfaces first. Putting the
+    curated spine first fixed the narrated pages; walking 1979 forward
+    assumed the pass would finish inside the graph. It cannot: an AFFECTED
+    edge costs ~2 KB, the 5 GB graph tops out around two million edges, and
+    full wire coverage needs ~10 million. The study now finishes in
+    Postgres (computed CARs, no GDELT skip-rows, coverage as watermark),
+    so the archive can catch up — but a tick is still a slice, and oldest-
+    first would still leave the wire feed, scenario pricing and
+    transmission map looking at the 1980s until the last slice. Newest-
+    first is which 20% a truncated pass covers, not a claim that the
+    study cannot finish.
 
     Deep-tier events keep their place at the head of the tail by being
     curated, not by being old — and a market that did not exist at event time
@@ -354,6 +354,19 @@ def measure(
     preloaded_dates = {
         key: [str(r["obs_date"]) for r in rows] for key, rows in preloaded.items()
     }
+    today = dt.date.today()
+    intra: dict[str, list[dict[str, Any]]] = {}
+    if any(all_dates[e["id"]] >= today - dt.timedelta(days=60) for e in chosen):
+        start = (today - dt.timedelta(days=70)).isoformat()
+        end = (today + dt.timedelta(days=2)).isoformat()
+        for market in pack.markets:
+            ticker = str(market["ticker"])
+            try:
+                intra[ticker] = pg_store.series_intraday(
+                    panel, ticker, start=start, end=end,
+                )
+            except Exception:  # noqa: BLE001 - missing table is no prints
+                intra[ticker] = []
 
     def _slice(ticker: str, frequency: str, start: str, end: str) -> list[dict[str, Any]]:
         rows = preloaded.get((ticker, frequency), [])
@@ -478,6 +491,7 @@ def measure(
             prices=prices,
             other_event_dates=overlap.near(event_date),
             windows=wire_windows,
+            intraday=intra or None,
         )
         if on_event is not None:
             on_event(event, results, skips)

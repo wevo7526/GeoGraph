@@ -550,3 +550,31 @@ def test_the_pack_names_the_events_the_spine_run_measures():
         if case_study:
             # The case study's own episodes are the ones a reader opens first.
             assert curated >= {str(e) for e in case_study["events"]}
+
+
+def test_intraday_open_close_uses_first_and_last_print_on_session_zero():
+    prices = _series(dt.date(2025, 6, 13), _ESTIMATION + _GAP, [0.05, 0.0])
+    session = trading_calendar.first_session("us", dt.date(2025, 6, 13))
+    prints = [
+        {"ts": f"{session.isoformat()}T09:30:00", "price": 100.0},
+        {"ts": f"{session.isoformat()}T16:00:00", "price": 102.0},
+    ]
+    effects, skips = event_study.compute_effects(
+        _event(), [_market()], prices={"^GSPC": prices},
+        intraday={"^GSPC": prints},
+    )
+    intra = next(e for e in effects if e.window == "intraday_open_close")
+    assert intra.resolution == "intraday"
+    assert intra.raw_return == pytest.approx(0.02)
+    assert intra.expected_return == pytest.approx(0.0, abs=1e-12)
+    assert intra.abnormal_return == pytest.approx(0.02)
+    assert not any(s.window == "intraday_open_close" for s in skips)
+
+
+def test_missing_intraday_prints_are_omitted_not_skipped():
+    prices = _series(dt.date(2025, 6, 13), _ESTIMATION + _GAP, [0.05, 0.0])
+    effects, skips = event_study.compute_effects(
+        _event(), [_market()], prices={"^GSPC": prices},
+    )
+    assert not any(e.window == "intraday_open_close" for e in effects)
+    assert not any(s.window == "intraday_open_close" for s in skips)

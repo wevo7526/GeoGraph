@@ -57,6 +57,10 @@ markets:
     # sensor for Russian risk stopped being observable at exactly the moment
     # the risk materialised, and the depth report is what surfaces it.
     ticker: "IMOEX.ME"
+    # Yahoo's .ME suffix 404s more often than it quotes. The node id stays
+    # IMOEX — one market, one node — and ingest tries these symbols in order
+    # until a feed answers. Empty remains a recorded skip, not a fabricated bar.
+    feed_tickers: ["IMOEX", "IMOEX.ME"]
     market_type: equity_index
     trading_calendar: us
     inception_date: "1997-09-22"

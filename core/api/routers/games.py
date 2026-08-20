@@ -376,7 +376,11 @@ def explore(
         space=space,
     )
     priced = pricing_module.price_paths(
-        result, context["effects"], as_of=context["as_of"], scale=scale or 1.0
+        result, context["effects"], as_of=context["as_of"], scale=scale or 1.0,
+        trust=context.setdefault(
+            "pricing_trust",
+            pricing_module.trust_from_effects(context.get("effects") or []),
+        ),
     )
     escalate = 2  # the pressing action in every space
     payload: dict[str, Any] = {

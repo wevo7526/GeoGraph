@@ -31,6 +31,27 @@ def _conn(request: Request) -> Any:
     return conn
 
 
+def _effects_for_event(conn: Any, event_id: str) -> list[dict[str, Any]]:
+    """Panel-first measured effects. GDELT lives in event_study_runs."""
+    effects = kuzu_store.query(
+        conn,
+        "MATCH (e:Event {node_id: $id})-[a:AFFECTED]->(m:Market) "
+        "RETURN m.ticker AS ticker, m.name AS market, "
+        "m.market_type AS market_type, a.window AS window, "
+        "a.resolution AS resolution, a.raw_return AS raw_return, "
+        "a.abnormal_return AS abnormal_return, a.t_stat AS t_stat, "
+        "a.p_value AS p_value, a.first_mover AS first_mover, "
+        "a.overlapping AS overlapping, a.method AS method "
+        "ORDER BY ticker, window",
+        {"id": event_id},
+    )
+    if effects:
+        return effects
+    from core.api.routers.events import _effects_from_panel
+
+    return _effects_from_panel(conn, event_id)
+
+
 def _studies() -> dict[str, tuple[str, dict[str, Any]]]:
     """slug → (pack name, case study). Packs without one simply do not appear."""
     out: dict[str, tuple[str, dict[str, Any]]] = {}
@@ -77,6 +98,23 @@ def _episode(
         {"id": event_id},
     )
     if not event:
+        from core.wire import serving as wire_serving
+
+        row = wire_serving.event(event_id)
+        if row:
+            event = [{
+                "node_id": row.get("node_id") or event_id,
+                "name": row.get("name") or row.get("label") or event_id,
+                "event_time": row.get("event_time"),
+                "cameo_code": row.get("action_cameo_code") or row.get("cameo"),
+                "quad_class": row.get("quad_class"),
+                "goldstein": row.get("goldstein"),
+                "fidelity_tier": row.get("fidelity_tier") or "wire",
+                "escalation_direction": row.get("escalation_direction"),
+                "escalation_magnitude": row.get("escalation_magnitude"),
+                "escalation_baseline": row.get("escalation_baseline"),
+            }]
+    if not event:
         return {"node_id": event_id, "missing": "not in the graph — has the pack been seeded?"}
     # ONE READ FOR THE WHOLE STUDY, not one per episode. A dyad study asks for
     # eight episodes and every one of them used to run its own AFFECTED query
@@ -87,18 +125,7 @@ def _episode(
     if effects_by_event is not None:
         effects = effects_by_event.get(event_id, [])
     else:
-        effects = kuzu_store.query(
-            conn,
-            "MATCH (e:Event {node_id: $id})-[a:AFFECTED]->(m:Market) "
-            "RETURN m.ticker AS ticker, m.name AS market, "
-            "m.market_type AS market_type, a.window AS window, "
-            "a.resolution AS resolution, a.raw_return AS raw_return, "
-            "a.abnormal_return AS abnormal_return, a.t_stat AS t_stat, "
-            "a.p_value AS p_value, a.first_mover AS first_mover, "
-            "a.overlapping AS overlapping, a.method AS method "
-            "ORDER BY ticker, window",
-            {"id": event_id},
-        )
+        effects = _effects_for_event(conn, event_id)
     from core.reasoning import impact as impact_module
 
     read = impact_module.event_impact(conn, event_id)
@@ -128,8 +155,8 @@ def _narrate(dyad_name: str, episodes: list[dict[str, Any]]) -> dict[str, str]:
                 "measured market effect, so this study has a spine and no numbers."
             ),
             "reading": (
-                "The transmission engine measures events in the graph on a measuring "
-                "boot; until it reaches these, nothing is asserted about markets."
+                "The transmission engine measures events into the panel; until "
+                "it reaches these, nothing is asserted about markets."
             ),
             "caveat": "Not yet measured. Not advice.",
         }
@@ -251,12 +278,14 @@ def dynamic_case_study(
     prose = _narrate(dyad_name, episodes)
     measured = sum(len(e.get("effects", [])) for e in episodes)
     dek = (
-        "The measured record of this event — what markets did. Not a narrated "
-        "case study."
+        "A composed reading of the measured record — every figure is the "
+        "transmission engine's. The desk can argue from it; it does not "
+        "originate a number."
         if event
         else (
-            "The measured record: the events that moved this relationship most, "
-            "and what markets measurably did. Not a narrated case study."
+            "A composed reading of the events that moved this relationship "
+            "most, and what markets measurably did. The desk can argue from "
+            "it; it does not originate a number."
         )
     )
     return {
@@ -346,18 +375,7 @@ def get_case_study(request: Request, slug: str) -> dict[str, Any]:
             "RETURN d.node_id AS node_id, d.name AS name",
             {"id": event_id},
         )
-        effects = kuzu_store.query(
-            conn,
-            "MATCH (e:Event {node_id: $id})-[a:AFFECTED]->(m:Market) "
-            "RETURN m.ticker AS ticker, m.name AS market, "
-            "m.market_type AS market_type, a.window AS window, "
-            "a.resolution AS resolution, a.raw_return AS raw_return, "
-            "a.abnormal_return AS abnormal_return, a.t_stat AS t_stat, "
-            "a.p_value AS p_value, a.first_mover AS first_mover, "
-            "a.overlapping AS overlapping, a.method AS method "
-            "ORDER BY ticker, window",
-            {"id": event_id},
-        )
+        effects = _effects_for_event(conn, event_id)
         episodes.append({
             **event[0],
             "note": notes.get(event_id, ""),

@@ -227,18 +227,40 @@ def _effects_from_panel(event_id: str) -> list[dict[str, Any]]:
 
 
 def analogues_for(conn: kuzu.Connection, query_ref: str) -> dict[str, Any]:
-    """Regime-admissible structural analogues for an event already in the graph.
+    """Regime-admissible structural analogues, plus request-time vector propose.
 
-    Read-only: ranks, does not persist Analogue nodes (the MCP server holds a
-    reader against the single-writer lock). The vector-index half is still
-    unbuilt; this is the deterministic half that disposes.
+    Structural rank DISPOSES. Vector cosine PROPOSES and is never persisted —
+    a Hobby volume cannot hold the wire as embeddings. Empty `proposed` means
+    the key is dark or the SDK is missing, not that nothing was similar.
     """
     from core.reasoning import analogy
 
     try:
         rows = analogy.rank_from_conn(conn, query_ref, k=min(MAX_ROWS, 8), persist=False)
     except KeyError as exc:
-        return {"rows": [], "error": str(exc), "coverage": _COVERAGE}
+        return {"rows": [], "proposed": [], "error": str(exc), "coverage": _COVERAGE}
+    proposed: list[dict[str, Any]] = []
+    try:
+        candidates = kuzu_store.query(conn, analogy.EVENT_QUERY)
+    except Exception:  # noqa: BLE001 - propose is optional; rank still returns
+        candidates = []
+    if candidates:
+        by_id = {row["node_id"]: row for row in candidates}
+        query = by_id.get(query_ref)
+        if query is not None:
+            try:
+                for score, row in analogy.propose_candidates(
+                    query, candidates,
+                    query_date=str(query["event_time"]),
+                    k=min(5, MAX_ROWS),
+                ):
+                    proposed.append({
+                        "event_id": row["node_id"],
+                        "cosine": score,
+                        "note": "propose only — structural rank disposes",
+                    })
+            except analogy.ProposeUnavailable:
+                proposed = []
     return {
         "rows": [
             {
@@ -249,8 +271,13 @@ def analogues_for(conn: kuzu.Connection, query_ref: str) -> dict[str, Any]:
             }
             for r in rows
         ],
+        "proposed": proposed,
         "truncated": False,
         "coverage": _COVERAGE,
+        "note": (
+            "vector propose is request-time and never written to the graph; "
+            "a 5 GB volume cannot hold the wire as embeddings"
+        ),
     }
 
 

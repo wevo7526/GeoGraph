@@ -1142,7 +1142,12 @@ export interface ConceptSolution {
   paths: Array<{ probability: number; steps: ScenarioStep[] }>
   paths_enumerated: number
   retained_probability: number
-  pricing: { measurements: number; cells: number; note?: string } | null
+  pricing: {
+    measurements: number
+    cells: number
+    note?: string | null
+    trust?: PricingTrust | null
+  } | null
   opening_matrix: Record<string, OpeningMatrix>
   scenarios: Scenario[]
 }
@@ -1290,6 +1295,7 @@ export interface RegionMap {
   scenarios_all: Scenario[]
   explanation: string[]
   boundary_statement: string
+  pricing_trust?: PricingTrust | null
   computed_at?: string
   persisted?: boolean
   note?: string
@@ -1372,6 +1378,15 @@ export interface SkillStratum {
   beats_naive?: boolean | null
 }
 
+/** Whether priced courses rest on a matcher with skill. */
+export interface PricingTrust {
+  oracle_beats_naive?: boolean | null
+  game_beats_naive?: boolean | null
+  trusted?: boolean
+  bottleneck?: 'transmission' | 'sequencing' | null
+  note?: string | null
+}
+
 /** Compact leave-one-out scoreboard on stored cells — never a new study. */
 export interface TransmissionSkill {
   window?: string
@@ -1381,6 +1396,9 @@ export interface TransmissionSkill {
   by_market_type?: Record<string, SkillStratum>
   sovereign_yield?: SkillStratum | null
   gspc_control?: SkillStratum | null
+  quad_band?: SkillStratum | null
+  game_band?: SkillStratum | null
+  trust?: PricingTrust | null
   method?: string
 }
 
