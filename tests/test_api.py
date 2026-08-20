@@ -318,8 +318,53 @@ def test_network_snapshot_is_empty_before_any_window_is_computed(client):
     assert response.status_code == 200
     body = response.json()
     assert body["brokers"] == []
+    assert body["eigenvector"] == []
+    assert body["roster"] == []
+    assert body["decades"] == []
     assert body["window_end"] is None
     assert "computed" in body["note"]
+
+
+def test_the_network_snapshot_never_computes_on_request():
+    import inspect
+
+    from core.api.routers import network as network_router
+
+    src = inspect.getsource(network_router)
+    assert "compute_metrics" not in src
+    assert "networkx" not in src
+    assert network_router._decade_label("1970-01-01", "1979-12-31") == "1970s"
+    assert network_router._decade_label("1972-01-01", "2026-12-31") is None
+
+
+def test_network_snapshot_serves_the_persisted_desk(tmp_path, monkeypatch):
+    """Bars, the roster table and decade leaders are projections of
+    NetworkMetric — the API does not rank the graph on a request thread."""
+    from core.graph import analytics
+
+    db = tmp_path / "netdesk.kuzu"
+    monkeypatch.setenv("KUZU_DB_PATH", str(db))
+    monkeypatch.delenv("DATABASE_URL", raising=False)
+    conn = kuzu_store.connect(db)
+    _load_seed().seed(conn, packs.load("mena"))
+    kuzu_store.close(conn)
+    analytics.compute_metrics(db, analytics.Window("2010-01-01", "2019-12-31"))
+    analytics.compute_metrics(db, analytics.Window("2020-01-01", "2029-12-31"))
+
+    from core.api.app import create_app
+
+    with TestClient(create_app()) as desk_client:
+        body = desk_client.get("/api/network/snapshot?region=mena").json()
+    roster_ids = {a["id"] for a in packs.load("mena").actors}
+    assert body["brokers"]
+    assert body["roster"]
+    assert body["n"] == len(body["roster"])
+    assert {row["subject_id"] for row in body["brokers"]} <= roster_ids
+    assert {row["subject_id"] for row in body["roster"]} <= roster_ids
+    assert any(row["label"] == "2010s" for row in body["decades"])
+    assert any(row["label"] == "2020s" for row in body["decades"])
+    assert len(body["brokerage_over_time"]) >= 2
+    assert "on request" in body["method"]
 
 
 def test_an_unknown_api_route_is_a_json_404_not_the_spa(client):

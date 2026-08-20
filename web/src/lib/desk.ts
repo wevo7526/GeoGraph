@@ -30,6 +30,7 @@ export function surfaceFromRoute(route: string): string {
     return 'relationships'
   }
   if (path.startsWith('/case')) return 'cases'
+  if (path.startsWith('/network')) return 'network'
   if (path.startsWith('/explore')) return 'explorer'
   return 'intel'
 }
