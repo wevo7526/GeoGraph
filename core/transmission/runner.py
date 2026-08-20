@@ -59,7 +59,8 @@ DEFAULT_CHUNK = int(os.getenv("GEOGRAPH_STUDY_CHUNK", "500"))
 #: costs ~2 KB of a 5 GB volume against ~40 bytes for the panel row.
 #:
 #: AFFECTED is a projection of `event_study_runs`. The knowledge graph keeps
-#: actors, dyads, relations and the spine; the study finishes in Postgres.
+#: actors, dyads, relations and the spine; live GDELT 2.0 is an overlay and
+#: is never mirrored here.
 WRITE_GRAPH_EFFECTS = os.getenv("GEOGRAPH_GRAPH_EFFECTS", "1").strip().lower() not in {
     "0", "false", "no",
 }

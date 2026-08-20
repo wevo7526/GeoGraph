@@ -475,8 +475,9 @@ def prune_gdelt_runs(
     untouched. Bounded so a tick cannot lock the table for its whole life.
 
     Coverage is stamped FROM the doomed skip rows in the same statement, so
-    pruning never un-does a watermark and the study does not re-measure what
-    it already finished.
+    pruning never un-does a watermark. Page recycle runs afterwards from
+    `reclaim`, not here — that statement cannot run in a transaction, and
+    the tests pin this DELETE SQL.
     """
     extra = (
         " OR status IN ('skipped_no_data', 'skipped_no_market')"
@@ -508,6 +509,21 @@ def prune_gdelt_runs(
     return {"deleted": deleted, "drop_skips": drop_skips, "limit": int(limit)}
 
 
+def vacuum_runs(conn: Any) -> dict[str, Any]:
+    """Recycle table pages after prune. VACUUM cannot run in a transaction."""
+    prev = getattr(conn, "autocommit", None)
+    try:
+        conn.autocommit = True
+        with conn.cursor() as cur:
+            cur.execute("VACUUM event_study_runs")
+        return {"ok": True}
+    except Exception as exc:  # noqa: BLE001 - reclaim must still report the prune
+        return {"ok": False, "error": str(exc)[:160]}
+    finally:
+        if prev is not None:
+            conn.autocommit = prev
+
+
 def database_bytes(conn: Any) -> int:
     """What this database occupies, including indexes and TOAST."""
     with conn.cursor() as cur:
@@ -516,7 +532,9 @@ def database_bytes(conn: Any) -> int:
     return int(row[0] if row else 0)
 
 
-def panel_is_tight(conn: Any, *, cap: int = PANEL_CAP_BYTES, floor: int = PANEL_FLOOR_BYTES) -> bool:
+def panel_is_tight(
+    conn: Any, *, cap: int = PANEL_CAP_BYTES, floor: int = PANEL_FLOOR_BYTES,
+) -> bool:
     """Would another study tick risk filling the 5 GB Postgres volume?"""
     return database_bytes(conn) > max(0, cap - floor)
 
@@ -979,9 +997,10 @@ def storage_report(conn: Any) -> dict[str, Any]:
         "event_study_runs_by_status": by_status,
         "event_study_coverage_rows": coverage_rows,
         "note": (
-            "The study finishes here, not in Kuzu. GDELT skip-rows are not "
-            "stored; event_study_coverage is the watermark. AFFECTED on the "
-            "graph is a spine-only mirror."
+            "GDELT skip-rows are not stored; event_study_coverage is the "
+            "watermark so an unfreeze cannot re-measure what prune deleted. "
+            "AFFECTED on the graph is a spine-only mirror. Live GDELT 2.0 "
+            "is not written here."
         ),
     }
 

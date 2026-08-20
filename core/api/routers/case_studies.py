@@ -115,6 +115,23 @@ def _episode(
                 "escalation_baseline": row.get("escalation_baseline"),
             }]
     if not event:
+        from core.wire import live as live_overlay
+
+        row = live_overlay.row_by_id(event_id)
+        if row:
+            event = [{
+                "node_id": row.get("node_id") or event_id,
+                "name": row.get("name") or event_id,
+                "event_time": row.get("event_time"),
+                "cameo_code": row.get("action_cameo_code") or row.get("cameo_code"),
+                "quad_class": row.get("quad_class"),
+                "goldstein": row.get("goldstein"),
+                "fidelity_tier": "live",
+                "escalation_direction": row.get("escalation_direction"),
+                "escalation_magnitude": row.get("escalation_magnitude"),
+                "escalation_baseline": row.get("escalation_baseline"),
+            }]
+    if not event:
         return {"node_id": event_id, "missing": "not in the graph — has the pack been seeded?"}
     # ONE READ FOR THE WHOLE STUDY, not one per episode. A dyad study asks for
     # eight episodes and every one of them used to run its own AFFECTED query

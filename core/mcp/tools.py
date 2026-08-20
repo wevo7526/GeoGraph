@@ -453,7 +453,7 @@ def wire_live(region: str = "mena", limit: int = 12) -> dict[str, Any]:
         try:
             from core import packs
 
-            live_overlay.refresh_pack(packs.load(region))
+            live_overlay.ensure_pack(packs.load(region))
             rows = list(live_overlay.rows_for(region) or [])
         except Exception as exc:  # noqa: BLE001 - live feed failing is not a 500
             return {
@@ -472,6 +472,7 @@ def wire_live(region: str = "mena", limit: int = 12) -> dict[str, Any]:
             "quad_class": row.get("quad_class"),
             "implied_kind": row.get("implied_kind"),
             "dyad_id": row.get("dyad_id"),
+            "measured": row.get("measured") or [],
         })
     return {
         "region": region,

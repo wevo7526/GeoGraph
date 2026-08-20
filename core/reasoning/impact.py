@@ -73,7 +73,25 @@ def _event_context(conn: Any, event_id: str) -> dict[str, Any] | None:
 
         wire = wire_serving.event(event_id)
         if not wire or not wire.get("initiator_id") or not wire.get("target_id"):
-            return None
+            from core.wire import live as live_overlay
+
+            live_row = live_overlay.row_by_id(event_id)
+            if not live_row or not live_row.get("initiator_id") or not live_row.get("target_id"):
+                return None
+            initiator = str(live_row["initiator_id"])
+            target = str(live_row["target_id"])
+            return {
+                "id": event_id,
+                "date": str(live_row.get("event_time") or ""),
+                "dyad": escalation.dyad_id(initiator, target),
+                "actors": {"initiator": initiator, "target": target},
+                "region": live_row.get("region_pack"),
+                "escalation": {
+                    "direction": live_row.get("escalation_direction"),
+                    "magnitude": live_row.get("escalation_magnitude"),
+                },
+                "goldstein": live_row.get("goldstein"),
+            }
         initiator = str(wire["initiator_id"])
         target = str(wire["target_id"])
         return {

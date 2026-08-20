@@ -92,6 +92,9 @@ def test_the_study_does_not_grow_the_wire_while_the_snapshot_is_frozen():
     src = inspect.getsource(work._pack_study_events)
     assert "snapshot.frozen" in src
     assert "add_corpus_wire" in src
+    study = inspect.getsource(work.study)
+    assert "snapshot.frozen" in study
+    assert "live intake is GDELT 2.0" in study
 
 
 def test_the_live_module_never_imports_a_graph_writer():
@@ -102,6 +105,84 @@ def test_the_live_module_never_imports_a_graph_writer():
     assert "merge_nodes" not in source
     assert "write_edges" not in source
     assert "write_effects" not in source
+    assert "record_runs" not in source
+
+
+def test_attach_measured_stamps_the_overlay_without_writing(monkeypatch):
+    """This-event CARs live on the overlay. The frozen map does not move."""
+    from core.panel import pg_store
+    from core.transmission import event_study
+    from core.transmission.event_study import EffectResult
+
+    live_overlay.clear()
+
+    class _Pack:
+        name = "mena"
+        markets = [{
+            "ticker": "^GSPC", "id": "market:spx", "name": "S&P 500",
+            "inception_date": "1950-01-01",
+            "native_frequency": '{"1972": "day"}',
+        }]
+
+    row = {
+        "node_id": "event:gdelt-live-1",
+        "event_time": "2026-08-17T12:00:00",
+        "escalation_magnitude": 6.0,
+    }
+    live_overlay._PACK["mena"] = {"rows": [row]}
+
+    class _Panel:
+        def close(self) -> None:
+            return None
+
+    monkeypatch.setattr(pg_store, "connect", lambda settings: _Panel())
+    monkeypatch.setattr(pg_store, "series", lambda *a, **k: [])
+    monkeypatch.setattr(pg_store, "series_intraday", lambda *a, **k: [])
+
+    def _compute(event, markets, **kwargs):
+        del markets, kwargs
+        return ([EffectResult(
+            event_node_id=event["node_id"], market_ticker="^GSPC",
+            window="car_0_1", resolution="day",
+            raw_return=0.01, expected_return=0.0, abnormal_return=0.01,
+            t_stat=1.0, p_value=0.3, first_mover=True, overlapping=False,
+            method="test",
+        )], [])
+
+    monkeypatch.setattr(event_study, "compute_effects", _compute)
+    stamped = live_overlay.attach_measured(_Pack())
+    assert stamped == 1
+    assert row["measured"][0]["abnormal_return"] == 0.01
+    assert row["measured"][0]["ticker"] == "^GSPC"
+    assert live_overlay.row_by_id("event:gdelt-live-1") is row
+
+
+def test_refresh_pack_keeps_this_event_measurements(monkeypatch):
+    from core.ingestion import stream
+
+    live_overlay.clear()
+
+    class _Pack:
+        name = "mena"
+        actors = []
+
+    live_overlay._PACK["mena"] = {"rows": [{
+        "node_id": "event:gdelt-1",
+        "measured": [{"ticker": "^GSPC", "window": "car_0_1", "abnormal_return": 0.01}],
+    }]}
+    monkeypatch.setattr(stream, "poll", lambda pack, roster: {
+        "published": "20260817181500",
+        "rows": [{
+            "node_id": "event:gdelt-1",
+            "event_time": "2026-08-17T12:00:00",
+            "goldstein": -8.0,
+            "dyad_id": "dyad:cow-2--cow-630",
+            "quad_class": "material_conflict",
+        }],
+    })
+    monkeypatch.setattr(live_overlay, "snapshot_baselines", lambda pack: {})
+    out = live_overlay.refresh_pack(_Pack())
+    assert out["rows"][0]["measured"][0]["abnormal_return"] == 0.01
 
 
 def test_the_live_feed_passes_action_geo_for_display_not_as_a_retarget():
@@ -129,3 +210,20 @@ def test_the_live_feed_does_not_attach_a_strategy_contract():
     assert "strategy_contract" not in source
     assert "assess_cell" not in source
     assert "Head B" not in source
+    assert "measured" in source
+    assert "transmission map" in source
+    assert "ensure_pack" in source
+
+
+def test_case_and_impact_read_the_live_overlay_after_graph_and_corpus_miss():
+    import inspect
+
+    from core.api.routers import case_studies
+    from core.api.routers import events as events_router
+    from core.reasoning import impact as impact_module
+
+    assert "row_by_id" in inspect.getsource(case_studies._episode)
+    assert "row_by_id" in inspect.getsource(impact_module._event_context)
+    assert "_live_event_detail" in inspect.getsource(events_router.get_event)
+    assert "row_by_id" in inspect.getsource(events_router._live_event_detail)
+    assert "_effects_from_live" in inspect.getsource(events_router._effects_from_panel)

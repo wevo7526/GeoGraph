@@ -123,6 +123,36 @@ function LiveCard({ item }: { item: WireLiveItem }) {
             } Historical market cells below are analogy — what similarly coded events did — not a live trade.`
           : `Coded as ${kind}. Historical cells are analogy from the frozen transmission map, not a live trade.`}
       </p>
+      {item.measured && item.measured.length ? (
+        <div className="scroll-x mt-2">
+          <table className="rule-table" style={{ minWidth: 420 }}>
+            <thead>
+              <tr>
+                <th className="text-left">this event</th>
+                <th className="text-right">window</th>
+                <th className="text-right">abnormal</th>
+              </tr>
+            </thead>
+            <tbody>{item.measured.slice(0, 8).map((row) => (
+              <tr key={`${row.ticker}-${row.window}`}>
+                <td>
+                  {row.market || row.ticker}{' '}
+                  <span className="mono text-xs" style={{ color: 'var(--muted)' }}>{row.ticker}</span>
+                </td>
+                <td className="text-right mono">{row.window}</td>
+                <td className="text-right mono">
+                  {row.abnormal_return == null
+                    ? '—'
+                    : `${row.abnormal_return >= 0 ? '+' : ''}${(row.abnormal_return * 100).toFixed(2)}%`}
+                </td>
+              </tr>
+            ))}</tbody>
+          </table>
+          <p className="figure-note">
+            Session prints for this event, scored in memory. Not written into the frozen transmission map.
+          </p>
+        </div>
+      ) : null}
       {outlook.length ? (
         <div className="scroll-x mt-2">
           <table className="rule-table" style={{ minWidth: 480 }}>

@@ -152,6 +152,16 @@ export interface WireLiveMarketImpact {
   thin: boolean
 }
 
+export interface WireLiveMeasured {
+  ticker: string
+  market?: string
+  window: string
+  resolution?: string
+  abnormal_return: number | null
+  raw_return?: number | null
+  expected_return?: number | null
+}
+
 export interface WireLiveItem {
   node_id: string
   event_time: string
@@ -182,6 +192,8 @@ export interface WireLiveItem {
   escalation_baseline?: number | null
   escalation_direction?: string | null
   escalation_magnitude?: number | null
+  /** This event's session move, computed in memory. Not the frozen map. */
+  measured?: WireLiveMeasured[]
   market_outlook: WireLiveMarketImpact[]
 }
 
