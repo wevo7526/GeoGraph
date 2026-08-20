@@ -609,18 +609,20 @@ def ally_windows(pack: Any) -> tuple[dict[str, list[tuple[int, int]]], list[str]
     # plainly: eurasia declares Russia–Ukraine a rivalry from 2014-02-27.
     # Antagonism outranks a lapsed treaty, exactly as `_STANDING_PRIORITY`
     # already has it for the standing a reader is shown.
+    relations = list(getattr(pack, "relations", []) or [])
+    actors = list(getattr(pack, "actors", []) or [])
     rivalries = {
         escalation.dyad_id(str(r["a"]), str(r["b"]))
-        for r in pack.relations
+        for r in relations
         if str(r.get("relation_type")) == "rivalry"
     }
-    roster = {str(a["id"]) for a in pack.actors}
+    roster = {str(a["id"]) for a in actors}
     ccode_to_id = {
-        int(a["cow_ccode"]): str(a["id"]) for a in pack.actors if a.get("cow_ccode")
+        int(a["cow_ccode"]): str(a["id"]) for a in actors if a.get("cow_ccode")
     }
     windows: dict[str, list[tuple[int, int]]] = {}
     sources: list[str] = []
-    for relation in pack.relations:
+    for relation in relations:
         # A DEFENCE PACT, not any treaty. These windows decide when two states
         # coded against each other are read as partners rather than opponents,
         # so admitting shared IGO membership here would have made every pair in
@@ -633,6 +635,32 @@ def ally_windows(pack: Any) -> tuple[dict[str, list[tuple[int, int]]], list[str]
                 (_year_of(relation.get("valid_from"), 1905),
                  _year_of(relation.get("valid_to"), 9999))
             )
+    # MEMBERSHIP LISTS, expanded here rather than written as C(n,2) pack
+    # relations: NATO on the Eurasia roster is ~120 pairs, and a pack row at
+    # 1949-04-04 would collide with COW's own NATO edge. The windows are what
+    # the co-participation and allied-presence readings need.
+    for bloc in getattr(pack, "alliance_blocs", []):
+        default_start = _year_of(bloc.get("valid_from"), 1905)
+        default_end = _year_of(bloc.get("valid_to"), 9999)
+        members: list[tuple[str, int, int]] = []
+        for member in bloc.get("members") or []:
+            if isinstance(member, str):
+                node_id, start, end = member, default_start, default_end
+            else:
+                node_id = str(member.get("id") or "")
+                start = _year_of(member.get("valid_from"), default_start)
+                end = _year_of(member.get("valid_to"), default_end)
+            if node_id:
+                members.append((node_id, start, end))
+        for i, (a, a0, a1) in enumerate(members):
+            for b, b0, b1 in members[i + 1:]:
+                lo, hi = max(a0, b0), min(a1, b1)
+                if lo > hi:
+                    continue
+                dyad = escalation.dyad_id(a, b)
+                if dyad in rivalries:
+                    continue
+                windows.setdefault(dyad, []).append((lo, hi))
     if windows:
         sources.append("packs")
     cow_file = _RAW_DIR / _COW_ALLIANCES

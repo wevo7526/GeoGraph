@@ -175,7 +175,30 @@ def list_events(
     merged = graph_rows + [row for row in wire_rows if row["node_id"] not in seen]
     merged.sort(key=lambda row: (row["event_time"] or "", row["node_id"]), reverse=desc)
     truncated = graph_truncated or wire_truncated or len(merged) > limit
-    return {"rows": merged[:limit], "truncated": truncated}
+    from core import packs
+    from core.games import family as family_module
+
+    actor_names, geo_names, iso3_by_actor = packs.roster_names()
+    windows: dict[str, list[tuple[int, int]]] = {}
+    if pack:
+        try:
+            windows, _ = family_module.ally_windows(packs.load(pack))
+        except packs.PackError:
+            windows = {}
+    rows = []
+    for row in merged[:limit]:
+        flag = family_module.allied_in(
+            windows.get(str(row.get("dyad_id") or "")),
+            family_module._year_of(row.get("event_time"), 0),
+        ) if windows else None
+        rows.append(wire_headline.decorate(
+            row,
+            actor_names=actor_names,
+            geo_names=geo_names,
+            iso3_by_actor=iso3_by_actor,
+            allied=flag,
+        ))
+    return {"rows": rows, "truncated": truncated}
 
 
 @router.get("/events/coverage")
@@ -678,18 +701,7 @@ def _pack_roster() -> tuple[dict[str, str], dict[str, str]]:
 
     names: dict[str, str] = {}
     geo: dict[str, str] = {}
-    for pack_name in packs.available():
-        try:
-            pack = packs.load(pack_name)
-        except packs.PackError:
-            continue
-        for actor in pack.actors:
-            node_id, name = str(actor.get("id") or ""), actor.get("name")
-            if node_id and name:
-                names.setdefault(node_id, str(name))
-            iso3 = str(actor.get("iso3") or "").strip().upper()
-            if iso3 and name:
-                geo.setdefault(iso3, str(name))
+    names, geo, _iso3 = packs.roster_names()
     return names, geo
 
 

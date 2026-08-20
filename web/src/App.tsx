@@ -110,7 +110,7 @@ export default function App() {
     page = <IntelPage region={region} onNavigate={navigate} />
     scrollPage = true
   } else if (route.startsWith('/network')) {
-    page = <NetworkPage region={region} />
+    page = <NetworkPage region={region} onNavigate={navigate} />
     scrollPage = true
   } else {
     page = <Explorer region={region} onNavigate={navigate} />

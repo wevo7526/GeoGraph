@@ -10,8 +10,8 @@
  *  copies of "escalate/escalate → de-escalate/de-escalate → …".
  *
  *  Now: a composed lede (lib/story.ts), the ranking as one measured bar, the
- *  courses as strips, the fan as a fan — and the solver's whole vocabulary,
- *  with the audit prose it belongs to, under "How this was solved". The
+ *  courses as strips, the fan as a fan — and the solver's whole vocabulary
+ *  under "How this was solved", on the page, not in a disclosure. The
  *  payload is unchanged; §17 still holds, and holds more tightly, because
  *  every clause on the page is reachable from one field.
  */
@@ -19,7 +19,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { getDyadSolution, getRegionMap, lastFailureFor } from '../api'
 import { useRegionLabel } from '../regions'
 import type { ConceptSolution, DyadSolution, RegionMap, Scenario } from '../types'
-import { Beat, Disclosure, Empty, StoryHead } from '../ui'
+import { Beat, Empty, StoryHead } from '../ui'
 import {
   courseInWords,
   courseSentence,
@@ -241,36 +241,34 @@ function RegionGames({ region, onPick }: { region: string; onPick: (dyad: string
       )}
 
       <Beat title="How this was solved" aside="The concepts, the kernel and the audit paragraphs the numbers above come from.">
-        <Disclosure label="the method, in the estimator's own words">
-          <div className="mt-3">
-            <Tiles items={[
-              { label: 'pairs solved', value: String(map.dyads_solved), sub: `${map.dyads_cinc} with a capability estimate` },
-              { label: 'on their own kernel', value: String(map.dyads_tilted), sub: map.model ? `${map.model.name}` : 'no frozen model' },
-              { label: 'nash gap (audit)', value: map.nash_gap.mean !== null ? map.nash_gap.mean.toFixed(3) : '—', sub: map.nash_gap.max !== null ? `0 sat on a Nash point · worst ${map.nash_gap.max.toFixed(3)}` : '0 sat on a Nash point; the play is the fitted QRE' },
-              { label: 'kernel measured', value: pct(map.kernel.share_measured, 0), sub: `${count(map.kernel.observations)} dyad-quarters` },
-            ]} />
-          </div>
-          {map.explanation.map((p, i) => (
-            <p key={i} className="text-sm leading-relaxed mt-3" style={{ maxWidth: '68ch' }}>{p}</p>
+        <div className="mt-3">
+          <Tiles items={[
+            { label: 'pairs solved', value: String(map.dyads_solved), sub: `${map.dyads_cinc} with a capability estimate` },
+            { label: 'on their own kernel', value: String(map.dyads_tilted), sub: map.model ? `${map.model.name}` : 'no frozen model' },
+            { label: 'nash gap (audit)', value: map.nash_gap.mean !== null ? map.nash_gap.mean.toFixed(3) : '—', sub: map.nash_gap.max !== null ? `0 sat on a Nash point · worst ${map.nash_gap.max.toFixed(3)}` : '0 sat on a Nash point; the play is the fitted QRE' },
+            { label: 'kernel measured', value: pct(map.kernel.share_measured, 0), sub: `${count(map.kernel.observations)} dyad-quarters` },
+          ]} />
+        </div>
+        {map.explanation.map((p, i) => (
+          <p key={i} className="text-sm leading-relaxed mt-3" style={{ maxWidth: '68ch' }}>{p}</p>
+        ))}
+        <dl className="statline mt-4">
+          {Object.entries(map.payoffs ?? {}).map(([k, v]) => (
+            <div key={k}><dt>{k.replace('_', ' ')}</dt><dd>{v.toFixed(3)}</dd></div>
           ))}
-          <dl className="statline mt-4">
-            {Object.entries(map.payoffs ?? {}).map(([k, v]) => (
-              <div key={k}><dt>{k.replace('_', ' ')}</dt><dd>{v.toFixed(3)}</dd></div>
-            ))}
-          </dl>
-          <ul className="mt-3 text-xs space-y-1" style={{ color: 'var(--muted)' }}>
-            {Object.entries(map.concepts).map(([k, v]) => <li key={k}><b>{k.toUpperCase()}</b>: {v}</li>)}
-            <li>kernel: {map.kernel.measured} of {map.kernel.cells} cells measured, {map.kernel.fallback} fallback</li>
-          </ul>
-          <div className="mt-6">
-            <div className="kicker mb-2">The region's fan — average mass by band, quarter by quarter</div>
-            <BandHeat rows={map.region_fan.map((r) => r.distribution)} bandLabels={bands} />
-          </div>
-          <div className="mt-6">
-            <div className="kicker mb-2">Expected band by pair and quarter</div>
-            <ExpectedHeat heat={map.heat} bands={bands.length} onPick={onPick} />
-          </div>
-        </Disclosure>
+        </dl>
+        <ul className="mt-3 text-xs space-y-1" style={{ color: 'var(--muted)' }}>
+          {Object.entries(map.concepts).map(([k, v]) => <li key={k}><b>{k.toUpperCase()}</b>: {v}</li>)}
+          <li>kernel: {map.kernel.measured} of {map.kernel.cells} cells measured, {map.kernel.fallback} fallback</li>
+        </ul>
+        <div className="mt-6">
+          <div className="kicker mb-2">The region's fan — average mass by band, quarter by quarter</div>
+          <BandHeat rows={map.region_fan.map((r) => r.distribution)} bandLabels={bands} />
+        </div>
+        <div className="mt-6">
+          <div className="kicker mb-2">Expected band by pair and quarter</div>
+          <ExpectedHeat heat={map.heat} bands={bands.length} onPick={onPick} />
+        </div>
       </Beat>
 
       <p className="page-boundary">{map.boundary_statement}</p>
@@ -587,7 +585,6 @@ function DyadGame({
       )}
 
       <Beat title="How this was solved" aside="The stage game, the payoffs, the kernel, and the estimator's own account of the numbers above.">
-        <Disclosure label="the method, in the estimator's own words">
           {sol.explanation.map((p, i) => (
             <p key={i} className="text-sm leading-relaxed mt-3" style={{ maxWidth: '68ch' }}>{p}</p>
           ))}
@@ -633,7 +630,6 @@ function DyadGame({
           <p className="mono text-[11px] mt-1" style={{ color: 'var(--muted)' }}>
             {sol.persisted ? `solved ${sol.computed_at?.slice(0, 16).replace('T', ' ')} UTC` : 'solved on request'} · archive to {sol.as_of}
           </p>
-        </Disclosure>
       </Beat>
 
       <p className="page-boundary">{sol.boundary_statement}</p>

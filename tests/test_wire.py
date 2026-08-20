@@ -345,8 +345,13 @@ def test_a_declared_ally_fighting_on_its_own_soil_is_presence_not_war():
     partners = _row(action_cameo_code="190", action_geo="GBR",
                     initiator_iso3="USA", target_iso3="GBR")
     assert not coercion.counts_as_coercion(partners, allied=True)
-    # Sanctions between allies are still coercion — only "fight" is read as
-    # presence, and only on a partner's own ground.
+    assert not coercion.counts_as_coercion(
+        _row(action_cameo_code="182", action_geo="GBR",
+             initiator_iso3="USA", target_iso3="GBR"), allied=True)
+    assert not coercion.counts_as_coercion(
+        _row(action_cameo_code="150", action_geo="GBR",
+             initiator_iso3="USA", target_iso3="GBR"), allied=True)
+    # Sanctions between allies are still coercion — force roots are presence.
     assert coercion.counts_as_coercion(
         _row(action_cameo_code="163", action_geo="GBR",
              initiator_iso3="USA", target_iso3="GBR"), allied=True)

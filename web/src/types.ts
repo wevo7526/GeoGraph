@@ -86,6 +86,7 @@ export type EscalationDirection = 'escalating' | 'stable' | 'deescalating'
 export interface GraphEvent {
   node_id: string
   name: string
+  headline?: string | null
   event_time: string
   cameo_code: string
   quad_class: string | null
@@ -102,6 +103,16 @@ export interface GraphEvent {
   initiator_id: string | null
   target_id: string | null
   dyad_id: string | null
+  initiator_name?: string | null
+  target_name?: string | null
+  action_geo?: string | null
+  action_geo_name?: string | null
+  initiator_iso3?: string | null
+  target_iso3?: string | null
+  third_country_force?: boolean
+  allied_presence?: boolean
+  pair_fight?: boolean
+  coercion?: boolean | null
 }
 
 export interface EventList {
@@ -125,11 +136,14 @@ export interface WireItem extends GraphEvent {
   action_geo_name?: string | null
   initiator_iso3?: string | null
   target_iso3?: string | null
-  /** Display/nav only — a fight coded on a third roster country. */
+  /** Display/nav only — a fight coded on a third country. */
   third_country_force?: boolean
+  /** Display only — defence-pact partners coded in a force event. */
+  allied_presence?: boolean
   /** False when the surface must not offer this row as an A–B fight. */
   pair_fight?: boolean
   coercion?: boolean | null
+  headline?: string | null
 }
 
 export interface WireFeed {
@@ -352,9 +366,12 @@ export interface CaseStudyEpisode {
   node_id: string
   missing?: string
   name?: string
+  headline?: string | null
   event_time?: string
   cameo_code?: string
   quad_class?: string
+  initiator_name?: string | null
+  target_name?: string | null
   goldstein?: number | null
   escalation_direction?: EscalationDirection | null
   escalation_magnitude?: number | null
@@ -650,12 +667,24 @@ export interface TimelineEvent {
   event_id: string
   date: string
   name?: string | null
+  headline?: string | null
   goldstein?: number | null
   escalation_direction?: string | null
   escalation_magnitude?: number | null
   fidelity_tier?: string | null
   initiator_id?: string | null
   target_id?: string | null
+  initiator_name?: string | null
+  target_name?: string | null
+  cameo_code?: string | null
+  action_geo?: string | null
+  action_geo_name?: string | null
+  initiator_iso3?: string | null
+  target_iso3?: string | null
+  third_country_force?: boolean
+  allied_presence?: boolean
+  pair_fight?: boolean
+  coercion?: boolean | null
   first_mover?: string | null
   markets: Array<{
     market_id: string
@@ -1565,6 +1594,26 @@ export interface NetworkActorRank {
   value: number
 }
 
+export interface NetworkRosterRow {
+  subject_id: string
+  name: string
+  betweenness: number | null
+  constraint: number | null
+  degree: number | null
+  eigenvector: number | null
+  community: number | null
+}
+
+export interface NetworkDecade {
+  window_start: string
+  window_end: string
+  label: string
+  n: number
+  broker: NetworkActorRank | null
+  hole: NetworkActorRank | null
+  degree: NetworkActorRank | null
+}
+
 export interface NetworkSnapshot {
   region: string
   region_label?: string
@@ -1573,7 +1622,11 @@ export interface NetworkSnapshot {
   brokers: NetworkActorRank[]
   holes: NetworkActorRank[]
   degree: NetworkActorRank[]
+  eigenvector?: NetworkActorRank[]
   communities: Array<{ id: number; members: string[]; size: number }>
+  roster?: NetworkRosterRow[]
+  decades?: NetworkDecade[]
+  brokerage_over_time?: Array<{ x: string; y: number }>
   n?: number
   note?: string
   method?: string

@@ -21,6 +21,7 @@ import time
 from typing import Any
 
 from core.classifier import coercion, escalation
+from core.games import family as family_module
 from core.games import opening as opening_module
 from core.games import transition as transition_module
 from core.ingestion import stream
@@ -94,15 +95,18 @@ def score(
     rows: list[dict[str, Any]],
     *,
     baselines: dict[str, float] | None = None,
+    ally_windows: dict[str, list[tuple[int, int]]] | None = None,
 ) -> list[dict[str, Any]]:
     """Fold live rows through Head B, seeded at the snapshot's EWMA.
 
     Pure: no network, no graph. The first-event rule still applies to a dyad
-    the snapshot never saw.
+    the snapshot never saw. `ally_windows` is the same map the corpus uses,
+    so a US–UK force coding is not scored as interstate coercion live.
     """
     tracker = escalation.DyadTracker()
     for did, base in (baselines or {}).items():
         tracker.seed(did, base)
+    windows = ally_windows or {}
     ordered = sorted(
         rows,
         key=lambda r: (str(r.get("event_time") or ""), str(r.get("node_id") or "")),
@@ -117,7 +121,11 @@ def score(
             scored.update(result)
             scored["direction"] = result["escalation_direction"]
             scored["magnitude"] = result["escalation_magnitude"]
-        scored["coercion"] = coercion.counts_as_coercion(scored, allied=False)
+        year = family_module._year_of(row.get("event_time"), 0)
+        allied = family_module.allied_in(windows.get(str(dyad or "")), year)
+        scored["allied"] = allied
+        scored["co_participation"] = family_module.is_co_participation(scored, windows)
+        scored["coercion"] = coercion.counts_as_coercion(scored, allied=allied)
         out.append(scored)
     return out
 
@@ -138,7 +146,11 @@ def refresh_pack(pack: Any) -> dict[str, Any]:
     published = str(polled.get("published") or "")
     if published:
         _PUBLISHED = published
-    rows = score(list(polled.get("rows") or []), baselines=snapshot_baselines(pack.name))
+    rows = score(
+        list(polled.get("rows") or []),
+        baselines=snapshot_baselines(pack.name),
+        ally_windows=family_module.ally_windows(pack)[0],
+    )
     for row in rows:
         old = previous.get(str(row.get("node_id") or ""))
         if old and old.get("measured"):

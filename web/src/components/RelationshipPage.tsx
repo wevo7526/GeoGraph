@@ -56,7 +56,7 @@ import type {
   DyadSolution,
   WhatIfResult,
 } from '../types'
-import { dyadCall, postureClause, relationshipStandfirst, standingPhrase, typicalBand } from '../lib/story'
+import { dyadCall, eventHeadline, postureClause, relationshipStandfirst, standingPhrase, typicalBand } from '../lib/story'
 import { actorsFromPairId } from '../lib/ids'
 import { BoxRow, Fan, LineBand } from './charts/Charts'
 import type { Point } from './charts/Charts'
@@ -934,7 +934,7 @@ function TimelineEntry({ ev }: { ev: TimelineEvent }) {
       <button className="w-full text-left" onClick={() => setOpen((v) => !v)} aria-expanded={open}>
         <div className="flex items-baseline gap-3 flex-wrap">
           <span className="mono text-xs" style={{ color: 'var(--muted)' }}>{ev.date}</span>
-          <span className="text-sm" style={{ flex: '1 1 auto', minWidth: 0 }}>{ev.name ?? ev.event_id}</span>
+          <span className="text-sm" style={{ flex: '1 1 auto', minWidth: 0 }}>{eventHeadline(ev)}</span>
           {ev.goldstein != null && (
             <span className="mono text-[11px]" style={{ color: dirColor }}>
               {DIRECTION_WORD[dir ?? 'stable'] ?? dir} · {ev.goldstein.toFixed(1)} on the −10…+10 scale

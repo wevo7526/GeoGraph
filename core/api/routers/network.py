@@ -18,6 +18,52 @@ router = APIRouter(tags=["network"])
 #: fully-computed 120-year archive cannot return itself in one response.
 MAX_ROWS = 2000
 
+_RANK_METRICS = ("betweenness", "constraint", "degree", "eigenvector")
+
+
+def _empty_snapshot(region: str, pack: Any, note: str) -> dict[str, Any]:
+    return {
+        "region": region,
+        "region_label": pack.label,
+        "window_start": None,
+        "window_end": None,
+        "brokers": [],
+        "holes": [],
+        "degree": [],
+        "eigenvector": [],
+        "communities": [],
+        "roster": [],
+        "decades": [],
+        "brokerage_over_time": [],
+        "n": 0,
+        "note": note,
+    }
+
+
+def _decade_label(start: str, end: str) -> str | None:
+    """`1970-01-01`..`1979-12-31` → `1970s`. Regime spans return None."""
+    text_start, text_end = str(start), str(end)
+    if text_start[5:10] != "01-01" or text_end[5:10] != "12-31":
+        return None
+    try:
+        year_start = int(text_start[:4])
+        year_end = int(text_end[:4])
+    except ValueError:
+        return None
+    if year_end - year_start != 9:
+        return None
+    return f"{year_start}s"
+
+
+def _named(
+    names: dict[str, str], subject_id: str, value: float,
+) -> dict[str, Any]:
+    return {
+        "subject_id": subject_id,
+        "name": names.get(subject_id, subject_id),
+        "value": float(value),
+    }
+
 
 @router.get("/network/metrics")
 def metrics(
@@ -106,17 +152,9 @@ def snapshot(
         "ORDER BY m.window_end DESC LIMIT 1",
     )
     if not latest:
-        return {
-            "region": region,
-            "region_label": pack.label,
-            "window_start": None,
-            "window_end": None,
-            "brokers": [],
-            "holes": [],
-            "degree": [],
-            "communities": [],
-            "note": "no NetworkMetric window has been computed yet",
-        }
+        return _empty_snapshot(
+            region, pack, "no NetworkMetric window has been computed yet",
+        )
     window_start = latest[0]["window_start"]
     window_end = latest[0]["window_end"]
     rows = kuzu_store.query(
@@ -146,15 +184,43 @@ def snapshot(
         return out
 
     by_community: dict[int, list[str]] = {}
+    by_actor: dict[str, dict[str, Any]] = {}
     for row in rows:
-        if row["metric_name"] != "community" or row["subject_id"] not in roster:
+        subject = str(row["subject_id"])
+        if subject not in roster or row.get("value") is None:
             continue
-        label = int(float(row["value"]))
-        by_community.setdefault(label, []).append(names[row["subject_id"]])
+        metric = str(row["metric_name"])
+        slot = by_actor.setdefault(subject, {
+            "subject_id": subject,
+            "name": names[subject],
+            "betweenness": None,
+            "constraint": None,
+            "degree": None,
+            "eigenvector": None,
+            "community": None,
+        })
+        if metric == "community":
+            label = int(float(row["value"]))
+            slot["community"] = label
+            by_community.setdefault(label, []).append(names[subject])
+        elif metric in _RANK_METRICS:
+            slot[metric] = float(row["value"])
     communities = [
         {"id": label, "members": sorted(members), "size": len(members)}
-        for label, members in sorted(by_community.items(), key=lambda kv: (-len(kv[1]), kv[0]))
+        for label, members in sorted(
+            by_community.items(), key=lambda kv: (-len(kv[1]), kv[0]),
+        )
     ]
+    roster_rows = sorted(
+        by_actor.values(),
+        key=lambda row: (
+            -(row["betweenness"] if row["betweenness"] is not None else -1.0),
+            row["name"],
+        ),
+    )
+
+    decades, brokerage_over_time = _decade_read(conn, names, roster)
+
     return {
         "region": region,
         "region_label": pack.label,
@@ -163,12 +229,68 @@ def snapshot(
         "brokers": ranked("betweenness", reverse=True),
         "holes": ranked("constraint", reverse=False),
         "degree": ranked("degree", reverse=True),
-        "communities": communities[:6],
-        "n": sum(1 for row in rows if row["subject_id"] in roster),
+        "eigenvector": ranked("eigenvector", reverse=True),
+        "communities": communities[:8],
+        "roster": roster_rows,
+        "decades": decades,
+        "brokerage_over_time": brokerage_over_time,
+        "n": len(roster_rows),
         "method": (
-            "persisted NetworkMetric for the latest window, clipped to this "
-            "pack's roster; betweenness ranks who sits between others, "
-            "constraint (Burt) ranks who has room to broker, degree ranks "
-            "who is most connected"
+            "persisted NetworkMetric rows, clipped to this pack's roster. "
+            "The latest window ranks the bars and the roster table. Decade "
+            "windows (not open regime spans) feed the time series. "
+            "Betweenness ranks who sits between others; constraint (Burt) "
+            "ranks who has room to broker; degree ranks who is most "
+            "connected; eigenvector ranks who is tied to other well-tied "
+            "actors. Nothing here is computed on request."
         ),
     }
+
+
+def _decade_read(
+    conn: Any, names: dict[str, str], roster: set[str],
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """Decade windows only — regime spans would smear the x-axis."""
+    history = kuzu_store.query(
+        conn,
+        "MATCH (m:NetworkMetric) "
+        "WHERE m.metric_name IN ['betweenness', 'constraint', 'degree'] "
+        "RETURN m.subject_id AS subject_id, m.metric_name AS metric_name, "
+        "m.window_start AS window_start, m.window_end AS window_end, "
+        "m.value AS value "
+        "ORDER BY m.window_end, m.metric_name, m.subject_id",
+    )
+    grouped: dict[tuple[str, str], dict[str, list[tuple[str, float]]]] = {}
+    for row in history:
+        subject = str(row["subject_id"])
+        if subject not in roster or row.get("value") is None:
+            continue
+        start, end = str(row["window_start"]), str(row["window_end"])
+        if _decade_label(start, end) is None:
+            continue
+        bucket = grouped.setdefault((start, end), {
+            "betweenness": [], "constraint": [], "degree": [],
+        })
+        metric = str(row["metric_name"])
+        if metric in bucket:
+            bucket[metric].append((subject, float(row["value"])))
+
+    decades: list[dict[str, Any]] = []
+    brokerage_over_time: list[dict[str, Any]] = []
+    for (start, end), bucket in sorted(grouped.items(), key=lambda kv: kv[0][0]):
+        label = _decade_label(start, end) or start[:4]
+        broker = max(bucket["betweenness"], key=lambda item: item[1], default=None)
+        hole = min(bucket["constraint"], key=lambda item: item[1], default=None)
+        hub = max(bucket["degree"], key=lambda item: item[1], default=None)
+        decades.append({
+            "window_start": start,
+            "window_end": end,
+            "label": label,
+            "n": len({subject for metric in bucket.values() for subject, _ in metric}),
+            "broker": _named(names, *broker) if broker else None,
+            "hole": _named(names, *hole) if hole else None,
+            "degree": _named(names, *hub) if hub else None,
+        })
+        if broker:
+            brokerage_over_time.append({"x": label, "y": float(broker[1])})
+    return decades, brokerage_over_time

@@ -12,7 +12,7 @@ import { getBacktest, getCalibration, getForward, getJobs, getMarketsStory, getT
 import { useRegionLabel } from '../regions'
 import type { BacktestLedger, CalibrationWalk, ForwardView, JobsStatus, MarketStoryMarket, MarketsStory, TradeableEdge } from '../types'
 import { Beat, Chip, Disclosure, Empty, StoryHead } from '../ui'
-import { count, courseSentence, marketsLede, pctWord, signedPct, skillSentence, strategyWord } from '../lib/story'
+import { count, courseSentence, eventHeadline, marketsLede, pctWord, signedPct, skillSentence, strategyWord } from '../lib/story'
 import { Bars, DotWhisker, Drawdown, EquityCurve, SeriesLine, Tiles, pct } from './charts/Kit'
 
 const money = (v: number) => `${v < 0 ? '−' : ''}$${Math.abs(v).toLocaleString('en-US', { maximumFractionDigits: 0 })}`
@@ -279,7 +279,7 @@ export default function MarketsPage({ region, onNavigate }: { region: string; on
                         `/case/dynamic?event=${encodeURIComponent(e.event_id)}&region=${encodeURIComponent(region)}`,
                       )}
                     >
-                      {e.pair || e.name}
+                      {eventHeadline({ name: e.name, initiator_name: e.pair?.split('→')[0]?.trim(), target_name: e.pair?.split('→')[1]?.trim() }) || e.pair || e.name}
                     </button>
                     <Chip label={KIND_SHORT[e.kind] ?? e.kind} tone={e.kind.includes('escalation') && e.kind !== 'de-escalation' ? 'bad' : 'muted'} />
                     {e.first_mover && <Chip label="printed first" tone="ink" />}

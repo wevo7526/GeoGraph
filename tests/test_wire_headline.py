@@ -98,13 +98,57 @@ def test_us_iran_in_syria_is_force_in_syria_not_a_dropped_row() -> None:
     assert wire_headline.pair_fight(row, set(_MENA)) is False
 
 
-def test_a_geo_off_the_roster_is_not_rewritten() -> None:
-    """Only a third ROSTER country triggers the location headline. A code
-    we cannot name is not a place we invented."""
+def test_a_geo_off_the_roster_is_still_a_third_country() -> None:
+    """A code we cannot name is still not an A–B fight. We do not invent
+    a place-name; we do not keep 'Israel fought United States' either."""
     row = _row(action_geo="ATA")  # Antarctica is on no pack
     text = wire_headline.headline(row, geo_names=_MENA)
-    assert text == "Israel fought United States"
-    assert wire_headline.third_country_force(row, set(_MENA)) is False
+    assert text == "Israel used force in a third country"
+    assert wire_headline.third_country_force(row, set(_MENA)) is True
+    assert wire_headline.pair_fight(row, set(_MENA)) is False
+
+
+def test_us_uk_assault_on_british_soil_is_not_a_pair_war() -> None:
+    """The relationship page's defect: CAMEO 18/19 between NATO partners
+    is not 'the United States assaulted the United Kingdom'."""
+    names = {**_MENA, "GBR": "United Kingdom"}
+    row = _row(
+        initiator_name="United States",
+        target_name="United Kingdom",
+        initiator_iso3="USA",
+        target_iso3="GBR",
+        action_geo="GBR",
+        action_cameo_code="182",
+        allied=True,
+    )
+    text = wire_headline.headline(row, geo_names=names)
+    assert "assaulted" not in text
+    assert "fought" not in text
+    assert "not a fight between them" in text
+    assert wire_headline.allied_presence(row) is True
+    assert wire_headline.pair_fight(row, set(names)) is False
+    fields = wire_headline.display_fields(row, geo_names=names)
+    assert fields["allied_presence"] is True
+    assert fields["pair_fight"] is False
+    assert "assaulted" not in fields["headline"]
+
+
+def test_coded_title_is_not_the_headline() -> None:
+    row = _row(
+        name="Use conventional military force: United States → United Kingdom",
+        initiator_name="",
+        target_name="",
+        initiator_iso3="USA",
+        target_iso3="GBR",
+        action_geo="IRQ",
+        action_cameo_code="190",
+        allied=True,
+    )
+    names = {**_MENA, "GBR": "United Kingdom", "IRQ": "Iraq"}
+    text = wire_headline.headline(row, geo_names=names)
+    assert text == "United States used force in Iraq"
+    parsed = wire_headline.names_from_coded_title(str(row["name"]))
+    assert parsed == ("United States", "United Kingdom")
 
 
 def test_live_material_conflict_is_not_a_pair_fight_unless_coercion() -> None:

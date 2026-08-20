@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { getCaseStudy, getDynamicCaseStudy, postCaseNarrate } from '../api'
-import { useRegionLabel } from '../regions'
+import { eventHeadline } from '../lib/story'
 import type { CaseStudy, CaseStudyEpisode, Effect } from '../types'
 
 /** The pack KEY is not its caption (packs/china is captioned Asia) — every
@@ -129,7 +129,7 @@ function Episode({ episode }: { episode: CaseStudyEpisode }) {
       <div className="mono text-xs uppercase tracking-widest" style={{ color: 'var(--accent)' }}>
         {episode.event_time}
       </div>
-      <h3 className="text-2xl mt-1">{episode.name}</h3>
+      <h3 className="text-2xl mt-1">{eventHeadline(episode)}</h3>
       {episode.note && (
         <p className="mt-3 text-base leading-relaxed" style={{ color: 'var(--muted)', maxWidth: '68ch' }}>
           {episode.note}

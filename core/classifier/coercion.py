@@ -88,9 +88,13 @@ NON_STATE_TYPES = frozenset({
 #: the bare country, and GOV / MIL / COP are its organs.
 STATE_TYPES = frozenset({"", "GOV", "MIL", "COP"})
 
-#: CAMEO root 19 is "fight". For a pair under a declared defence pact, a fight
-#: coded on one partner's own territory is presence, not war between them.
-FIGHT_ROOT = "19"
+#: CAMEO roots that are a show or use of force. For a pair under a declared
+#: defence pact, these coded on one partner's own territory are presence,
+#: exercises or a coding defect — not war between them. Root 19 ("fight")
+#: was the original rule; 15 (exhibit force), 18 (assault) and 20 (mass
+#: violence) are the same GDELT pairing of allies, and they are what put
+#: "the United States assaulted the United Kingdom" on a relationship page.
+FORCE_ROOTS = ("15", "18", "19", "20")
 
 
 def _type_is_state(value: Any) -> bool:
@@ -128,8 +132,8 @@ def counts_as_coercion(
         return False
     if not _type_is_state(row.get("actor2_type")):
         return False
-    if allied and code[:2] == FIGHT_ROOT:
+    if allied and code[:2] in FORCE_ROOTS:
         geo = str(row.get("action_geo") or "")
-        if geo and geo in (row.get("initiator_iso3"), row.get("target_iso3")):
+        if not geo or geo in (row.get("initiator_iso3"), row.get("target_iso3")):
             return False
     return True
