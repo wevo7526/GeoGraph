@@ -454,6 +454,7 @@ def test_the_study_falls_back_to_a_child_only_on_the_storage_assertion(monkeypat
     """
     from core.api import work
 
+    monkeypatch.setenv("GEOGRAPH_SNAPSHOT_FROZEN", "0")
     monkeypatch.setattr(work, "_PREFER_CHILD", False)
 
     def _boom(conn, deadline, write_graph=True):
@@ -533,6 +534,7 @@ def test_the_study_shrinks_its_own_tick_when_the_buffer_pool_runs_out(monkeypatc
     """
     from core.api import work
 
+    monkeypatch.setenv("GEOGRAPH_SNAPSHOT_FROZEN", "0")
     monkeypatch.setattr(work, "_PREFER_CHILD", False)  # force the in-process path
     monkeypatch.setattr(work, "_events_per_tick", 2500)
 
@@ -699,8 +701,9 @@ def test_a_long_job_can_stop_itself_when_memory_tightens(monkeypatch):
     assert "_write_lean_batch" not in source
 
 
-def test_the_wire_job_keeps_roster_dyads_and_leaves_the_corpus_as_the_wire():
-    """GDELT Event nodes in Kuzu were a 2 KB/edge duplicate of the panel."""
+def test_the_wire_job_keeps_roster_dyads_and_polls_live_gdelt():
+    """GDELT Event nodes in Kuzu were a 2 KB/edge duplicate of the panel.
+    The job now MERGEs roster dyads and polls the GDELT 2.0 overlay."""
     import inspect
 
     from core.api import work
@@ -708,7 +711,10 @@ def test_the_wire_job_keeps_roster_dyads_and_leaves_the_corpus_as_the_wire():
     src = inspect.getsource(work.wire)
     assert "iter_rows_of" not in src
     assert "_ensure_roster_dyads" in src
-    assert "corpus" in src.lower()
+    assert "refresh_all" in src
+    assert "attach_measured" in src
+    games = inspect.getsource(work.games)
+    assert "refresh_all" not in games
 
 
 def test_a_persisted_game_map_goes_stale_when_what_it_read_moves(monkeypatch):
@@ -899,6 +905,26 @@ def test_harvest_is_a_noop_while_the_snapshot_is_frozen(monkeypatch, tmp_path):
     assert "frozen" in out["skipped"]
 
 
+def test_the_study_is_a_noop_while_the_snapshot_is_frozen(monkeypatch):
+    """The baseline map stays put. Live intake is GDELT 2.0, not a fourth pack
+    of historical measurement into event_study_runs."""
+    from core.api import work
+
+    monkeypatch.setenv("GEOGRAPH_SNAPSHOT_FROZEN", "1")
+    called = {"in_process": False, "child": False}
+    monkeypatch.setattr(
+        work, "_study_in_process",
+        lambda *a, **k: called.__setitem__("in_process", True) or {"measured": 9},
+    )
+    monkeypatch.setattr(
+        work, "_study_child_plan",
+        lambda *a, **k: called.__setitem__("child", True) or {"argv": ["no"]},
+    )
+    out = work.study(object(), 0.0)
+    assert "frozen" in out["skipped"]
+    assert called == {"in_process": False, "child": False}
+
+
 def test_a_reclaim_drops_every_cache_that_can_be_rebuilt(monkeypatch) -> None:
     """A RECLAIM THAT FREES NOTHING IS THE WORST OUTCOME: it costs a rebuild,
     reports a number that looks like action, and leaves the process exactly as
@@ -959,6 +985,7 @@ def test_a_full_graph_volume_keeps_measuring_into_postgres(monkeypatch):
     from core.graph import kuzu_store
     from core.transmission import runner
 
+    monkeypatch.setenv("GEOGRAPH_SNAPSHOT_FROZEN", "0")
     called: dict[str, Any] = {}
 
     def _in_process(conn: Any, deadline: float, write_graph: bool = True) -> dict[str, Any]:
@@ -1094,7 +1121,9 @@ def test_prune_gdelt_runs_drops_skips_and_unused_windows():
     assert out == {"deleted": 11, "drop_skips": True, "limit": 50}
     assert "event:gdelt-%" in panel.sql
     assert "skipped_no_data" in panel.sql
+    assert "event_study_coverage" in panel.sql
     assert "car_0_1" in panel.sql and "car_0_3" in panel.sql
+    assert "intraday_open_close" in panel.sql
     assert "LIMIT %s" in panel.sql
     assert panel.params == (50,)
     assert panel.committed
@@ -1102,6 +1131,86 @@ def test_prune_gdelt_runs_drops_skips_and_unused_windows():
     keep_skips = _Panel()
     pg_store.prune_gdelt_runs(keep_skips, drop_skips=False)
     assert "skipped_no_data" not in keep_skips.sql
+    assert "event_study_coverage" not in keep_skips.sql
+
+
+def test_vacuum_runs_toggles_autocommit_and_is_not_inside_prune():
+    """VACUUM cannot run in a transaction. Prune tests pin DELETE SQL, so
+    this lives on reclaim's connection after the commit."""
+    import inspect
+
+    from core.api import work
+    from core.panel import pg_store
+
+    class _Panel:
+        def __init__(self) -> None:
+            self.autocommit = False
+            self.sql = ""
+            self.seen: list[bool] = []
+
+        def cursor(self) -> Any:
+            panel = self
+
+            class _Cur:
+                def __enter__(self) -> Any:
+                    return self
+
+                def __exit__(self, *exc: object) -> bool:
+                    return False
+
+                def execute(self, sql: str, params: Any = None) -> None:
+                    del params
+                    panel.sql = sql
+                    panel.seen.append(panel.autocommit)
+
+            return _Cur()
+
+    panel = _Panel()
+    out = pg_store.vacuum_runs(panel)
+    assert out["ok"] is True
+    assert panel.sql == "VACUUM event_study_runs"
+    assert panel.seen == [True]
+    assert panel.autocommit is False
+    assert "VACUUM" not in inspect.getsource(pg_store.prune_gdelt_runs)
+    assert "vacuum_runs" in inspect.getsource(work.reclaim)
+
+
+def test_the_prices_job_refreshes_intraday_even_when_daily_is_current(monkeypatch):
+    import datetime as dt
+
+    from core.api import work
+    from core.panel import pg_store
+
+    class _Cur:
+        def __enter__(self) -> Any:
+            return self
+
+        def __exit__(self, *exc: object) -> bool:
+            return False
+
+        def execute(self, sql: str) -> None:
+            del sql
+
+        def fetchone(self) -> tuple[dt.date]:
+            return (dt.date.today(),)
+
+    class _Panel:
+        def cursor(self) -> Any:
+            return _Cur()
+
+        def close(self) -> None:
+            return None
+
+    monkeypatch.setattr(pg_store, "connect", lambda settings: _Panel())
+    called: list[bool] = []
+    monkeypatch.setattr(
+        work, "_refresh_intraday",
+        lambda deadline: called.append(True) or [{"pack": "mena", "ok": True}],
+    )
+    out = work.prices(None, time.monotonic() + 30)
+    assert called == [True]
+    assert "intraday" in out
+    assert "current" in str(out.get("note") or "")
 
 
 def test_network_windows_open_at_the_archive_floor():
@@ -1111,3 +1220,75 @@ def test_network_windows_open_at_the_archive_floor():
     text = src.read_text(encoding="utf-8")
     assert "archive_bounds.START_YEAR" in text
     assert "_ARCHIVE_START = 1905" not in text
+
+
+def test_record_runs_stamps_coverage_and_drops_gdelt_skip_rows():
+    """GDELT skip-rows are the 5 GB blast. Coverage is the watermark."""
+    from core.panel import pg_store
+    from core.transmission.event_study import EffectResult, Skip
+
+    class _Panel:
+        def __init__(self) -> None:
+            self.calls: list[tuple[str, list[Any]]] = []
+            self.committed = False
+
+        def cursor(self) -> Any:
+            panel = self
+
+            class _Cur:
+                def __enter__(self) -> Any:
+                    return self
+
+                def __exit__(self, *exc: object) -> bool:
+                    return False
+
+                def executemany(self, sql: str, rows: Any) -> None:
+                    panel.calls.append((sql, list(rows)))
+
+            return _Cur()
+
+        def commit(self) -> None:
+            self.committed = True
+
+    effect = EffectResult(
+        event_node_id="event:gdelt-1", market_ticker="BZ=F", window="car_0_3",
+        resolution="day", raw_return=0.01, expected_return=0.0,
+        abnormal_return=0.01, t_stat=1.0, p_value=0.3, first_mover=False,
+        overlapping=False, method="test",
+    )
+    gdelt_skip = Skip(
+        event_node_id="event:gdelt-1", market_ticker="^GSPC", window="car_0_1",
+        resolution="day", status="skipped_no_data", reason="no bars",
+    )
+    spine_skip = Skip(
+        event_node_id="event:mena-1", market_ticker="^GSPC", window="car_0_1",
+        resolution="day", status="skipped_no_data", reason="no bars",
+    )
+    panel = _Panel()
+    written = pg_store.record_runs(panel, [effect], [gdelt_skip, spine_skip])
+    assert written == 2  # computed row + spine skip; GDELT skip is coverage only
+    assert panel.committed
+    run_rows = [rows for sql, rows in panel.calls if "event_study_runs" in sql]
+    cover_rows = [rows for sql, rows in panel.calls if "event_study_coverage" in sql]
+    assert run_rows
+    inserted_ids = {row["event_node_id"] for rows in run_rows for row in rows}
+    assert "event:gdelt-1" in inserted_ids
+    statuses = {row["status"] for rows in run_rows for row in rows}
+    assert "skipped_no_data" in statuses
+    skip_tickers = {
+        row["market_ticker"]
+        for rows in run_rows for row in rows
+        if row["status"] == "skipped_no_data"
+    }
+    assert skip_tickers == {"^GSPC"}
+    # The GDELT skip's ticker is not a skip ROW — it is a coverage stamp.
+    gdelt_skip_rows = [
+        row for rows in run_rows for row in rows
+        if row["event_node_id"] == "event:gdelt-1" and row["status"] != "computed"
+        and row["status"] != "overlapping"
+    ]
+    assert gdelt_skip_rows == []
+    stamped = {tuple(row) for rows in cover_rows for row in rows}
+    assert ("event:gdelt-1", "BZ=F") in stamped
+    assert ("event:gdelt-1", "^GSPC") in stamped
+    assert ("event:mena-1", "^GSPC") in stamped

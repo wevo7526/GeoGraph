@@ -30,6 +30,7 @@ import type {
   RegionRanking,
   StrategySignal,
   TransmissionSkill,
+  PricingTrust,
   WireFeed,
   WireItem,
   WireLiveFeed,
@@ -689,6 +690,18 @@ export function skillSentence(skill: TransmissionSkill | null | undefined, label
       ? ` The S&P 500 control sat at ${pctWord(skill.gspc_control.sign_hit, 0)}.`
       : ''
   return `On a leave-one-out walk of stored reactions (matching by kind of event, excluding overlapping windows), ${sign} ${guess}${cover}.${strata}${control}`
+}
+
+/** Whether the games' priced courses rest on a matcher with skill. */
+export function pricingTrustSentence(trust: PricingTrust | null | undefined): string | null {
+  if (!trust) return null
+  if (trust.bottleneck === 'sequencing') {
+    return 'Past events of the same class predicted the next move; the game’s predicted class did not. The bottleneck is sequencing, not measurement — the prices on a known class stand, the path that picked the class does not.'
+  }
+  if (trust.trusted) {
+    return 'Priced courses rest on a matcher that beat a naive last-cell guess.'
+  }
+  return 'Priced courses are shown and marked untrusted: oracle-class cells did not beat a naive last-cell guess.'
 }
 
 /** Strategy gate as vocabulary — never as a blotter. */

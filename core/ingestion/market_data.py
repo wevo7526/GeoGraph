@@ -100,6 +100,50 @@ def _yfinance_history(ticker: str, start: str, end: str | None, interval: str) -
     )
 
 
+def _feed_symbols(market: dict[str, Any]) -> list[str]:
+    """Symbols to ask the feed, in order. `ticker` is the panel key; extras
+    are aliases that quote the same series (MOEX's .ME suffix among them)."""
+    ticker = str(market["ticker"])
+    extra = [str(s) for s in (market.get("feed_tickers") or []) if s]
+    out: list[str] = []
+    for symbol in [*extra, ticker]:
+        if symbol not in out:
+            out.append(symbol)
+    return out
+
+
+def _first_history(
+    symbols: list[str], start: str, end: str | None, interval: str,
+) -> Any:
+    """The first symbol that returns bars. Empty frames are misses, not data."""
+    last: Any = None
+    for symbol in symbols:
+        try:
+            frame = _yfinance_history(symbol, start, end, interval)
+        except Exception:  # noqa: BLE001 - a dead alias must not kill the pack
+            continue
+        last = frame
+        if _has_bars(frame):
+            return frame
+    return last
+
+
+def _has_bars(frame: Any) -> bool:
+    """A usable yfinance frame — empty is a miss, including the test double."""
+    if frame is None:
+        return False
+    empty = getattr(frame, "empty", None)
+    if empty is not None:
+        return not bool(empty)
+    index = getattr(frame, "index", None)
+    if index is not None:
+        try:
+            return len(index) > 0
+        except TypeError:
+            return False
+    return False
+
+
 def _daily_rows(ticker: str, frame: Any) -> list[dict[str, Any]]:
     """A yfinance frame → panel rows. Bars with no close are dropped."""
     rows: list[dict[str, Any]] = []
@@ -157,10 +201,13 @@ def load_daily(
                 continue
             if wanted is not None and ticker not in wanted:
                 continue
-            frame = _yfinance_history(
-                ticker, start or str(market["inception_date"]), end, "1d"
+            frame = _first_history(
+                _feed_symbols(market),
+                start or str(market["inception_date"]),
+                end,
+                "1d",
             )
-            rows = _daily_rows(ticker, frame)
+            rows = _daily_rows(ticker, frame) if frame is not None else []
             if rows:
                 pg_store.upsert_observations(conn, rows)
             report.append(_depth(ticker, rows, str(market["inception_date"])))
@@ -189,7 +236,9 @@ def load_intraday(
                 continue
             if wanted is not None and ticker not in wanted:
                 continue
-            frame = _yfinance_history(ticker, "", None, "1h")
+            frame = _first_history(_feed_symbols(market), "", None, "1h")
+            if frame is None or len(getattr(frame, "index", ())) == 0:
+                continue
             prints = [
                 {"market_ticker": ticker, "ts": stamp, "price": float(bar["Close"])}
                 for stamp, bar in frame.iterrows()

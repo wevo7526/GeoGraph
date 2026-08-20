@@ -259,13 +259,13 @@ def _effects_from_panel(conn: Any, event_id: str) -> list[dict[str, Any]]:
     try:
         panel = pg_store.connect(settings_module.load())
     except pg_store.PanelUnavailable:
-        return []
+        return _effects_from_live(event_id)
     try:
         runs = pg_store.computed_runs(panel, event_id=event_id)
     finally:
         panel.close()
     if not runs:
-        return []
+        return _effects_from_live(event_id)
     markets = {
         str(r["ticker"]): r
         for r in kuzu_store.query(
@@ -296,6 +296,91 @@ def _effects_from_panel(conn: Any, event_id: str) -> list[dict[str, Any]]:
         })
     rows.sort(key=lambda r: (str(r["ticker"]), str(r["window"])))
     return rows
+
+
+def _effects_from_live(event_id: str) -> list[dict[str, Any]]:
+    """This-event CARs from the GDELT 2.0 overlay. Not the frozen map."""
+    from core.wire import live as live_overlay
+
+    row = live_overlay.row_by_id(event_id)
+    measured = list((row or {}).get("measured") or [])
+    rows: list[dict[str, Any]] = []
+    for item in measured:
+        rows.append({
+            "market_node_id": item.get("ticker"),
+            "market": item.get("market") or item.get("ticker"),
+            "ticker": item.get("ticker"),
+            "market_type": None,
+            "window": item.get("window"),
+            "resolution": item.get("resolution"),
+            "raw_return": item.get("raw_return"),
+            "expected_return": item.get("expected_return"),
+            "abnormal_return": item.get("abnormal_return"),
+            "t_stat": item.get("t_stat"),
+            "p_value": item.get("p_value"),
+            "first_mover": item.get("first_mover"),
+            "overlapping": item.get("overlapping"),
+            "method": item.get("method"),
+            "source_id": None,
+        })
+    rows.sort(key=lambda r: (str(r["ticker"]), str(r["window"])))
+    return rows
+
+
+def _live_event_detail(node_id: str) -> dict[str, Any] | None:
+    """A GDELT 2.0 overlay row shaped like the graph/corpus event detail."""
+    from core.wire import live as live_overlay
+
+    row = live_overlay.row_by_id(node_id)
+    if row is None:
+        return None
+    from core import packs
+
+    names: dict[str, str] = {}
+    try:
+        pack = packs.load(row["region_pack"]) if row.get("region_pack") else None
+        if pack is not None:
+            names = {a["id"]: a["name"] for a in pack.actors}
+    except Exception:  # noqa: BLE001 - names are display-only
+        pass
+
+    initiator_id = row.get("initiator_id")
+    target_id = row.get("target_id")
+    dyad_id = row.get("dyad_id")
+    initiator_name = (
+        row.get("initiator_name")
+        or names.get(str(initiator_id or ""), initiator_id)
+    )
+    target_name = (
+        row.get("target_name") or names.get(str(target_id or ""), target_id)
+    )
+    return {
+        "node_id": row.get("node_id") or node_id,
+        "name": row.get("name") or node_id,
+        "event_time": row.get("event_time"),
+        "cameo_code": row.get("action_cameo_code") or row.get("cameo_code"),
+        "quad_class": row.get("quad_class"),
+        "goldstein": row.get("goldstein"),
+        "escalation_direction": row.get("escalation_direction"),
+        "escalation_magnitude": row.get("escalation_magnitude"),
+        "escalation_baseline": row.get("escalation_baseline"),
+        "fidelity_tier": "live",
+        "temporal_resolution": "day",
+        "source_scale": "coded",
+        "region_pack": row.get("region_pack"),
+        "initiator": (
+            {"node_id": initiator_id, "name": initiator_name}
+            if initiator_id else None
+        ),
+        "target": (
+            {"node_id": target_id, "name": target_name}
+            if target_id else None
+        ),
+        "dyad": {"node_id": dyad_id} if dyad_id else None,
+        "regimes": [],
+        "sources": [_cited_source(gdelt.SOURCE_GDELT)],
+        "live": True,
+    }
 
 
 def _wire_event_detail(node_id: str) -> dict[str, Any] | None:
@@ -356,6 +441,9 @@ def get_event(request: Request, node_id: str) -> dict[str, Any]:
         from_wire = _wire_event_detail(node_id)
         if from_wire is not None:
             return from_wire
+        from_live = _live_event_detail(node_id)
+        if from_live is not None:
+            return from_live
         if conn is None:
             raise HTTPException(
                 status_code=503,
@@ -675,7 +763,7 @@ def wire_live(region: str = "mena", limit: int = Query(30, ge=1, le=100)) -> dic
     except packs.PackError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     try:
-        polled = live_overlay.refresh_pack(pack)
+        polled = live_overlay.ensure_pack(pack)
     except Exception as exc:  # noqa: BLE001 - a live feed failing is not a 500
         raise HTTPException(
             status_code=503, detail=f"the GDELT 2.0 stream did not answer: {exc}"
@@ -764,6 +852,7 @@ def wire_live(region: str = "mena", limit: int = Query(30, ge=1, le=100)) -> dic
             "num_sources": row.get("num_sources"),
             "implied_kind": kind,
             "market_outlook": outlook[:4],
+            "measured": list(row.get("measured") or []),
             # Display/nav only. Live rows already carry action_geo from the
             # parser; nothing here retargets USA→SYR as a stored fact.
             **display,
@@ -779,10 +868,13 @@ def wire_live(region: str = "mena", limit: int = Query(30, ge=1, le=100)) -> dic
         "cached": False,
         "method": (
             "Newest 15-minute GDELT 2.0 export, scored against each pair's "
-            "usual level in the frozen archive. Market cells are realised "
-            "abnormal returns over the four sessions after past events of "
-            "that coding, with n. Nothing here is written to the graph, "
-            "nothing is a forecast, and nothing is advice."
+            "usual level in the frozen archive. `measured` on a row is this "
+            "event's session move from the price panel, computed in memory "
+            "and not written into the transmission map. Market cells are "
+            "realised abnormal returns over the four sessions after past "
+            "events of that coding, with n — analogy, not this event. "
+            "Nothing here is written to the graph, nothing is a forecast, "
+            "and nothing is advice."
         ),
     }
     _live_cache.update({"at": now, "payload": payload, "region": region})

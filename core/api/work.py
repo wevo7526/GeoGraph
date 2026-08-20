@@ -7,11 +7,10 @@ platform actually owes itself lives here.
 
 Order of value, which is also the order they were written:
 
-  * `study` — the measurement backlog. The engine walks the archive with a
-    per-event watermark; production had reached 2003 and ~10% of the wire
-    because each pass got one 600s slice per DEPLOY. Here it gets a slice
-    every ten minutes, forever, and the same watermark makes it converge.
-    It is the ONE job that runs as a child process (see `study` below).
+  * `study` — while the snapshot is frozen this is a no-op. Live intake
+    is GDELT 2.0, scored and measured in memory against the baseline map.
+    Unfrozen, it walks leftover graph events into Postgres; it does not
+    grow the wire or the AFFECTED copy.
   * `games` — the region scenario maps. They read the graph and write only
     Postgres, so they were never a reason to hold anyone's lock; as a boot
     step they cost ~3.5 minutes of container downtime per re-solve, which is
@@ -203,13 +202,16 @@ _STORAGE_ASSERTION = "KU_UNREACHABLE"
 
 
 def study(conn: Any, deadline: float) -> dict[str, Any]:
-    """Measure the next unmeasured events, one pack at a time.
+    """Measure leftover graph events, or skip while the snapshot is frozen.
 
-    IN A CHILD PROCESS, because a segfault in the writer must not be able to
-    take the API with it — see `_PREFER_CHILD` for the morning that decided
-    it. In-process is available via `GEOGRAPH_STUDY_IN_PROCESS=1` and is
-    genuinely cheaper; it is not the default because "cheaper" and "cannot
-    kill the site" are not close in value.
+    THE SNAPSHOT IS THE BASELINE MAP. While it is frozen (the default),
+    this job is a no-op — same posture as harvest. Leftover graph events
+    are not walked into `event_study_runs`, because that table is the
+    transmission map live GDELT 2.0 is priced against. Unfreeze to grow
+    the training set again.
+
+    IN A CHILD PROCESS when it does run, because a segfault in the writer
+    must not be able to take the API with it — see `_PREFER_CHILD`.
 
     THE HISTORY, because this looks like flip-flopping and is not. Four write
     topologies died in `csr_node_group.cpp KU_UNREACHABLE` — a sibling
@@ -234,13 +236,18 @@ def study(conn: Any, deadline: float) -> dict[str, Any]:
     global _PREFER_CHILD, _events_per_tick
     from core.graph import kuzu_store as _store
 
+    if snapshot.frozen():
+        return {
+            "skipped": "snapshot frozen — live intake is GDELT 2.0",
+            "weights": "transmission map",
+        }
+
     graph_path = settings_module.load().kuzu_db_path
     # THE 5 GB GRAPH HOLDS THE KNOWLEDGE GRAPH — actors, dyads, RELATES_TO
     # and the AFFECTED edges already written. New AFFECTED edges are a mirror
     # of the panel and cost ~2 KB each, which is what filled the volume.
-    # When that volume is at its floor we still MEASURE into the 5 GB
-    # panel; we just stop adding edges. Stopping the study entirely wasted
-    # the panel and froze coverage at whatever AFFECTED already held.
+    # While frozen this function has already returned. Unfrozen, a tight
+    # volume still measures into Postgres and stops adding edges.
     write_graph = runner.WRITE_GRAPH_EFFECTS and not _store.disk_is_tight(graph_path)
     # A child is the AFFECTED-writer fallback. Postgres-only has nothing
     # for it to do, and a child that still honours WRITE_GRAPH_EFFECTS
@@ -290,6 +297,12 @@ def _study_child_plan(deadline: float) -> dict[str, Any]:
     global _LAST_CHILD
     from core.panel import pg_store
 
+    if snapshot.frozen():
+        return {
+            "skipped": "snapshot frozen — live intake is GDELT 2.0",
+            "weights": "transmission map",
+        }
+
     since = time.monotonic() - _LAST_CHILD
     if _LAST_CHILD and since < CHILD_INTERVAL_SECONDS:
         return {"skipped": "the child rate-limits itself — each slice takes "
@@ -332,12 +345,12 @@ def _study_child_plan(deadline: float) -> dict[str, Any]:
 def _pack_study_events(
     conn: Any, pack: Any,
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
-    """Candidates for one pack: graph spine/deep-tier PLUS the corpus wire.
+    """Candidates for one pack: graph spine/deep-tier, plus corpus wire
+    only when the snapshot is unfrozen.
 
-    The graph no longer holds a GDELT copy (that copy is what filled the
-    volume). Forecasts and the wire page already read the corpus; the study
-    has to as well or trimming the graph would freeze measurement at the
-    marquee spine.
+    Frozen: leftover graph events are still listed here, but `study()`
+    never reaches this function. Unfrozen opt-in can grow the training
+    set from the corpus; that path is not the launch default.
     """
     curated = runner.curated_event_ids(pack)
     graph_events, graph_dates = _archive(conn)
@@ -358,6 +371,12 @@ def _study_in_process(
 ) -> dict[str, Any]:
     from core.graph import kuzu_store as _store
     from core.panel import pg_store
+
+    if snapshot.frozen():
+        return {
+            "skipped": "snapshot frozen — live intake is GDELT 2.0",
+            "weights": "transmission map",
+        }
 
     graph_path = settings_module.load().kuzu_db_path
     names = _pack_names()
@@ -396,12 +415,32 @@ def _study_in_process(
 
             Disk: when this slice is still mirroring AFFECTED into the graph,
             stop at the 400 MB floor rather than filling to zero. A later tick
-            continues into Postgres with `write_graph=False`. Memory still
-            always stops the slice — that kill is uncatchable.
+            continues into Postgres with `write_graph=False`. The panel has
+            the same 5 GB cap: stop a tick that would fill it, prune GDELT
+            skips, and resume. Memory still always stops the slice — that
+            kill is uncatchable.
             """
             if jobs_tight():
                 return True
+            if pg_store.panel_is_tight(panel):
+                return True
             return write_graph and _store.disk_is_tight(graph_path)
+
+        if pg_store.panel_is_tight(panel):
+            pruned = pg_store.prune_gdelt_runs(panel, drop_skips=True)
+            if pg_store.panel_is_tight(panel):
+                return {
+                    "stopped": "panel volume nearly full",
+                    "postgres": pg_store.storage_report(panel),
+                    "pruned": pruned,
+                    "remaining_total": remaining_total,
+                    "note": (
+                        "The study writes computed CARs into Postgres, not "
+                        "AFFECTED. GDELT skip-rows are the blast; they are "
+                        "pruned into event_study_coverage. If this still "
+                        "fires, the panel itself is full of numbers."
+                    ),
+                }
 
         slice_events = left[:_events_per_tick]
         outcome = runner.measure(
@@ -661,7 +700,7 @@ def games(conn: Any, deadline: float) -> dict[str, Any]:
 #: measured. The GRAPH no longer holds a copy of these events: putting them
 #: in Kuzu (then AFFECTED onto them at ~2 KB/edge) is what filled the 5 GB
 #: volume. Forecasts, games, hostility and the wire page already read the
-#: corpus; the study writes measurements into Postgres.
+#: corpus. While frozen, live intake is GDELT 2.0 on the overlay.
 GRAPH_MIN_GOLDSTEIN = float(os.getenv("GEOGRAPH_GRAPH_MIN_GOLDSTEIN", "7.0"))
 
 _wire_done: set[str] = set()
@@ -700,18 +739,19 @@ def measurable(row: dict[str, Any]) -> bool:
 
 
 def wire(conn: Any, deadline: float) -> dict[str, Any]:
-    """Keep roster Dyad nodes current. The corpus IS the wire.
+    """Keep roster Dyad nodes current and poll the GDELT 2.0 overlay.
 
     Projecting GDELT Event nodes into Kuzu — and then AFFECTED onto them —
     is what filled the 5 GB volume with a 2 KB/edge duplicate of
-    `event_study_runs`. Forecasts, games, hostility and the wire page
-    already read the corpus. The study measures corpus rows into Postgres;
-    only spine and deep-tier events keep a graph node and an AFFECTED
-    mirror. This job still MERGEs the declared pairs (tens of nodes) and
-    writes the lean-complete markers so a pending refill is not stranded.
+    `event_study_runs`. The frozen snapshot is the wire. This job MERGEs
+    the declared pairs (tens of nodes), marks lean-complete so a pending
+    refill is not stranded, and refreshes the in-memory GDELT 2.0 overlay
+    — scored against snapshot EWMAs, this-event CARs in process, never a
+    graph edge and never a panel row.
     """
     del deadline
     from core.wire import corpus
+    from core.wire import live as live_overlay
 
     written = _ensure_roster_dyads(conn)
     marked: list[str] = []
@@ -720,9 +760,26 @@ def wire(conn: Any, deadline: float) -> dict[str, Any]:
             _mark(_lean_marker(name))
             marked.append(name)
         _wire_done.add(name)
-    if not written and not marked:
-        return {"note": "roster dyads current; wire lives in the corpus"}
-    return {"dyads": written, "marked_complete": marked}
+
+    live_out: dict[str, Any] = {}
+    try:
+        published = live_overlay.refresh_all()
+        attached = 0
+        for name in _pack_names():
+            try:
+                attached += live_overlay.attach_measured(packs.load(name))
+            except Exception:  # noqa: BLE001 - one pack failing is not a job failure
+                continue
+        live_out = {"published": published, "measured": attached}
+    except Exception as exc:  # noqa: BLE001 - live failing must not fail dyad merge
+        live_out = {"error": str(exc)[:160]}
+
+    return {
+        "dyads": written,
+        "marked_complete": marked,
+        "live": live_out,
+        "note": "roster dyads current; live intake is GDELT 2.0",
+    }
 
 
 def _ensure_roster_dyads(conn: Any) -> int:
@@ -1463,6 +1520,10 @@ def prices(conn: Any, deadline: float) -> dict[str, Any]:
     Windowed, not a reload. From a week before the newest close, upserted, so
     a refresh is seconds of yfinance rather than the full-history fetch the
     depth guard pays for.
+
+    Intraday prints refresh even when daily closes are current: live GDELT
+    2.0 measures `intraday_open_close` from those prints, and a four-day
+    daily freshness check would skip them on every ordinary weekday.
     """
     del conn  # deliberately no graph access
     from core.panel import pg_store
@@ -1485,29 +1546,57 @@ def prices(conn: Any, deadline: float) -> dict[str, Any]:
 
     today = _dt.date.today()
     stale_days = (today - latest).days
+    daily: dict[str, Any]
     if stale_days <= PRICES_STALE_DAYS:
-        return {"note": "prices are current", "latest": latest.isoformat(),
-                "stale_days": stale_days}
+        daily = {
+            "note": "daily prices are current",
+            "latest": latest.isoformat(),
+            "stale_days": stale_days,
+        }
+    else:
+        start = (latest - _dt.timedelta(days=7)).isoformat()
+        refreshed: list[dict[str, Any]] = []
+        for name in _pack_names():
+            if time.monotonic() >= deadline:
+                break
+            proc = subprocess.run(  # noqa: S603
+                [sys.executable, str(_LOAD_PANEL_SCRIPT), name, "--start", start],
+                capture_output=True, text=True,
+                timeout=max(30.0, deadline - time.monotonic()),
+                check=False,
+            )
+            refreshed.append({
+                "pack": name, "ok": proc.returncode == 0,
+                "error": (proc.stderr or "").strip()[-160:] if proc.returncode else None,
+            })
+        daily = {
+            "refreshed_from": start,
+            "was_stale_days": stale_days,
+            "packs": refreshed,
+        }
+    return {**daily, "intraday": _refresh_intraday(deadline)}
 
-    start = (latest - _dt.timedelta(days=7)).isoformat()
-    refreshed: list[dict[str, Any]] = []
+
+def _refresh_intraday(deadline: float) -> list[dict[str, Any]]:
+    """~60 days of hourly prints — the ceiling yfinance actually keeps.
+
+    Recent events get a real `intraday_open_close` only if these rows exist.
+    A miss omits the window — not a skip-row, and never a daily number
+    under an intraday label.
+    """
+    from core.ingestion import market_data
+
+    settings = settings_module.load()
+    out: list[dict[str, Any]] = []
     for name in _pack_names():
         if time.monotonic() >= deadline:
             break
-        proc = subprocess.run(  # noqa: S603
-            [sys.executable, str(_LOAD_PANEL_SCRIPT), name, "--start", start],
-            capture_output=True, text=True, timeout=max(30.0, deadline - time.monotonic()),
-            check=False,
-        )
-        refreshed.append({
-            "pack": name, "ok": proc.returncode == 0,
-            "error": (proc.stderr or "").strip()[-160:] if proc.returncode else None,
-        })
-    return {
-        "refreshed_from": start,
-        "was_stale_days": stale_days,
-        "packs": refreshed,
-    }
+        try:
+            written = market_data.load_intraday(settings, region_pack=name)
+            out.append({"pack": name, "ok": True, "rows": written})
+        except Exception as exc:  # noqa: BLE001 - one pack must not stop the others
+            out.append({"pack": name, "ok": False, "error": str(exc)[-160:]})
+    return out
 
 
 def counts(conn: Any, deadline: float) -> dict[str, Any]:
@@ -1676,9 +1765,10 @@ def reclaim(conn: Any, deadline: float) -> dict[str, Any]:
     gone before writers stop — the boot's reclaim only fires below 64 MB,
     which is already the crash-loop zone. Takes no graph lock.
 
-    The panel half drops GDELT skip rows and unused windows. Those rows are
-    the watermark of a growing study; with the snapshot frozen they are
-    dead weight on the OTHER 5 GB volume.
+    The panel half drops GDELT skip rows and unused windows, then VACUUMs
+    so those pages can be reused. Coverage is the watermark now, so those
+    skip rows are dead weight on the OTHER 5 GB volume whether or not the
+    snapshot is frozen. The frozen transmission map is not rewritten.
     """
     del conn, deadline
     from core.graph import kuzu_store
@@ -1699,8 +1789,10 @@ def reclaim(conn: Any, deadline: float) -> dict[str, Any]:
     else:
         try:
             panel_out = pg_store.prune_gdelt_runs(
-                panel, drop_skips=snapshot.frozen(),
+                panel, drop_skips=True,
             )
+            if int(panel_out.get("deleted") or 0) > 0:
+                panel_out["vacuum"] = pg_store.vacuum_runs(panel)
         finally:
             panel.close()
     return {"graph": graph, "panel": panel_out}

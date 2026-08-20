@@ -177,3 +177,56 @@ def test_hypothetical_shares_the_object_shape(conn):
     hypo = impact.hypothetical_impact(conn, dyad_id=dyad, as_of="2015-06-01")
     assert set(hist.keys()) == set(hypo.keys())
     assert hist["boundary_statement"] == hypo["boundary_statement"]
+
+
+def test_effects_for_dyad_fills_from_the_panel(monkeypatch):
+    """A wire pair with no Kuzu copy still has a measured case from Postgres."""
+    from core.transmission import effects as effects_module
+
+    effects_module.forget_dyad_effects()
+    monkeypatch.setattr(effects_module.kuzu_store, "query", lambda *a, **k: [])
+    monkeypatch.setattr(
+        "core.wire.serving.events_for_dyad",
+        lambda dyad_id, limit=400: [{
+            "node_id": "event:gdelt-1",
+            "event_time": "2024-01-02",
+            "name": "wire",
+            "goldstein": -8.0,
+            "escalation_direction": "escalating",
+            "escalation_magnitude": 4.0,
+            "fidelity_tier": "wire",
+            "region_pack": "mena",
+            "initiator_id": "actor:a",
+            "target_id": "actor:b",
+            "dyad_id": dyad_id,
+        }],
+    )
+
+    class _Panel:
+        def close(self) -> None:
+            return None
+
+    monkeypatch.setattr("core.panel.pg_store.connect", lambda settings: _Panel())
+    monkeypatch.setattr(
+        "core.panel.pg_store.computed_runs",
+        lambda panel, event_ids=None, **k: [
+            {
+                "event_node_id": "event:gdelt-1",
+                "market_ticker": "BZ=F",
+                "window": window,
+                "abnormal_return": -0.02,
+                "raw_return": -0.02,
+                "first_mover": True,
+                "status": "computed",
+                "method": "test",
+                "p_value": 0.01,
+                "t_stat": -2.0,
+                "resolution": "day",
+            }
+            for window in ("car_0_1", "car_0_3")
+        ] if event_ids else [],
+    )
+    rows = effects_module.effects_for_dyad(object(), escalation.dyad_id("actor:a", "actor:b"))
+    assert {r["window"] for r in rows} == {"car_0_1", "car_0_3"}
+    assert all(r["event_id"] == "event:gdelt-1" for r in rows)
+    assert all(r["abnormal_return"] == -0.02 for r in rows)

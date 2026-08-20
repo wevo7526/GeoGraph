@@ -4,7 +4,7 @@
 
 **An applied-history engine for geopolitics and markets.**
 
-*A 120-year network archive. A transmission layer that measures what events did to prices.
+*A network archive from 1972 to the live wire. A transmission layer that measures what events did to prices.
 A game layer that solves what happens next — and a rule that the AI never originates a number.*
 
 <br>
@@ -19,7 +19,7 @@ A game layer that solves what happens next — and a rule that the AI never orig
 [![Tests](https://img.shields.io/badge/tests-474%20passing-2da44e?style=flat-square)](#verification)
 [![Lint](https://img.shields.io/badge/ruff-clean-2da44e?style=flat-square)](#verification)
 [![Types](https://img.shields.io/badge/mypy-strict-2da44e?style=flat-square)](#verification)
-[![Archive](https://img.shields.io/badge/archive-1905%20→%20present-6e7781?style=flat-square)](#the-archive)
+[![Archive](https://img.shields.io/badge/archive-1972%20→%20present-6e7781?style=flat-square)](#the-archive)
 [![Regions](https://img.shields.io/badge/region%20packs-3-6e7781?style=flat-square)](#region-packs)
 
 </div>
@@ -250,7 +250,7 @@ mypy .              # strict, minus disallow_any_expr
 
 | | |
 |---|---|
-| **Span** | 1905 → present |
+| **Span** | 1972 → present (cited deviation from a 1905 floor: the fiat-floating regime every pack market actually trades in) |
 | **Event spine** | hand-coded through the CAMEO → Goldstein crosswalk |
 | **Wire** | GDELT, from the free raw files — no BigQuery project required |
 | **Deep tier** | COW state system · MIDs · CINC · alliances · IGOs · Shiller monthly |

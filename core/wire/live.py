@@ -3,7 +3,12 @@
 The scored corpus, the counted kernel, the fitted payoffs and the measured
 AFFECTED map are the engine's weights. This module scores the newest
 15-minute export against those weights — Head B vs each pair's snapshot
-EWMA — and NEVER writes a graph edge.
+EWMA — and NEVER writes a graph edge or an `event_study_runs` row.
+
+`measured` on a live row is THIS event's session move, computed in process
+from the price panel. Historical `market_outlook` cells are analogy from
+the frozen map. The two must not be mixed: writing live CARs into the
+panel would change `markets` and `games.pricing`.
 
 Consumers (the live wire, a game's opening state, the relationship series)
 read the overlay. The kernel, payoffs, CINC and the transmission map do not.
@@ -11,6 +16,8 @@ read the overlay. The kernel, payoffs, CINC and the transmission map do not.
 
 from __future__ import annotations
 
+import datetime as dt
+import time
 from typing import Any
 
 from core.classifier import coercion, escalation
@@ -21,7 +28,17 @@ from core.models import panel as panel_module
 
 _BASELINES: dict[str, dict[str, float]] = {}
 _PACK: dict[str, dict[str, Any]] = {}
+_PACK_AT: dict[str, float] = {}
 _PUBLISHED: str | None = None
+
+#: Loudest events per pack to measure against the panel this tick. The whole
+#: 15-minute file is scored; only these get this-event CARs.
+LIVE_MEASURE_CAP = 12
+LIVE_WINDOWS = ("car_0_1",)
+#: How long a scored pack is reused before the next poll. GDELT publishes
+#: every 15 minutes; the wire job polls every 60s, so a request rarely
+#: fetches the file itself.
+ENSURE_MAX_AGE_S = 90.0
 
 _DEESCALATING = frozenset({"de-escalating", "deescalating"})
 
@@ -36,6 +53,7 @@ def clear() -> None:
     global _PUBLISHED
     _BASELINES.clear()
     _PACK.clear()
+    _PACK_AT.clear()
     _PUBLISHED = None
 
 
@@ -107,6 +125,11 @@ def score(
 def refresh_pack(pack: Any) -> dict[str, Any]:
     """Poll GDELT 2.0 for one roster, score against the snapshot, cache."""
     global _PUBLISHED
+    previous = {
+        str(row.get("node_id") or ""): row
+        for row in ((_PACK.get(pack.name) or {}).get("rows") or [])
+        if row.get("node_id")
+    }
     roster = {
         a["iso3"]: {"node_id": a["id"], "name": a["name"]}
         for a in pack.actors if a.get("iso3")
@@ -116,8 +139,13 @@ def refresh_pack(pack: Any) -> dict[str, Any]:
     if published:
         _PUBLISHED = published
     rows = score(list(polled.get("rows") or []), baselines=snapshot_baselines(pack.name))
+    for row in rows:
+        old = previous.get(str(row.get("node_id") or ""))
+        if old and old.get("measured"):
+            row["measured"] = old["measured"]
     payload = {**polled, "rows": rows}
     _PACK[pack.name] = payload
+    _PACK_AT[pack.name] = time.time()
     return payload
 
 
@@ -131,6 +159,143 @@ def refresh_all() -> str | None:
         except Exception:  # noqa: BLE001 - a live feed failing is not a job failure
             continue
     return _PUBLISHED
+
+
+def ensure_pack(pack: Any, *, max_age_s: float = ENSURE_MAX_AGE_S) -> dict[str, Any]:
+    """Return a scored pack, polling only when the cache is empty or stale.
+
+    The wire job is the poller. A request thread reuses what it already
+    has so a refreshing dashboard does not re-download the export — or
+    re-measure the same twelve events — on every hit.
+    """
+    name = pack.name
+    age = time.time() - _PACK_AT.get(name, 0.0)
+    if name not in _PACK or age > max_age_s:
+        refresh_pack(pack)
+        attach_measured(pack)
+    return _PACK.get(name) or {}
+
+
+def row_by_id(node_id: str) -> dict[str, Any] | None:
+    """One overlay row by event id, or None. Case/impact graph-miss fallback."""
+    needle = str(node_id)
+    for payload in _PACK.values():
+        for row in payload.get("rows") or []:
+            if str(row.get("node_id") or "") == needle:
+                return row
+    return None
+
+
+def attach_measured(pack: Any) -> int:
+    """Stamp this-event CARs onto the loudest overlay rows.
+
+    In-process event-study arithmetic only. The numbers stay on the
+    overlay cache. The frozen transmission map does not move.
+    """
+    payload = _PACK.get(pack.name)
+    if not payload:
+        return 0
+    rows = list(payload.get("rows") or [])
+    need: list[tuple[float, dict[str, Any]]] = []
+    for row in rows:
+        if row.get("measured"):
+            continue
+        if not row.get("node_id") or not row.get("event_time"):
+            continue
+        mag = row.get("escalation_magnitude")
+        need.append((abs(float(mag)) if mag is not None else 0.0, row))
+    need.sort(key=lambda item: -item[0])
+    chosen = [row for _, row in need[:LIVE_MEASURE_CAP]]
+    if not chosen or not getattr(pack, "markets", None):
+        return 0
+
+    from core import settings as settings_module
+    from core.panel import pg_store
+    from core.transmission import event_study
+
+    try:
+        panel = pg_store.connect(settings_module.load())
+    except pg_store.PanelUnavailable:
+        return 0
+
+    stamped = 0
+    try:
+        names = {
+            str(m["ticker"]): str(m.get("name") or m["ticker"]) for m in pack.markets
+        }
+        first = min(_event_date(row) for row in chosen)
+        last = max(_event_date(row) for row in chosen)
+        start = (first - dt.timedelta(days=400)).isoformat()
+        end = (last + dt.timedelta(days=60)).isoformat()
+        preloaded: dict[str, list[dict[str, Any]]] = {}
+        intra: dict[str, list[dict[str, Any]]] = {}
+        today = dt.date.today()
+        intra_start = (today - dt.timedelta(days=70)).isoformat()
+        intra_end = (today + dt.timedelta(days=2)).isoformat()
+        for market in pack.markets:
+            ticker = str(market["ticker"])
+            try:
+                preloaded[ticker] = pg_store.series(
+                    panel, ticker, start=start, end=end, frequency="daily",
+                )
+            except Exception:  # noqa: BLE001 - a missing series is no print
+                preloaded[ticker] = []
+            try:
+                intra[ticker] = pg_store.series_intraday(
+                    panel, ticker, start=intra_start, end=intra_end,
+                )
+            except Exception:  # noqa: BLE001 - missing table is no prints
+                intra[ticker] = []
+
+        for row in chosen:
+            event_date = _event_date(row)
+            event_start = (event_date - dt.timedelta(days=400)).isoformat()
+            event_end = (event_date + dt.timedelta(days=60)).isoformat()
+            prices = {
+                ticker: [
+                    obs for obs in series
+                    if event_start <= str(obs.get("obs_date") or "") <= event_end
+                ]
+                for ticker, series in preloaded.items()
+            }
+            try:
+                effects, _skips = event_study.compute_effects(
+                    {"node_id": row["node_id"], "event_time": row["event_time"]},
+                    pack.markets,
+                    prices=prices,
+                    windows=LIVE_WINDOWS,
+                    intraday=intra or None,
+                )
+            except Exception:  # noqa: BLE001 - one event failing is not a job failure
+                continue
+            if not effects:
+                continue
+            row["measured"] = [
+                {
+                    "ticker": e.market_ticker,
+                    "market": names.get(e.market_ticker, e.market_ticker),
+                    "window": e.window,
+                    "resolution": e.resolution,
+                    "abnormal_return": e.abnormal_return,
+                    "raw_return": e.raw_return,
+                    "expected_return": e.expected_return,
+                    "t_stat": e.t_stat,
+                    "p_value": e.p_value,
+                    "first_mover": e.first_mover,
+                    "overlapping": e.overlapping,
+                    "method": e.method,
+                }
+                for e in effects
+            ]
+            stamped += 1
+    finally:
+        panel.close()
+    return stamped
+
+
+def _event_date(row: dict[str, Any]) -> dt.date:
+    text = str(row.get("event_time") or "")[:10]
+    return dt.date.fromisoformat(text)
 
 
 def rows_for(region: str, dyad_id: str | None = None) -> list[dict[str, Any]]:

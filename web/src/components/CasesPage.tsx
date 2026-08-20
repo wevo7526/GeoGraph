@@ -68,7 +68,7 @@ export default function CasesPage({
       <StoryHead
         kicker={`Case studies · ${regionLabel.toUpperCase()}`}
         title="The case desk"
-        standfirst={`Worked episodes the pack already narrated, and a builder for any major event in ${regionLabel}. Selecting an event opens its measured record — not a finished case.`}
+        standfirst={`Worked episodes the pack already narrated, and a builder for any major event in ${regionLabel}. Selecting an event opens a composed reading of its measured record.`}
       />
 
       {studies === null ? (

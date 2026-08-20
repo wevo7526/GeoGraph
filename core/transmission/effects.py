@@ -116,6 +116,84 @@ def forget_dyad_effects() -> None:
     _effects_cache.clear()
 
 
+def _panel_effects_for_dyad(conn: kuzu.Connection, dyad_id: str) -> list[dict[str, Any]]:
+    """Measured panel rows for this dyad's corpus events.
+
+    Membership cannot come from AFFECTED: the graph copy of the wire is
+    gone. The corpus still knows which events belong to the pair; the
+    panel still holds the CARs. Failures here are empty, never raised —
+    a missing panel is "not yet measured", the same as a missing edge.
+    """
+    try:
+        from core import settings as settings_module
+        from core.panel import pg_store
+        from core.wire import serving as wire_serving
+    except Exception:  # noqa: BLE001
+        return []
+    try:
+        events = wire_serving.events_for_dyad(dyad_id)
+    except Exception:  # noqa: BLE001 - corpus dark
+        return []
+    if not events:
+        return []
+    by_id = {str(e.get("node_id")): e for e in events if e.get("node_id")}
+    if not by_id:
+        return []
+    try:
+        panel = pg_store.connect(settings_module.load())
+    except Exception:  # noqa: BLE001
+        return []
+    try:
+        runs = pg_store.computed_runs(panel, event_ids=list(by_id))
+    except Exception:  # noqa: BLE001
+        return []
+    finally:
+        panel.close()
+    if not runs:
+        return []
+    markets = {
+        str(r["ticker"]): r
+        for r in kuzu_store.query(
+            conn,
+            "MATCH (m:Market) RETURN m.node_id AS market_id, m.name AS market_name, "
+            "m.ticker AS ticker, m.market_type AS market_type",
+        )
+    }
+    out: list[dict[str, Any]] = []
+    for run in runs:
+        meta = by_id.get(str(run["event_node_id"]))
+        if meta is None:
+            continue
+        market = markets.get(str(run["market_ticker"]), {})
+        ticker = str(run["market_ticker"])
+        out.append({
+            "event_id": run["event_node_id"],
+            "event_time": meta.get("event_time"),
+            "event_name": meta.get("name"),
+            "goldstein": meta.get("goldstein"),
+            "escalation_direction": meta.get("escalation_direction"),
+            "escalation_magnitude": meta.get("escalation_magnitude"),
+            "fidelity_tier": meta.get("fidelity_tier") or "wire",
+            "region_pack": meta.get("region_pack"),
+            "initiator_id": meta.get("initiator_id"),
+            "target_id": meta.get("target_id"),
+            "market_id": market.get("market_id") or ticker,
+            "market_name": market.get("market_name") or ticker,
+            "ticker": ticker,
+            "market_type": market.get("market_type"),
+            "abnormal_return": run.get("abnormal_return"),
+            "raw_return": run.get("raw_return"),
+            "window": run.get("window"),
+            "first_mover": run.get("first_mover"),
+            "overlapping": str(run.get("status") or "") == "overlapping",
+            "method": run.get("method"),
+            "p_value": run.get("p_value"),
+            "t_stat": run.get("t_stat"),
+            "resolution": run.get("resolution"),
+        })
+    return out
+
+
 def effects_for_dyad(conn: kuzu.Connection, dyad_id: str) -> list[dict[str, Any]]:
     """Measured market effects for this dyad's events. Empty is a real and
     common answer — the transmission engine records a SKIP where a market did
@@ -167,6 +245,15 @@ def effects_for_dyad(conn: kuzu.Connection, dyad_id: str) -> list[dict[str, Any]
         rows.extend(
             kuzu_store.query(conn, pattern, {"initiator": actor_b, "target": actor_a})
         )
+    have = {str(row.get("event_id")) for row in rows}
+    # GDELT membership is in the corpus, measurements in Postgres. A pair
+    # whose wire never entered Kuzu would otherwise serve an empty case
+    # while event_study_runs held the numbers. Membership is per EVENT
+    # against the graph result, so every window of a corpus-only event
+    # still lands.
+    for row in _panel_effects_for_dyad(conn, dyad_id):
+        if str(row.get("event_id")) not in have:
+            rows.append(row)
     _effects_cache[dyad_id] = (now, rows)
     _effects_cache.move_to_end(dyad_id)
     while len(_effects_cache) > _EFFECTS_CACHE_SIZE:

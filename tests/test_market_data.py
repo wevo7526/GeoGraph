@@ -26,6 +26,14 @@ class _Frame:
     def __init__(self, rows: list[tuple[Any, dict[str, Any]]]) -> None:
         self._rows = rows
 
+    @property
+    def empty(self) -> bool:
+        return not self._rows
+
+    @property
+    def index(self) -> list[Any]:
+        return [stamp for stamp, _ in self._rows]
+
     def iterrows(self):
         return iter((stamp, _Bar(bar)) for stamp, bar in self._rows)
 
@@ -215,3 +223,29 @@ def test_yields_need_a_key_and_say_so(settings, monkeypatch):
 
     with pytest.raises(market_data.IngestError, match="FRED_API_KEY"):
         market_data.load_yields(replace(settings, fred_api_key=None))
+
+
+def test_feed_symbols_try_aliases_before_the_pack_ticker():
+    market = {"ticker": "IMOEX.ME", "feed_tickers": ["IMOEX", "IMOEX.ME"]}
+    assert market_data._feed_symbols(market) == ["IMOEX", "IMOEX.ME"]
+    # The panel key stays the pack ticker even when an alias quotes.
+    bare = {"ticker": "^GSPC"}
+    assert market_data._feed_symbols(bare) == ["^GSPC"]
+
+
+def test_first_history_skips_empty_frames(monkeypatch):
+    calls: list[str] = []
+
+    def fake(symbol: str, start: str, end: str | None, interval: str) -> Any:
+        calls.append(symbol)
+        if symbol == "IMOEX.ME":
+            return _Frame([(dt.date(2024, 1, 2), _bar(1.0))])
+        return _Frame([])
+
+    monkeypatch.setattr(market_data, "_yfinance_history", fake)
+    frame = market_data._first_history(
+        ["IMOEX", "IMOEX.ME"], "2020-01-01", None, "1d",
+    )
+    assert calls == ["IMOEX", "IMOEX.ME"]
+    assert not frame.empty
+    assert list(stamp for stamp, _ in frame._rows) == [dt.date(2024, 1, 2)]

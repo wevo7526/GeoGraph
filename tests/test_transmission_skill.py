@@ -165,6 +165,35 @@ def test_compact_skill_breaks_out_market_type():
     assert "sovereign_yield" in compact["by_market_type"]
     assert compact["sovereign_yield"] is not None
     assert compact["gspc_control"] is not None
+    assert compact["trust"]["trusted"] is True or compact["trust"]["bottleneck"] == "transmission"
+    assert "quad_band" in compact
+
+
+def test_trust_of_marks_sequencing_when_oracle_beats_and_game_does_not():
+    sequencing = skill.trust_of({
+        "matchers": {
+            "quad_band": {"beats_naive": True},
+            "game_band": {"beats_naive": False},
+        }
+    })
+    assert sequencing["trusted"] is True
+    assert sequencing["bottleneck"] == "sequencing"
+    assert "sequencing" in sequencing["note"]
+
+    trans = skill.trust_of({
+        "matchers": {"quad_band": {"beats_naive": False}}
+    })
+    assert trans["trusted"] is False
+    assert trans["bottleneck"] == "transmission"
+
+    ok = skill.trust_of({
+        "matchers": {
+            "quad_band": {"beats_naive": True},
+            "game_band": {"beats_naive": True},
+        }
+    })
+    assert ok["trusted"] is True
+    assert ok["bottleneck"] is None
 
 
 def test_duration_ordering_is_rank_not_a_fit():

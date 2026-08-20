@@ -1,7 +1,7 @@
 [project]
 name = "geograph"
 version = "0.0.1"
-description = "An applied-history engine for geopolitics and markets: a 120-year network archive, a measured transmission layer, and a reasoning layer with two forecasting modes."
+description = "An applied-history engine for geopolitics and markets: a network archive from 1972, a measured transmission layer, and a reasoning layer with two forecasting modes."
 requires-python = ">=3.12"
 
 # Deliberately small at the core. Every dependency here is load-bearing:

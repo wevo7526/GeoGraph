@@ -27,14 +27,14 @@ co-deployed in someone else's war an adversary pair, which is exactly the
 GDELT co-participation artefact the ranking already has to warn about. The
 classification uses both, and says which evidence moved it.
 
-WHAT THIS MODULE DOES AND DOES NOT DO. It names the family and the question
-that family's game is entitled to ask, and it gives the surface a vocabulary
-that is not borrowed from war. It does NOT yet give each family its own action
-set and fitted payoffs — that is the second half, and it is a bigger change:
-each family's actions have to map onto coded quad classes so its payoffs stay
-estimable from the record rather than invented (build-spec §17). Until then a
-pair outside the adversarial family is SOLVED THE OLD WAY AND SAID TO BE, so
-the reader can discount it, rather than being quietly presented as a war game.
+WHAT THIS MODULE DOES. It names the family and the question that family's
+game is entitled to ask, and it gives the surface a vocabulary that is not
+borrowed from war. Each family has its own action set, mapped onto coded
+quad classes so payoffs stay estimable from the record (build-spec §17),
+and its own stage payoff (`solve.ally_stage_payoff`, `solve.rival_stage_payoff`,
+Fearon for adversaries). `classify` returns `native: True` for all three:
+a pair is solved in its own space, never quietly as a war game and labelled
+after the fact.
 """
 
 from __future__ import annotations
@@ -272,12 +272,10 @@ def classify(
         # The trained read that decided it, carried so the ranking can order
         # on the same number the sentence quotes. None when no model ships.
         "hostility": round(hostility, 4) if hostility is not None else None,
-        # NATIVE means the solver plays THIS family's own game. The adversary
-        # game has always existed; the ally game (Olson-Zeckhauser burden
-        # sharing — `ALLY` below and `solve.stage_payoff`) landed 2026-08-16.
-        # A rival is still solved with the adversary's payoff and says so, so
-        # a reader can discount it instead of being handed brinkmanship
-        # language for a competition conducted in argument.
+        # NATIVE means the solver plays THIS family's own game. All three
+        # families do: Fearon for adversaries, Olson-Zeckhauser burden
+        # sharing for allies, repeated competition for rivals. A pair is
+        # never quietly solved as a war game and labelled after the fact.
         "native": family in ("adversary", "ally", "rival"),
         "question": semantics["question"],
         "headline": semantics["headline"],

@@ -52,6 +52,7 @@ def _purge(conn) -> None:
         cur.execute("DELETE FROM market_observations WHERE market_ticker = %s", (_TICKER,))
         cur.execute("DELETE FROM market_intraday WHERE market_ticker = %s", (_TICKER,))
         cur.execute("DELETE FROM event_study_runs WHERE market_ticker = %s", (_TICKER,))
+        cur.execute("DELETE FROM event_study_coverage WHERE market_ticker = %s", (_TICKER,))
     conn.commit()
 
 
@@ -71,7 +72,10 @@ def test_the_schema_applies_to_a_real_server(panel):
             "SELECT table_name FROM information_schema.tables WHERE table_schema = 'public'"
         )
         tables = {row[0] for row in cur.fetchall()}
-    assert {"market_observations", "market_intraday", "event_study_runs"} <= tables
+    assert {
+        "market_observations", "market_intraday", "event_study_runs",
+        "event_study_coverage",
+    } <= tables
 
 
 def test_the_event_study_table_has_an_unreserved_window_column(panel):

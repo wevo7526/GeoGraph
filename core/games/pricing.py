@@ -228,11 +228,14 @@ def _from_panel(
                 "event_time": meta.get("date"),
                 "quad_class": meta.get("quad_class"),
                 "magnitude": meta.get("magnitude"),
+                "direction": meta.get("direction"),
                 "dyad_id": dyad,
                 "initiator_id": initiator,
                 "target_id": target,
                 "market_id": market_id,
                 "market_name": market_name,
+                "ticker": ticker,
+                "window": run["window"],
                 "abnormal_return": run["abnormal_return"],
                 "overlapping": str(run.get("status") or "") == "overlapping",
                 "p_value": run.get("p_value"),
@@ -397,6 +400,51 @@ def price_step(
     return rows
 
 
+def trust_from_effects(effects: list[dict[str, Any]]) -> dict[str, Any]:
+    """Leave-one-out skill of these measurements, as a pricing gate.
+
+    Oracle class (`quad_band`) is what `price_step` matches on. If it does
+    not beat a naive last-cell guess, priced courses are marked untrusted
+    rather than dropped — the numbers stay, the claim does not.
+    """
+    from core.reasoning import markets as markets_module
+    from core.reasoning import transmission_skill as skill_module
+
+    observations: list[dict[str, Any]] = []
+    for row in effects:
+        ar = row.get("abnormal_return")
+        if ar is None:
+            continue
+        mag = row.get("magnitude")
+        observations.append({
+            "event_id": row.get("event_id"),
+            "date": row.get("event_time"),
+            "ticker": row.get("ticker") or row.get("market_id"),
+            "market_id": row.get("market_id"),
+            "market_type": row.get("market_type") or "",
+            "ar": float(ar),
+            "window": row.get("window") or markets_module.HEADLINE_WINDOW,
+            "overlapping": bool(row.get("overlapping")),
+            "p_value": row.get("p_value"),
+            "kind": markets_module.kind_of(
+                row.get("direction"), None if mag is None else float(mag),
+            ),
+            "direction": row.get("direction"),
+            "magnitude": mag,
+            "quad_class": row.get("quad_class"),
+            "dyad_id": row.get("dyad_id"),
+        })
+    if not observations:
+        return {
+            "oracle_beats_naive": False,
+            "game_beats_naive": None,
+            "trusted": False,
+            "bottleneck": "transmission",
+            "note": "no measured effects to score",
+        }
+    return skill_module.trust_of(skill_module.walk(observations, clean=True))
+
+
 def price_paths(
     paths: dict[str, Any],
     effects: list[dict[str, Any]],
@@ -404,6 +452,7 @@ def price_paths(
     as_of: str,
     scale: float,
     min_measurements: int = MIN_MEASUREMENTS,
+    trust: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Attach measured market distributions to every step of every path."""
     index = build_index(effects, as_of=as_of, scale=scale)
@@ -411,12 +460,21 @@ def price_paths(
         str(e["market_id"]): str(e["market_name"])
         for e in effects if e.get("market_name")
     }
+    gate = trust if trust is not None else trust_from_effects(effects)
+
+    def _stamp(rows: list[dict[str, Any]] | None) -> list[dict[str, Any]] | None:
+        if not rows:
+            return rows
+        trusted = bool(gate.get("trusted"))
+        return [{**row, "trusted": trusted} for row in rows]
+
     def _price(course: dict[str, Any]) -> dict[str, Any]:
         return {
             **course,
             "steps": [
-                {**step, "market": price_step(step, index, names,
-                                              min_measurements=min_measurements)}
+                {**step, "market": _stamp(price_step(
+                    step, index, names, min_measurements=min_measurements,
+                ))}
                 for step in course["steps"]
             ],
         }
@@ -429,6 +487,15 @@ def price_paths(
     kinds = [_price(kind) for kind in paths.get("kinds", [])]
 
     measured = sum(len(m) for markets in index.values() for m in markets.values())
+    method = (
+        "measured AFFECTED abnormal returns for events of the same quad "
+        "class and intensity band, regime-gated; quantiles over the "
+        "matched set, never a modelled price"
+    )
+    if not gate.get("trusted"):
+        method += (
+            f"; UNTRUSTED — {gate.get('note') or 'oracle-class cells have no skill'}"
+        )
     return {
         **paths,
         "paths": priced,
@@ -438,19 +505,12 @@ def price_paths(
             "cells": len(index),
             "regime_gated_to": as_of,
             "min_measurements": min_measurements,
-            "method": (
-                "measured AFFECTED abnormal returns for events of the same quad "
-                "class and intensity band, regime-gated; quantiles over the "
-                "matched set, never a modelled price"
-            ),
-            # An empty index is a FINDING. It means the transmission engine has
-            # measured nothing admissible for this region and regime — usually
-            # because the markets did not exist at event time — and the paths
-            # should render with no prices rather than with invented ones.
+            "trust": gate,
+            "method": method,
             "note": (
                 None if measured else
                 "no measured market effects are admissible for this regime; "
                 "the sequence stands without prices"
-            ),
+            ) or (None if gate.get("trusted") else gate.get("note")),
         },
     }

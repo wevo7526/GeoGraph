@@ -330,3 +330,20 @@ def test_source_hrefs_are_gated_not_raw_mention_urls() -> None:
         (WEB / "components" / "Explorer.tsx").read_text(encoding="utf-8")
     )
     assert "citableUrl" in explorer
+
+
+def test_priced_courses_can_be_marked_untrusted() -> None:
+    story = _strip_comments((WEB / "lib" / "story.ts").read_text(encoding="utf-8"))
+    assert "pricingTrustSentence" in story
+    assert "marked untrusted" in story
+    games = _strip_comments(
+        (WEB / "components" / "GamesPage.tsx").read_text(encoding="utf-8")
+    )
+    assert "pricingTrustSentence" in games
+
+
+def test_the_case_desk_opens_a_composed_reading() -> None:
+    cases = _strip_comments(
+        (WEB / "components" / "CasesPage.tsx").read_text(encoding="utf-8")
+    )
+    assert "composed reading" in cases.lower() or "composed" in cases.lower()

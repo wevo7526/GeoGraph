@@ -6,11 +6,13 @@ agent reads descriptions, not documentation: effects are measured not
 asserted; deep-tier effects are coarse (resolution rides on every effect);
 long-horizon output maps pressure over windows, never dated predictions.
 
-DEPLOYMENT NOTE FOR LATER: Kuzu is single-writer, so a separate MCP process
-cannot open a graph the API holds. When the API mounts this server over HTTP
-(the MarketGraph api/mcp_mount.py pattern), remember the Starlette trap:
-Mount("/mcp") compiles to ^/mcp(?P<path>/.*)$, so a bare POST /mcp misses the
-mount and falls through to the SPA catch-all as a 405.
+DEPLOYMENT NOTE: Kuzu is single-writer, so a separate MCP process cannot
+open a graph the API holds. The HTTP surface is `core.mcp.http` — POST
+`/mcp` and POST `/mcp/` registered on the FastAPI app itself, not a
+Starlette `Mount("/mcp")`. That mount compiles to ^/mcp(?P<path>/.*)$ and
+a bare POST /mcp misses it (the MarketGraph lesson). The SPA catch-all
+is GET-only, so POST is safe; GET /mcp is registered too so the SPA
+cannot steal the discovery URL.
 """
 
 from __future__ import annotations
@@ -92,8 +94,9 @@ def build_server() -> Any:
 
     @server.tool()
     def analogues_for(query_ref: str) -> dict[str, Any]:
-        """Regime-admissible historical analogues with similarity and
-        rationale. Structural match only — the vector-index half is unbuilt."""
+        """Regime-admissible historical analogues. Structural rank DISPOSES.
+        Vector cosine PROPOSES at request time and is never written to the
+        graph — a 5 GB volume cannot hold the wire as embeddings."""
         return tools.analogues_for(conn, query_ref)
 
     @server.tool()

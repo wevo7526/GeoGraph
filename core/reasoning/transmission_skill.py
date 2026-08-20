@@ -441,7 +441,72 @@ def compact_skill(report: dict[str, Any]) -> dict[str, Any]:
             "sign_hit": control.get("sign_hit"),
             "beats_naive": control.get("beats_naive"),
         } if control else None,
+        "quad_band": _matcher_block(report, "quad_band"),
+        "game_band": _matcher_block(report, "game_band"),
+        "trust": trust_of(report),
         "method": report.get("method"),
+    }
+
+
+def _matcher_block(report: dict[str, Any], name: str) -> dict[str, Any] | None:
+    row = (report.get("matchers") or {}).get(name) or {}
+    if not row:
+        return None
+    return {
+        "n": row.get("n"),
+        "coverage": row.get("coverage"),
+        "sign_hit": row.get("sign_hit"),
+        "mae": row.get("mae"),
+        "mae_naive": row.get("mae_naive"),
+        "beats_naive": row.get("beats_naive"),
+    }
+
+
+def trust_of(report: dict[str, Any]) -> dict[str, Any]:
+    """Whether priced courses may be believed, and where the bottleneck is.
+
+    Oracle class is `quad_band` — the matcher `games.pricing.price_step` uses.
+    Game class is `game_band` — the same cells, keyed by the game's predicted
+    (quad, band) instead of the event's own. If oracle beats a naive last-cell
+    guess and game does not, sequencing is the bottleneck, not transmission.
+    """
+    matchers = report.get("matchers") or {}
+    if matchers:
+        oracle = matchers.get("quad_band") or matchers.get("kind") or {}
+        game = matchers.get("game_band")
+    else:
+        # compact_skill already flattened; accept that shape too.
+        oracle = report.get("quad_band") or report.get("kind") or {}
+        game = report.get("game_band")
+    oracle_ok = bool(oracle.get("beats_naive"))
+    game_ok = None if not game else bool(game.get("beats_naive"))
+    bottleneck = None
+    if oracle_ok and game_ok is False:
+        bottleneck = "sequencing"
+    elif not oracle_ok:
+        bottleneck = "transmission"
+    if bottleneck == "sequencing":
+        note = (
+            "past events of the same class predicted the move; the game's "
+            "predicted class did not — the bottleneck is sequencing, not "
+            "measurement"
+        )
+    elif bottleneck == "transmission":
+        note = (
+            "oracle-class cells do not beat a naive last-cell guess; priced "
+            "courses are shown, and marked untrusted"
+        )
+    else:
+        note = (
+            "oracle-class cells beat a naive last-cell guess; priced courses "
+            "rest on a matcher with skill"
+        )
+    return {
+        "oracle_beats_naive": oracle_ok,
+        "game_beats_naive": game_ok,
+        "trusted": oracle_ok,
+        "bottleneck": bottleneck,
+        "note": note,
     }
 
 
