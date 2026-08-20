@@ -159,6 +159,7 @@ relations:
   - a: actor:cow-630            # Iran
     b: actor:cow-666            # Israel
     relation_type: rivalry
+    combat: true
     valid_from: "1979"
     source: source:crs-iran-proxies
     note: From revolution onward — the axis the proxy web projects against.
@@ -233,6 +234,7 @@ relations:
   - a: actor:cow-666            # Israel
     b: actor:cow-660            # Lebanon
     relation_type: rivalry
+    combat: true
     valid_from: "1948-05-15"
     source: source:standing-record
     note: >-
@@ -241,6 +243,7 @@ relations:
   - a: actor:cow-666            # Israel
     b: actor:hezbollah
     relation_type: rivalry
+    combat: true
     valid_from: "1982-06-06"
     source: source:standing-record
     note: >-
@@ -249,6 +252,7 @@ relations:
   - a: actor:cow-666            # Israel
     b: actor:cow-652            # Syria
     relation_type: rivalry
+    combat: true
     valid_from: "1948-05-15"
     source: source:standing-record
     note: >-
@@ -257,6 +261,7 @@ relations:
   - a: actor:cow-630            # Iran
     b: actor:cow-645            # Iraq
     relation_type: rivalry
+    combat: true
     valid_from: "1980-09-22"
     valid_to: "1988-08-20"
     source: source:standing-record
@@ -267,6 +272,7 @@ relations:
   - a: actor:cow-2              # United States
     b: actor:cow-645            # Iraq
     relation_type: rivalry
+    combat: true
     valid_from: "1990-08-02"
     valid_to: "2003-04-09"
     source: source:standing-record

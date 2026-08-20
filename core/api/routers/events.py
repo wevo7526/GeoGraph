@@ -180,23 +180,32 @@ def list_events(
 
     actor_names, geo_names, iso3_by_actor = packs.roster_names()
     windows: dict[str, list[tuple[int, int]]] = {}
+    combat: dict[str, list[tuple[int, int]]] = {}
     if pack:
         try:
-            windows, _ = family_module.ally_windows(packs.load(pack))
+            loaded = packs.load(pack)
+            windows, _ = family_module.ally_windows(loaded)
+            combat = family_module.combat_windows(loaded)
         except packs.PackError:
             windows = {}
+            combat = {}
     rows = []
     for row in merged[:limit]:
-        flag = family_module.allied_in(
-            windows.get(str(row.get("dyad_id") or "")),
-            family_module._year_of(row.get("event_time"), 0),
-        ) if windows else None
+        year = family_module._year_of(row.get("event_time"), 0)
+        did = str(row.get("dyad_id") or "")
+        flag = family_module.allied_in(windows.get(did), year) if windows else None
+        # Explicit True/False once a pack is in hand — absent combat must not
+        # soften Russia–Ukraine when the caller forgot a region.
+        at_war = (
+            family_module.in_combat(combat.get(did), year) if pack else None
+        )
         rows.append(wire_headline.decorate(
             row,
             actor_names=actor_names,
             geo_names=geo_names,
             iso3_by_actor=iso3_by_actor,
             allied=flag,
+            combat=at_war,
         ))
     return {"rows": rows, "truncated": truncated}
 
@@ -641,8 +650,8 @@ def wire(
         departure = (
             magnitude is not None and float(magnitude) >= WIRE_DEPARTURE_POINTS
         )
-        initiator_name = names.get(str(row.get("initiator_id") or ""))
-        target_name = names.get(str(row.get("target_id") or ""))
+        initiator_name = names.get(str(row.get("initiator_id") or "")) or row.get("initiator_name")
+        target_name = names.get(str(row.get("target_id") or "")) or row.get("target_name")
         display = wire_headline.display_fields(
             {**row, "initiator_name": initiator_name, "target_name": target_name},
             geo_names=geo_names,
@@ -732,7 +741,32 @@ def _implied_kind(goldstein: float | None) -> str:
 #: cell as a high-confidence trade is how a 1-mention Iran–Iraq consultation
 #: shipped with "short Dubai / long the S&P" on 2026-08-17. Escalation kinds
 #: are sparse enough that the cell is actually about events like this one.
+#:
+#: Material-conflict rows that `classifier.coercion` refused, and pure verbal
+#: quads, are also not actionable: Head B can still call them a sharp
+#: departure from a warm baseline (Oman issuing a statement about Iran), and
+#: stamping the rupture cell on that row is the same blotter leak.
 _ACTIONABLE_KINDS = frozenset({"sharp_escalation", "escalation", "de-escalation"})
+_VERBAL_QUADS = frozenset({"verbal_cooperation", "verbal_conflict"})
+
+
+def _live_actionable(row: dict[str, Any], kind: str) -> bool:
+    """Whether a live row may carry historical market cells.
+
+    Head B's kind is still computed and shown; the cells are withheld when
+    the coding is not a claim about interstate coercion or material action.
+    """
+    if kind not in _ACTIONABLE_KINDS:
+        return False
+    if row.get("coercion") is False and row.get("quad_class") == "material_conflict":
+        return False
+    if row.get("quad_class") in _VERBAL_QUADS:
+        return False
+    if row.get("pair_fight") is False and wire_headline.cameo_root(
+        row.get("action_cameo_code") or row.get("cameo_code")
+    ) in wire_headline.FORCE_ROOTS:
+        return False
+    return True
 
 
 @router.get("/wire/live")
@@ -759,6 +793,7 @@ def wire_live(region: str = "mena", limit: int = Query(30, ge=1, le=100)) -> dic
     import time
 
     from core import packs
+    from core.games import family as family_module
     from core.panel import pg_store
     from core.reasoning import markets as markets_module
     from core.wire import live as live_overlay
@@ -803,19 +838,36 @@ def wire_live(region: str = "mena", limit: int = Query(30, ge=1, le=100)) -> dic
             panel.close()
 
     names, geo_names = _pack_roster()
+    combat = family_module.combat_windows(pack)
     rows: list[dict[str, Any]] = []
     for row in polled.get("rows", [])[:limit]:
         goldstein = row.get("goldstein")
         kind = markets_module.kind_of(
             row.get("escalation_direction"), row.get("escalation_magnitude"),
         )
+        year = family_module._year_of(row.get("event_time"), 0)
+        at_war = family_module.in_combat(
+            combat.get(str(row.get("dyad_id") or "")), year,
+        )
+        initiator_name = names.get(str(row.get("initiator_id") or ""))
+        target_name = names.get(str(row.get("target_id") or ""))
+        display = wire_headline.display_fields(
+            {
+                **row,
+                "initiator_name": initiator_name,
+                "target_name": target_name,
+                "combat": at_war,
+            },
+            geo_names=geo_names,
+        )
         outlook = []
         # THE DUMP BUCKET CARRIES NO PRICE. A stable-kind median is the
         # region's ordinary-day move, identical on every consult; stamping it
         # `trade` taught the wire page to look like a blotter. Escalation
         # kinds keep the historical cell, IQR included, so a reader can see
-        # the spread the strategy gate is (or is not) clearing.
-        if kind in _ACTIONABLE_KINDS:
+        # the spread the strategy gate is (or is not) clearing — but only when
+        # the coding is actually about interstate material conflict.
+        if _live_actionable({**row, **display}, kind):
             for ticker, entry in responses.items():
                 cell = ((entry["response"].get(kind) or {}).get(markets_module.HEADLINE_WINDOW)
                         or {})
@@ -832,12 +884,6 @@ def wire_live(region: str = "mena", limit: int = Query(30, ge=1, le=100)) -> dic
                     "thin": bool(cell.get("thin")),
                 })
             outlook.sort(key=lambda m: abs(m.get("median") or 0.0), reverse=True)
-        initiator_name = names.get(str(row.get("initiator_id") or ""))
-        target_name = names.get(str(row.get("target_id") or ""))
-        display = wire_headline.display_fields(
-            {**row, "initiator_name": initiator_name, "target_name": target_name},
-            geo_names=geo_names,
-        )
         rows.append({
             "node_id": row.get("node_id"),
             "event_time": row.get("event_time"),

@@ -11,8 +11,10 @@ ISR–USA. That is a coding defect, not a graph fact. Nothing here retargets
 an actor, writes an edge, or drops a third-country fight (US–Iran in Syria
 is real; the war in Ukraine is on Ukrainian soil). The rewrite is a DISPLAY
 choice: a fight whose `action_geo` is a third country is headlined as force
-IN that country, and a force coding between defence-pact partners is not
-offered as an A–B fight.
+IN that country, a force coding between defence-pact partners is not offered
+as an A–B fight, and a home-soil "fight" between pairs the pack has not
+marked as combat (Russia–UK on British soil) is not "Russia fought the
+United Kingdom".
 """
 
 from __future__ import annotations
@@ -139,20 +141,48 @@ def allied_presence(row: dict[str, Any]) -> bool:
     return row.get("coercion") is False and on_home
 
 
+def unconfirmed_force(row: dict[str, Any]) -> bool:
+    """Home-soil or unlocated force between a pair the pack has not marked combat.
+
+    Russia–United Kingdom CAMEO 190 on British or Russian soil is the defect:
+    GDELT attaches a roster flag to a Ukraine-war story and the surface used
+    to print "Russia fought United Kingdom". Combat pairs (Russia–Ukraine on
+    Ukrainian soil) keep the fight verb. Only fires when `combat` is
+    explicitly False — absent means the caller did not resolve a pack, so we
+    keep the old offer rather than soften every home-soil war. Display only.
+    """
+    if row.get("combat") is not False:
+        return False
+    if not _force_root(row):
+        return False
+    if third_country_force(row):
+        return False
+    if allied_presence(row):
+        return False
+    geo = _iso3(row, "action_geo")
+    left = _iso3(row, "initiator_iso3")
+    right = _iso3(row, "target_iso3")
+    if not left or not right:
+        return False
+    return (not geo) or geo in (left, right)
+
+
 def pair_fight(
     row: dict[str, Any], roster_iso3: set[str] | frozenset[str] | None = None
 ) -> bool:
     """Whether the surface may offer this row as an A–B fight.
 
-    False for a third-country force coding, an allied-presence coding, and
-    for a material-conflict row that `classifier.coercion` has already
-    refused. Archive rows that never carried `coercion` keep the old offer
-    (the field is absent, not false). Display/nav only — the dyad id is not
-    rewritten.
+    False for a third-country force coding, an allied-presence coding, an
+    unconfirmed home-soil force coding, and for a material-conflict row that
+    `classifier.coercion` has already refused. Archive rows that never
+    carried `coercion` keep the old offer (the field is absent, not false).
+    Display/nav only — the dyad id is not rewritten.
     """
     if third_country_force(row, roster_iso3):
         return False
     if allied_presence(row):
+        return False
+    if unconfirmed_force(row):
         return False
     return not (
         row.get("quad_class") == "material_conflict" and row.get("coercion") is False
@@ -183,7 +213,7 @@ def headline(
     if third_country_force(row, roster_iso3) and left:
         place = _place_name(row, names) or "a third country"
         return f"{left} used force in {place}"
-    if (allied_presence(row) or not pair_fight(row, roster_iso3)) and left and right:
+    if (allied_presence(row) or unconfirmed_force(row) or not pair_fight(row, roster_iso3)) and left and right:
         if _force_root(row):
             place = _place_name(row, names)
             if third_country_force(row, roster_iso3) and place:
@@ -195,9 +225,8 @@ def headline(
                 )
             return f"{left} and {right} — a force coding, not a fight between them"
         if row.get("coercion") is False:
-            return (
-                f"{left} and {right} — a coded event, not interstate coercion"
-            )
+            act = act_phrase(row)
+            return f"{left} {act} {right} — not counted as interstate coercion"
     act = act_phrase(row)
     if left and right:
         return f"{left} {act} {right}"
@@ -229,6 +258,7 @@ def display_fields(
     }
     third = third_country_force(shaped, roster)
     presence = allied_presence(shaped)
+    unconfirmed = unconfirmed_force(shaped)
     return {
         "action_geo": geo,
         "action_geo_name": geo_names.get(geo) if geo else None,
@@ -236,6 +266,7 @@ def display_fields(
         "target_iso3": target_iso3,
         "third_country_force": third,
         "allied_presence": presence,
+        "unconfirmed_force": unconfirmed,
         "pair_fight": pair_fight(shaped, roster),
         "coercion": None if coercion is None else bool(coercion),
         "headline": headline(shaped, geo_names=geo_names, roster_iso3=roster),
@@ -249,6 +280,7 @@ def decorate(
     geo_names: dict[str, str],
     iso3_by_actor: dict[str, str] | None = None,
     allied: bool | None = None,
+    combat: bool | None = None,
 ) -> dict[str, Any]:
     """Fill actor names, ISO3, display flags and a composed headline.
 
@@ -258,6 +290,8 @@ def decorate(
     shaped = dict(row)
     if allied is not None:
         shaped["allied"] = allied
+    if combat is not None:
+        shaped["combat"] = combat
     initiator_id = str(shaped.get("initiator_id") or "")
     target_id = str(shaped.get("target_id") or "")
     parsed_left, parsed_right = names_from_coded_title(str(shaped.get("name") or ""))

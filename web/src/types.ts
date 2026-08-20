@@ -111,6 +111,7 @@ export interface GraphEvent {
   target_iso3?: string | null
   third_country_force?: boolean
   allied_presence?: boolean
+  unconfirmed_force?: boolean
   pair_fight?: boolean
   coercion?: boolean | null
 }
@@ -140,10 +141,13 @@ export interface WireItem extends GraphEvent {
   third_country_force?: boolean
   /** Display only — defence-pact partners coded in a force event. */
   allied_presence?: boolean
+  /** Display only — home-soil force without a pack combat window. */
+  unconfirmed_force?: boolean
   /** False when the surface must not offer this row as an A–B fight. */
   pair_fight?: boolean
   coercion?: boolean | null
   headline?: string | null
+  combat?: boolean | null
 }
 
 export interface WireFeed {
@@ -198,6 +202,8 @@ export interface WireLiveItem {
   initiator_iso3?: string | null
   target_iso3?: string | null
   third_country_force?: boolean
+  allied_presence?: boolean
+  unconfirmed_force?: boolean
   pair_fight?: boolean
   coercion?: boolean | null
   mentions?: number | null
@@ -209,6 +215,8 @@ export interface WireLiveItem {
   /** This event's session move, computed in memory. Not the frozen map. */
   measured?: WireLiveMeasured[]
   market_outlook: WireLiveMarketImpact[]
+  headline?: string | null
+  combat?: boolean | null
 }
 
 export interface WireLiveFeed {

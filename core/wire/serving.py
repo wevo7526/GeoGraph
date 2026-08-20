@@ -66,9 +66,16 @@ _SLIM_FIELDS = (
     # against 0.82 trained, which is the whole difference between "rival" and
     # "adversary" (2026-08-17).
     "coercion",
+    # DISPLAY COLUMNS the Intel headline needs. Dropping them made every
+    # corpus fight look like an A–B war: "Russia fought United Kingdom" with
+    # no place, because ActionGeo never reached `wire_headline`. They are
+    # corpus-only (not Event properties) and cheap as short tokens.
+    "action_geo", "initiator_iso3", "target_iso3",
+    "num_sources", "actor1_type", "actor2_type", "co_participation",
 )
 _FLOAT_FIELDS = {"goldstein", "escalation_magnitude", "escalation_baseline"}
-_BOOL_FIELDS = {"coercion"}
+_BOOL_FIELDS = {"coercion", "co_participation"}
+_INT_FIELDS = {"num_sources"}
 
 
 def _slim(row: dict[str, Any]) -> str:
@@ -87,6 +94,10 @@ def _unslim(joined: str) -> dict[str, Any]:
     for field, value in zip(_SLIM_FIELDS, values, strict=True):
         if field in _FLOAT_FIELDS:
             row[field] = float(value) if value else None
+        elif field in _INT_FIELDS:
+            row[field] = int(value) if value else None
+        elif field in _BOOL_FIELDS:
+            row[field] = bool(value)
         else:
             row[field] = value or None
     return row

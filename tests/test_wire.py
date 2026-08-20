@@ -365,7 +365,7 @@ def test_a_consult_is_not_an_actionable_live_kind():
     ordinary day — attaching it as a high-confidence trade is how Iran–Iraq
     consultations shipped with "short Dubai / long the S&P".
     """
-    from core.api.routers.events import _ACTIONABLE_KINDS, _implied_kind
+    from core.api.routers.events import _ACTIONABLE_KINDS, _implied_kind, _live_actionable
     from core.reasoning import markets as markets_module
 
     assert _implied_kind(1.0) == "stable"
@@ -376,3 +376,57 @@ def test_a_consult_is_not_an_actionable_live_kind():
     assert markets_module.kind_of("stable", 0.0) not in _ACTIONABLE_KINDS
     assert markets_module.kind_of("deescalating", 4.0) in _ACTIONABLE_KINDS
     assert markets_module.kind_of("de-escalating", 4.0) == "de-escalation"
+    # Verbal traffic and refused coercion keep Head B's kind but lose the cell.
+    assert not _live_actionable(
+        {"quad_class": "verbal_cooperation", "coercion": False}, "sharp_escalation",
+    )
+    assert not _live_actionable(
+        {"quad_class": "material_conflict", "coercion": False}, "sharp_escalation",
+    )
+    assert _live_actionable(
+        {
+            "quad_class": "material_conflict", "coercion": True, "pair_fight": True,
+            "action_cameo_code": "190",
+        },
+        "sharp_escalation",
+    )
+
+
+def test_slim_rows_carry_action_geo_for_headlines():
+    """Dropping ActionGeo from the warmed slim view is how 'Russia fought
+    United Kingdom' shipped with no place — the display helper never saw it."""
+    from core.wire import serving
+
+    joined = serving._slim({
+        "event_time": "2026-08-14", "node_id": "event:gdelt-1",
+        "name": "x", "action_cameo_code": "190", "quad_class": "material_conflict",
+        "goldstein": -10.0, "escalation_direction": "escalating",
+        "escalation_magnitude": 5.0, "escalation_baseline": -3.0,
+        "fidelity_tier": "modern_coded", "temporal_resolution": "day",
+        "source_scale": "goldstein", "region_pack": "eurasia",
+        "initiator_id": "actor:cow-365", "target_id": "actor:cow-200",
+        "dyad_id": "dyad:cow-200--cow-365", "source_id": "source:gdelt",
+        "coercion": True, "action_geo": "GBR", "initiator_iso3": "RUS",
+        "target_iso3": "GBR", "num_sources": 70, "actor1_type": "GOV",
+        "actor2_type": "GOV", "co_participation": False,
+    })
+    row = serving._unslim(joined)
+    assert row["action_geo"] == "GBR"
+    assert row["initiator_iso3"] == "RUS"
+    assert row["target_iso3"] == "GBR"
+    assert row["num_sources"] == 70
+    assert row["coercion"] is True
+    assert row["co_participation"] is False
+
+
+def test_combat_windows_admit_ukraine_not_uk():
+    from core import packs
+    from core.classifier import escalation
+    from core.games import family as family_module
+
+    pack = packs.load("eurasia")
+    windows = family_module.combat_windows(pack)
+    ukr = escalation.dyad_id("actor:cow-365", "actor:cow-369")
+    gbr = escalation.dyad_id("actor:cow-365", "actor:cow-200")
+    assert family_module.in_combat(windows.get(ukr), 2026)
+    assert not family_module.in_combat(windows.get(gbr), 2026)

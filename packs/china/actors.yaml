@@ -107,12 +107,14 @@ relations:
   - a: actor:cow-710            # China
     b: actor:cow-713            # Taiwan
     relation_type: rivalry
+    combat: true
     valid_from: "1949-12-07"
     source: source:crs-taiwan
     note: The unresolved civil war — the region's defining dyad.
   - a: actor:cow-731            # North Korea
     b: actor:cow-732            # South Korea
     relation_type: rivalry
+    combat: true
     valid_from: "1948"
     source: source:crs-taiwan
     note: Armistice, not peace; the peninsula's baseline is the 1953 line.
@@ -143,6 +145,7 @@ relations:
   - a: actor:cow-2              # United States
     b: actor:cow-731            # North Korea
     relation_type: rivalry
+    combat: true
     valid_from: "1950-06-25"
     source: source:standing-record
     note: >-
@@ -151,6 +154,7 @@ relations:
   - a: actor:cow-710            # China
     b: actor:cow-750            # India
     relation_type: rivalry
+    combat: true
     valid_from: "1962-10-20"
     source: source:standing-record
     note: >-

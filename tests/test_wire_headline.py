@@ -76,6 +76,7 @@ def test_russia_ukraine_on_ukrainian_soil_stays_a_pair_fight() -> None:
         target_iso3="UKR",
         action_geo="UKR",
         action_cameo_code="190",
+        combat=True,
     )
     text = wire_headline.headline(row, geo_names=_MENA)
     assert text == "Russia fought Ukraine"
@@ -133,6 +134,44 @@ def test_us_uk_assault_on_british_soil_is_not_a_pair_war() -> None:
     assert "assaulted" not in fields["headline"]
 
 
+def test_russia_uk_home_soil_force_is_not_fought() -> None:
+    """Intel's launch defect: GDELT codes Ukraine-war stories as RUS–GBR
+    force on British or Russian soil. Without a pack combat window that
+    must not read 'Russia fought United Kingdom'."""
+    names = {**_MENA, "GBR": "United Kingdom"}
+    row = _row(
+        initiator_name="Russia",
+        target_name="United Kingdom",
+        initiator_iso3="RUS",
+        target_iso3="GBR",
+        action_geo="GBR",
+        action_cameo_code="190",
+        coercion=True,
+        combat=False,
+    )
+    text = wire_headline.headline(row, geo_names=names)
+    assert text == (
+        "Russia and United Kingdom — a force coding in United Kingdom, "
+        "not a fight between them"
+    )
+    assert "fought" not in text
+    assert wire_headline.unconfirmed_force(row) is True
+    assert wire_headline.pair_fight(row, set(names)) is False
+    # The war keeps the verb when the pack marks combat.
+    war = _row(
+        initiator_name="Russia",
+        target_name="Ukraine",
+        initiator_iso3="RUS",
+        target_iso3="UKR",
+        action_geo="UKR",
+        action_cameo_code="190",
+        coercion=True,
+        combat=True,
+    )
+    assert wire_headline.headline(war, geo_names=names) == "Russia fought Ukraine"
+    assert wire_headline.pair_fight(war, set(names)) is True
+
+
 def test_coded_title_is_not_the_headline() -> None:
     row = _row(
         name="Use conventional military force: United States → United Kingdom",
@@ -154,19 +193,25 @@ def test_coded_title_is_not_the_headline() -> None:
 def test_live_material_conflict_is_not_a_pair_fight_unless_coercion() -> None:
     """Optional live gate: one source is not interstate coercion, so the
     surface must not offer the row as an A–B fight. The row is not dropped."""
-    thin = _row(num_sources=1, action_geo="ISR", coercion=False)
+    thin = _row(
+        num_sources=1, action_geo="ISR", action_cameo_code="173", coercion=False,
+    )
     thin["coercion"] = coercion.counts_as_coercion(thin)
     assert thin["coercion"] is False
     assert wire_headline.pair_fight(thin, set(_MENA)) is False
-    # Same coding, corroborated, still a pair fight (home soil of one side).
-    thick = _row(num_sources=4, action_geo="ISR")
+    text = wire_headline.headline(thin, geo_names=_MENA)
+    assert "coerced" in text
+    assert "not counted as interstate coercion" in text
+    # Same coding, corroborated, still a pair fight (home soil of one side)
+    # only when the pack marks the pair as combat — Israel–Iran is combat.
+    thick = _row(num_sources=4, action_geo="ISR", combat=True)
     thick["coercion"] = coercion.counts_as_coercion(thick)
     assert thick["coercion"] is True
     assert wire_headline.pair_fight(thick, set(_MENA)) is True
 
 
 def test_exhibit_force_is_not_used_force_toward() -> None:
-    row = _row(action_cameo_code="150", action_geo="ISR")
+    row = _row(action_cameo_code="150", action_geo="ISR", combat=True)
     assert wire_headline.headline(row, geo_names=_MENA) == (
         "Israel exhibited force toward United States"
     )

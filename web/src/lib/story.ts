@@ -441,8 +441,10 @@ export type WireHeadlineFields = {
   target_iso3?: string | null
   third_country_force?: boolean
   allied_presence?: boolean
+  unconfirmed_force?: boolean
   pair_fight?: boolean
   coercion?: boolean | null
+  combat?: boolean | null
   dyad_id?: string | null
 }
 
@@ -476,11 +478,26 @@ export function alliedPresence(item: WireHeadlineFields): boolean {
   return item.coercion === false && onHome
 }
 
+/** Home-soil or unlocated force between a pair not marked combat. */
+export function unconfirmedForce(item: WireHeadlineFields): boolean {
+  if (item.unconfirmed_force === true) return true
+  if (item.unconfirmed_force === false) return false
+  // Absent combat means the API did not resolve a pack — do not soften.
+  if (item.combat !== false) return false
+  if (!FORCE_ROOTS.has(cameoRoot(item.cameo_code) ?? '')) return false
+  if (thirdCountryForce(item) || alliedPresence(item)) return false
+  const geo = item.action_geo?.trim().toUpperCase() || ''
+  const left = item.initiator_iso3?.trim().toUpperCase() || ''
+  const right = item.target_iso3?.trim().toUpperCase() || ''
+  if (!left || !right) return false
+  return !geo || geo === left || geo === right
+}
+
 /** Whether the surface may offer this row as an A–B fight relationship. */
 export function offersPairNav(item: WireHeadlineFields): boolean {
   if (!item.dyad_id) return false
   if (item.pair_fight === false) return false
-  return !thirdCountryForce(item) && !alliedPresence(item)
+  return !thirdCountryForce(item) && !alliedPresence(item) && !unconfirmedForce(item)
 }
 
 export function wireHeadline(item: WireHeadlineFields): string {
@@ -490,7 +507,10 @@ export function wireHeadline(item: WireHeadlineFields): string {
     const place = item.action_geo_name?.trim() || item.action_geo?.trim() || 'a third country'
     return `${left} used force in ${place}`
   }
-  const notPair = item.pair_fight === false || alliedPresence(item)
+  const notPair =
+    item.pair_fight === false
+    || alliedPresence(item)
+    || unconfirmedForce(item)
   if (notPair && left && right) {
     const root = cameoRoot(item.cameo_code)
     if (root && FORCE_ROOTS.has(root)) {
@@ -502,7 +522,8 @@ export function wireHeadline(item: WireHeadlineFields): string {
       return `${left} and ${right} — a force coding, not a fight between them`
     }
     if (item.coercion === false) {
-      return `${left} and ${right} — a coded event, not interstate coercion`
+      const act = (root && CAMEO_ACT[root]) || QUAD_ACT[item.quad_class ?? ''] || 'interacted with'
+      return `${left} ${act} ${right} — not counted as interstate coercion`
     }
   }
   const root = cameoRoot(item.cameo_code)
@@ -574,6 +595,7 @@ export function wireRead(item: WireItem): string {
   }
   if (
     alliedPresence(item)
+    || unconfirmedForce(item)
     || (item.pair_fight === false && FORCE_ROOTS.has(cameoRoot(item.cameo_code) ?? ''))
   ) {
     const pair =
@@ -582,6 +604,13 @@ export function wireRead(item: WireItem): string {
         : 'the coded pair'
     const where = place ? ` in ${place}` : ''
     return `A force coding involving ${pair}${where} — not a fight between those two states.`
+  }
+  if (item.coercion === false && item.quad_class === 'material_conflict') {
+    const pair =
+      item.initiator_name && item.target_name
+        ? `${item.initiator_name} and ${item.target_name}`
+        : 'the coded pair'
+    return `Coded between ${pair}, but not counted as interstate coercion (thin sources, personal enforcement, or a non-state actor type).`
   }
   const pair =
     item.initiator_name && item.target_name

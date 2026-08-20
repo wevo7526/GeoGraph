@@ -279,12 +279,15 @@ relations:
   - a: actor:cow-365            # Russia
     b: actor:cow-369            # Ukraine
     relation_type: rivalry
+    combat: true
     valid_from: "2014-02-27"
     source: source:crs-russia-ukraine
     note: >-
       Dated to the seizure of the Crimean parliament — the moment the
       relationship stopped being contested politics and became territorial
-      conflict. The region's defining dyad.
+      conflict. The region's defining dyad. `combat: true` admits the
+      home-soil fight verb on the Intel wire; without it GDELT's Russia–
+      United Kingdom force codings would share the same sentence.
   - a: actor:cow-365            # Russia
     b: actor:cow-2              # United States
     relation_type: rivalry
@@ -297,12 +300,14 @@ relations:
   - a: actor:cow-365            # Russia
     b: actor:cow-372            # Georgia
     relation_type: rivalry
+    combat: true
     valid_from: "2008-08-07"
     source: source:crs-russia-ukraine
     note: The first post-Soviet war fought to redraw a border by force.
   - a: actor:cow-371            # Armenia
     b: actor:cow-373            # Azerbaijan
     relation_type: rivalry
+    combat: true
     valid_from: "1988-02-20"
     source: source:crs-russia-ukraine
     note: >-

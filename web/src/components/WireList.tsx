@@ -104,6 +104,39 @@ function LiveCard({ item }: { item: WireLiveItem }) {
   const kind = wireKindWord(item.implied_kind)
   const place = item.action_geo_name?.trim() || item.action_geo?.trim() || null
   const inThird = thirdCountryForce(item) && place
+  const verbal = item.quad_class === 'verbal_cooperation' || item.quad_class === 'verbal_conflict'
+  const refused =
+    item.coercion === false && item.quad_class === 'material_conflict'
+  const notFight =
+    item.pair_fight === false
+    || item.allied_presence === true
+    || item.unconfirmed_force === true
+  const baselineRead = (() => {
+    if (inThird) {
+      return `Coded in ${place}. The named flags are who GDELT attached, not a fight between them.`
+    }
+    if (notFight && (item.cameo_code?.startsWith('15') || item.cameo_code?.startsWith('18')
+      || item.cameo_code?.startsWith('19') || item.cameo_code?.startsWith('20'))) {
+      return `A force coding${place ? ` in ${place}` : ''} — not a fight between the named states.`
+    }
+    if (refused) {
+      return 'Coded as material conflict, but not counted as interstate coercion.'
+    }
+    if (verbal) {
+      const mag = item.escalation_magnitude
+      return mag != null
+        ? `Verbal traffic, ${mag.toFixed(1)} points from this pair’s usual level — unusual for them, not a rupture in the codebook.`
+        : 'Verbal traffic against this pair’s usual level.'
+    }
+    if (item.escalation_direction) {
+      return `${item.implied_kind === 'stable' ? 'Routine against this pair’s usual level' : `This reads as ${kind} against this pair’s usual level`}${
+        item.escalation_magnitude != null
+          ? ` (${item.escalation_magnitude.toFixed(1)} points from their usual).`
+          : '.'
+      } Historical market cells below are analogy — what similarly coded events did — not a live trade.`
+    }
+    return `Coded as ${kind}. Historical cells are analogy from the frozen transmission map, not a live trade.`
+  })()
   return (
     <article className="wire-entry">
       <div className="ledger-row">
@@ -112,17 +145,7 @@ function LiveCard({ item }: { item: WireLiveItem }) {
         <span className="ledger-figure">{item.mentions ?? '—'} mentions</span>
       </div>
       <h3 className="wire-headline">{wireHeadline(item)}</h3>
-      <p className="wire-read">
-        {inThird
-          ? `Coded in ${place}. The named flags are who GDELT attached, not a fight between them.`
-          : item.escalation_direction
-          ? `${item.implied_kind === 'stable' ? 'Routine against this pair’s usual level' : `This reads as ${kind} against this pair’s usual level`}${
-              item.escalation_magnitude != null
-                ? ` (${item.escalation_magnitude.toFixed(1)} points from their usual).`
-                : '.'
-            } Historical market cells below are analogy — what similarly coded events did — not a live trade.`
-          : `Coded as ${kind}. Historical cells are analogy from the frozen transmission map, not a live trade.`}
-      </p>
+      <p className="wire-read">{baselineRead}</p>
       {item.measured && item.measured.length ? (
         <div className="scroll-x mt-2">
           <table className="rule-table" style={{ minWidth: 420 }}>

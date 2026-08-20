@@ -707,6 +707,38 @@ def allied_in(windows: list[tuple[int, int]] | None, year: int) -> bool:
     return bool(windows) and any(start <= year <= end for start, end in windows or [])
 
 
+def combat_windows(pack: Any) -> dict[str, list[tuple[int, int]]]:
+    """dyad_id → year windows where a home-soil fight verb is admissible.
+
+    Pack relations opt in with `combat: true`. Without that flag a CAMEO
+    15/18/19/20 coding on either side's own soil is display-rewritten as a
+    force coding, not "A fought B" — Russia–United Kingdom on British soil
+    was the launch defect. Russia–Ukraine on Ukrainian soil stays a fight
+    because that rivalry carries the flag. Display / headline only.
+    """
+    from core.classifier import escalation
+
+    windows: dict[str, list[tuple[int, int]]] = {}
+    for relation in getattr(pack, "relations", []) or []:
+        if not relation.get("combat"):
+            continue
+        a, b = relation.get("a"), relation.get("b")
+        if not a or not b:
+            continue
+        windows.setdefault(escalation.dyad_id(str(a), str(b)), []).append(
+            (_year_of(relation.get("valid_from"), 1905),
+             _year_of(relation.get("valid_to"), 9999))
+        )
+    return windows
+
+
+def in_combat(
+    windows: list[tuple[int, int]] | None, year: int,
+) -> bool:
+    """Whether a dyad is inside a pack-declared combat window at `year`."""
+    return allied_in(windows, year)
+
+
 def is_co_participation(
     row: dict[str, Any], windows: dict[str, list[tuple[int, int]]]
 ) -> bool:
