@@ -124,6 +124,25 @@ def test_the_wire_does_not_render_coded_event_names() -> None:
     assert not (WEB / "components" / "WirePage.tsx").exists()
 
 
+def test_called_hooks_are_imported() -> None:
+    """A dropped import fails `tsc --noEmit` and the Docker image never
+    builds — which is how #13 crashed the Railway deploy. Pytest is what
+    runs before merge; tsc is not in this suite."""
+    missing = []
+    for path, text in _sources():
+        raw = path.read_text(encoding="utf-8")
+        for hook in ("useRegionLabel", "useEffect", "useMemo", "useState", "useRef"):
+            if not re.search(rf"\b{hook}\s*\(", text):
+                continue
+            if not re.search(rf"import\s*\{{[^}}]*\b{hook}\b", raw, re.S):
+                missing.append(f"{path.name} calls {hook} without importing it")
+    assert not missing, (
+        "a component calls a hook it does not import; `npm run build` "
+        "(tsc --noEmit) will fail and the image will not ship:\n  "
+        + "\n  ".join(missing)
+    )
+
+
 def test_the_relationship_timeline_does_not_render_coded_event_names() -> None:
     """US–UK 'assault' / 'use of military force' is a CAMEO title. The
     relationship page composes a reader sentence, same as the wire."""

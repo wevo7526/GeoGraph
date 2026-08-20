@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { getCaseStudy, getDynamicCaseStudy, postCaseNarrate } from '../api'
 import { eventHeadline } from '../lib/story'
+import { useRegionLabel } from '../regions'
 import type { CaseStudy, CaseStudyEpisode, Effect } from '../types'
 
 /** The pack KEY is not its caption (packs/china is captioned Asia) — every
