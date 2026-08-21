@@ -30,6 +30,27 @@ from core.games import solve as solve_module  # noqa: E402
 from core.graph import kuzu_store  # noqa: E402
 from core.panel import pg_store  # noqa: E402
 
+#: Headroom the container must have before this script loads another region —
+#: the SAME floor the convergence loop's `games` job uses (core/api/work.py).
+REGION_HEADROOM = 0.30
+
+
+def _memory_tight(floor: float = REGION_HEADROOM) -> bool:
+    """Is the container too close to its limit to solve another region?
+
+    Solving every region in one process peaked at 7.76 GB of 8 GB and the kernel
+    killed the boot (2026-08-18, and again on 2026-08-21 after a PAYLOAD_VERSION
+    bump made all regions stale at once). An OOM kill is not catchable, so the
+    only safe move is not to start a region we cannot finish: a deferred region
+    is picked up by the bounded, memory-guarded `games` job once the API is up.
+    Unknown limit (not containerised) is never tight.
+    """
+    limit = kuzu_store.container_memory_bytes()
+    used = kuzu_store.memory_in_use_bytes()
+    if not limit or used is None:
+        return False
+    return (1.0 - used / limit) < floor
+
 
 def solve_region(region: str, *, conn: Any, dyads: int) -> dict[str, Any]:
     context = context_module.build(conn, region)
@@ -64,8 +85,17 @@ def main() -> None:
         panel = pg_store.connect(settings)
         pg_store.apply_schema(panel)
 
+    deferred: list[str] = []
     try:
         for region in names:
+            # NEVER START A REGION WE CANNOT FINISH. Between regions the memory
+            # from the last solve is still resident; check before loading the
+            # next so this synchronous boot step degrades to "solve what fits,
+            # defer the rest" instead of OOM-killing the container.
+            if not args.dry_run and _memory_tight():
+                print(f"{region}: deferred — memory tight; the games job solves it in-loop")
+                deferred.append(region)
+                continue
             started = time.monotonic()
             try:
                 solved = solve_region(region, conn=conn, dyads=args.dyads)
@@ -89,6 +119,11 @@ def main() -> None:
                     panel, region, solved, solver=aggregate["primary_solver"]
                 )
                 print(f"{region}: {written} rows persisted")
+        if deferred:
+            print(
+                f"deferred under memory pressure (the games job will solve these "
+                f"in-loop, one per tick): {', '.join(deferred)}"
+            )
     finally:
         if panel is not None:
             panel.close()
