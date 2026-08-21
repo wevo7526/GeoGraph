@@ -56,6 +56,32 @@ def _panel(request: Request, region: str | None) -> list[dict[str, Any]]:
     return _CACHE[key]
 
 
+@router.get("/relationships/narrative")
+def relationship_narrative(region: str, dyad: str) -> dict[str, Any]:
+    """The desk's AI narrative for one relationship (History / Work / Forecast),
+    served from the persisted store — no model call at read time. When nothing
+    is persisted (no key, or not generated yet), returns available=false and the
+    page renders its deterministic prose."""
+    from core import settings as settings_module
+    from core.panel import pg_store
+    from core.reasoning import narrative as narrative_module
+
+    try:
+        panel = pg_store.connect(settings_module.load())
+    except pg_store.PanelUnavailable:
+        return {"region": region, "dyad": dyad, "available": False}
+    try:
+        pg_store.apply_schema(panel)
+        narr = narrative_module.served_narrative(
+            panel, surface="relationship", region=region, subject_id=dyad,
+        )
+    finally:
+        panel.close()
+    if narr is None:
+        return {"region": region, "dyad": dyad, "available": False}
+    return {"region": region, "dyad": dyad, "available": True, "narrative": narr}
+
+
 @router.get("/panel/dyads")
 def list_dyads(
     request: Request,

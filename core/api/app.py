@@ -303,6 +303,17 @@ def _start_jobs(app: FastAPI, settings: Any) -> None:
                 enabled=jobs_module._enabled("calibration"),
                 slice_seconds=180.0,
             ),
+            # The desk's AI narrative (History / Work / Forecast) per surface,
+            # generated from the persisted numbers above and rewritten only when
+            # a surface's figures move. LAST, so it reads fresh markets/game/
+            # calibration outputs; ONE model call per tick; dark and free
+            # without OPENAI_API_KEY, in which case every surface serves its
+            # deterministic prose.
+            jobs_module.Job(
+                name="narrate", every=900.0, run=work.narrate,
+                enabled=jobs_module._enabled("narrate"),
+                slice_seconds=150.0,
+            ),
         ])
         scheduler.start()
         app.state.jobs = scheduler

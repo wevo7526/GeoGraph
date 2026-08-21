@@ -11,8 +11,8 @@ import { useEffect, useMemo, useState } from 'react'
 import { getBacktest, getCalibration, getForward, getJobs, getMarketsStory, getTradeableEdge, lastFailureFor } from '../api'
 import { useRegionLabel } from '../regions'
 import type { BacktestLedger, CalibrationWalk, ForwardView, JobsStatus, MarketStoryMarket, MarketsStory, TradeableEdge } from '../types'
-import { Beat, Caption, Chip, Disclosure, Empty, Prose, StoryHead } from '../ui'
-import { count, courseSentence, eventHeadline, marketsLede, pctWord, signedPct, skillSentence, strategyWord } from '../lib/story'
+import { Beat, Caption, Disclosure, Empty, PhaseSection, Prose, StoryHead } from '../ui'
+import { count, courseSentence, marketsLede, pctWord, signedPct, skillSentence, strategyWord } from '../lib/story'
 import { Bars, DotWhisker, Drawdown, EquityCurve, SeriesLine, Tiles, pct } from './charts/Kit'
 
 const money = (v: number) => `${v < 0 ? '−' : ''}$${Math.abs(v).toLocaleString('en-US', { maximumFractionDigits: 0 })}`
@@ -22,12 +22,6 @@ const KIND_WORDS: Record<string, string> = {
   sharp_escalation: 'a sharp escalation',
   escalation: 'an escalation',
   'de-escalation': 'a step down',
-  stable: 'no departure',
-}
-const KIND_SHORT: Record<string, string> = {
-  sharp_escalation: 'sharp escalation',
-  escalation: 'escalation',
-  'de-escalation': 'step down',
   stable: 'no departure',
 }
 const WINDOW_WORDS: Record<string, string> = {
@@ -41,7 +35,7 @@ const num = (v: number | string | null | undefined) => {
   return n == null || !Number.isFinite(n) ? null : n
 }
 
-export default function MarketsPage({ region, onNavigate }: { region: string; onNavigate: (route: string) => void }) {
+export default function MarketsPage({ region }: { region: string; onNavigate: (route: string) => void }) {
   const label = useRegionLabel(region)
   const [story, setStory] = useState<MarketsStory | null | undefined>(undefined)
   const [ledger, setLedger] = useState<BacktestLedger | null | undefined>(undefined)
@@ -114,6 +108,14 @@ export default function MarketsPage({ region, onNavigate }: { region: string; on
   const studyStopped = jobs?.jobs?.find((j) => j.name === 'study')?.last_result?.stopped
   const diskFree = jobs?.memory?.disk_free_gb
 
+  // The desk's AI narrative, one lead per phase. Absent (no key / not generated
+  // yet) → the deterministic beats below carry the page unchanged.
+  const narr = story.narrative
+  const lead = (block: 'history' | 'work' | 'forecast') =>
+    narr
+      ? { prose: narr[block], model: narr.model, generatedAt: narr.generated_at, stale: narr.stale }
+      : null
+
   return (
     <div className="desk-page py-8">
       <StoryHead
@@ -144,14 +146,11 @@ export default function MarketsPage({ region, onNavigate }: { region: string; on
         ]}         />
       </div>
 
-      {scored && (
-        <Beat
-          title="How the map has scored"
-          aside="Leave-one-out of stored reactions — the archive already measured; this only asks whether those measurements predicted the next one. Not a new event study."
-        >
-          <Prose>{scored}</Prose>
-        </Beat>
-      )}
+      <PhaseSection
+        phase="History"
+        tagline={`What ${name}'s events have actually done to prices.`}
+        lead={lead('history')}
+      >
 
       {studyStopped && (
         <p className="figure-note mt-4">
@@ -264,105 +263,23 @@ export default function MarketsPage({ region, onNavigate }: { region: string; on
           {strategyWord(focused.strategy_signal) && (
             <p className="figure-note mt-2">{strategyWord(focused.strategy_signal)}</p>
           )}
-          {focused.biggest_moves.length > 0 && (
-            <div className="mt-6">
-              <div className="kicker mb-2">The events that moved it most</div>
-              <ul className="space-y-1 text-sm">
-                {focused.biggest_moves.map((e) => (
-                  <li key={e.event_id} className="flex items-baseline gap-3">
-                    <span className="mono w-16 shrink-0 text-right" style={{ color: e.abnormal_return >= 0 ? 'var(--accent)' : 'var(--alert)' }}>{signedPct(e.abnormal_return, 1)}</span>
-                    <span className="mono w-24 shrink-0" style={{ color: 'var(--muted)' }}>{e.date}</span>
-                    <button
-                      type="button"
-                      className="article-link truncate text-left"
-                      onClick={() => onNavigate(
-                        `/case/dynamic?event=${encodeURIComponent(e.event_id)}&region=${encodeURIComponent(region)}`,
-                      )}
-                    >
-                      {eventHeadline({ name: e.name, initiator_name: e.pair?.split('→')[0]?.trim(), target_name: e.pair?.split('→')[1]?.trim() }) || e.pair || e.name}
-                    </button>
-                    <Chip label={KIND_SHORT[e.kind] ?? e.kind} tone={e.kind.includes('escalation') && e.kind !== 'de-escalation' ? 'bad' : 'muted'} />
-                    {e.first_mover && <Chip label="printed first" tone="ink" />}
-                  </li>
-                ))}
-              </ul>
-            </div>
-          )}
         </Beat>
       )}
+      </PhaseSection>
 
-      <div className="desk-grid">
-      {/* 3 — WHERE THE GAMES POINT */}
-      <Beat
-        title="Where the solved games point next"
-        aside="The courses the region's games put the most mass on, priced to the measured map above. A direction the archive supports, never a forecast of a price."
+      <PhaseSection
+        phase="Work"
+        tagline="What the system measured, and how far its record can be trusted."
+        lead={lead('work')}
       >
-        {story.forward && story.forward.direction.length ? (
-          <>
-            <Bars
-              rows={story.forward.direction.slice(0, 8).map((d) => ({
-                key: d.market_id, label: d.market_name, value: d.expected_abnormal_return,
-                sub: `${count(d.measurements)} moves`,
-              }))}
-              signed format={(v) => signedPct(v, 2)}
-            />
-            {forwardCourses.length > 0 && (
-              <ul className="mt-5 space-y-2 text-sm">
-                {forwardCourses.slice(0, 4).map((c, i) => (
-                  <li key={i}>
-                    <b>{c.dyad_name}</b> — {courseSentence(c, c.family) ?? c.kind_label ?? c.kind.replace(/_/g, ' ')} at {pct(c.likelihood, 0)}
-                    {c.market_implications.length
-                      ? <span style={{ color: 'var(--muted)' }}> · historically moved {c.market_implications.slice(0, 3).map((m) => `${m.market_name} ${signedPct(m.median, 2)}`).join(', ')}</span>
-                      : <span style={{ color: 'var(--muted)' }}> · no market has been priced to this course</span>}
-                  </li>
-                ))}
-              </ul>
-            )}
-          </>
-        ) : (
-          <Empty>{story.forward ? 'No course carries a priced market yet.' : 'No persisted game map for this region yet — the games job solves it on its first pass.'}</Empty>
-        )}
-      </Beat>
-
-      {/* 4 — THE CURVE AND SOVEREIGN CAPITAL, one beat */}
-      {((story.duration && story.duration.dyads.length) ||
-        (story.sovereign_capital && story.sovereign_capital.funds.length > 0)) && (
+      {scored && (
         <Beat
-          title="How long the market expects it to last, and where the money sits"
-          aside="A crisis the market expects to pass moves the front end of the yield curve; one it expects to last moves the ten-year."
+          title="How the map has scored"
+          aside="Leave-one-out of stored reactions — the archive already measured; this only asks whether those measurements predicted the next one. Not a new event study."
         >
-          {story.duration && story.duration.dyads.length > 0 && (
-            <>
-              <Bars
-                rows={story.duration.dyads.map((d) => ({
-                  key: d.dyad_id, label: d.dyad_name ?? d.dyad_id, value: d.implied_persistence,
-                  sub: `${count(d.n)} events`,
-                }))}
-                format={(v) => pct(v, 0)}
-              />
-              <p className="figure-note">
-                The share of each pair's yield-curve response that lands at the long end.{' '}
-                {count(story.duration.events_with_a_curve_response ?? 0)} events carry both ends.
-                Read it to compare pairs against each other, not as a number of quarters.
-              </p>
-            </>
-          )}
-          {story.sovereign_capital && story.sovereign_capital.funds.length > 0 && (
-            <div className="mt-6">
-              <div className="kicker mb-2">Sovereign wealth in US equity, latest filing</div>
-              <Bars
-                rows={story.sovereign_capital.funds.map((f) => ({
-                  key: f.actor_id, label: f.name, value: f.value_usd,
-                  sub: `${f.as_of}${f.change_usd != null ? ` · ${bn(f.change_usd)} q/q` : ''}`,
-                }))}
-                format={bn}
-              />
-              <p className="figure-note">{story.sovereign_capital.note}</p>
-            </div>
-          )}
+          <Prose>{scored}</Prose>
         </Beat>
       )}
-      </div>
 
       {/* 4b — WHAT IS STILL IN THE PRICE AFTER THE NEWS IS PUBLIC */}
       <Beat
@@ -536,6 +453,86 @@ export default function MarketsPage({ region, onNavigate }: { region: string; on
           )}
         </Disclosure>
       </Beat>
+      </PhaseSection>
+
+      <PhaseSection
+        phase="Forecast"
+        tagline="Where the solved games point prices next, and how long the curve expects a crisis to last."
+        lead={lead('forecast')}
+      >
+      <div className="desk-grid">
+      {/* WHERE THE GAMES POINT */}
+      <Beat
+        title="Where the solved games point next"
+        aside="The courses the region's games put the most mass on, priced to the measured map above. A direction the archive supports, never a forecast of a price."
+      >
+        {story.forward && story.forward.direction.length ? (
+          <>
+            <Bars
+              rows={story.forward.direction.slice(0, 8).map((d) => ({
+                key: d.market_id, label: d.market_name, value: d.expected_abnormal_return,
+                sub: `${count(d.measurements)} moves`,
+              }))}
+              signed format={(v) => signedPct(v, 2)}
+            />
+            {forwardCourses.length > 0 && (
+              <ul className="mt-5 space-y-2 text-sm">
+                {forwardCourses.slice(0, 4).map((c, i) => (
+                  <li key={i}>
+                    <b>{c.dyad_name}</b> — {courseSentence(c, c.family) ?? c.kind_label ?? c.kind.replace(/_/g, ' ')} at {pct(c.likelihood, 0)}
+                    {c.market_implications.length
+                      ? <span style={{ color: 'var(--muted)' }}> · historically moved {c.market_implications.slice(0, 3).map((m) => `${m.market_name} ${signedPct(m.median, 2)}`).join(', ')}</span>
+                      : <span style={{ color: 'var(--muted)' }}> · no market has been priced to this course</span>}
+                  </li>
+                ))}
+              </ul>
+            )}
+          </>
+        ) : (
+          <Empty>{story.forward ? 'No course carries a priced market yet.' : 'No persisted game map for this region yet — the games job solves it on its first pass.'}</Empty>
+        )}
+      </Beat>
+
+      {/* THE CURVE AND SOVEREIGN CAPITAL, one beat */}
+      {((story.duration && story.duration.dyads.length) ||
+        (story.sovereign_capital && story.sovereign_capital.funds.length > 0)) && (
+        <Beat
+          title="How long the market expects it to last, and where the money sits"
+          aside="A crisis the market expects to pass moves the front end of the yield curve; one it expects to last moves the ten-year."
+        >
+          {story.duration && story.duration.dyads.length > 0 && (
+            <>
+              <Bars
+                rows={story.duration.dyads.map((d) => ({
+                  key: d.dyad_id, label: d.dyad_name ?? d.dyad_id, value: d.implied_persistence,
+                  sub: `${count(d.n)} events`,
+                }))}
+                format={(v) => pct(v, 0)}
+              />
+              <p className="figure-note">
+                The share of each pair's yield-curve response that lands at the long end.{' '}
+                {count(story.duration.events_with_a_curve_response ?? 0)} events carry both ends.
+                Read it to compare pairs against each other, not as a number of quarters.
+              </p>
+            </>
+          )}
+          {story.sovereign_capital && story.sovereign_capital.funds.length > 0 && (
+            <div className="mt-6">
+              <div className="kicker mb-2">Sovereign wealth in US equity, latest filing</div>
+              <Bars
+                rows={story.sovereign_capital.funds.map((f) => ({
+                  key: f.actor_id, label: f.name, value: f.value_usd,
+                  sub: `${f.as_of}${f.change_usd != null ? ` · ${bn(f.change_usd)} q/q` : ''}`,
+                }))}
+                format={bn}
+              />
+              <p className="figure-note">{story.sovereign_capital.note}</p>
+            </div>
+          )}
+        </Beat>
+      )}
+      </div>
+      </PhaseSection>
 
       <p className="page-boundary">
         Every figure on this page is a quantile of measured abnormal returns or a field of a

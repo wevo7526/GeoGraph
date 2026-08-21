@@ -139,6 +139,27 @@ DDL: tuple[str, ...] = (
         PRIMARY KEY (region_pack, scope, dyad_id)
     )
     """,
+    # AI-COMPOSED NARRATIVE, PERSISTED PER MEASURED SNAPSHOT. The desk's
+    # diagnosis/forecast prose for a surface (markets, a region game, a dyad
+    # game, a relationship), keyed by its subject and stamped with the
+    # `fingerprint` of the numbers it was written from — the same pattern as
+    # game_solutions/market_stories: compute once, serve everyone, and let the
+    # `narrate` job rewrite it only when the underlying figures move. The prose
+    # NEVER originates a number; `evidence` is the compact packet it was handed,
+    # kept so a reader can hold it to section 17.
+    """
+    CREATE TABLE IF NOT EXISTS narratives (
+        region_pack   TEXT        NOT NULL,
+        surface       TEXT        NOT NULL,
+        subject_id    TEXT        NOT NULL DEFAULT '',
+        fingerprint   TEXT        NOT NULL,
+        blocks        JSONB       NOT NULL,
+        evidence      JSONB       NOT NULL,
+        model         TEXT        NOT NULL,
+        generated_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+        PRIMARY KEY (region_pack, surface, subject_id)
+    )
+    """,
     # ── MIGRATIONS ───────────────────────────────────────────────────────────
     #
     # `CREATE TABLE IF NOT EXISTS` cannot add a column to a table that already
@@ -762,6 +783,70 @@ def game_solution_dyads(conn: Any, region_pack: str) -> list[str]:
             (region_pack,),
         )
         return [r[0] for r in cur.fetchall()]
+
+
+# ── AI-composed narrative (core/reasoning/narrative.py) ─────────────────────
+
+
+def record_narrative(
+    conn: Any,
+    *,
+    region_pack: str,
+    surface: str,
+    subject_id: str,
+    fingerprint: str,
+    blocks: dict[str, Any],
+    evidence: dict[str, Any],
+    model: str,
+) -> None:
+    """Persist (upsert) one surface's narrative, replacing the prior one for
+    the same subject. `fingerprint` is the snapshot the prose was written from;
+    the reader compares it to the current numbers to know if it is stale."""
+    import json
+
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            INSERT INTO narratives
+                (region_pack, surface, subject_id, fingerprint, blocks, evidence,
+                 model, generated_at)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, now())
+            ON CONFLICT (region_pack, surface, subject_id) DO UPDATE SET
+                fingerprint = EXCLUDED.fingerprint, blocks = EXCLUDED.blocks,
+                evidence = EXCLUDED.evidence, model = EXCLUDED.model,
+                generated_at = now()
+            """,
+            (
+                region_pack, surface, subject_id, fingerprint,
+                json.dumps(blocks), json.dumps(evidence), model,
+            ),
+        )
+    conn.commit()
+
+
+def narrative(
+    conn: Any, *, region_pack: str, surface: str, subject_id: str = ""
+) -> dict[str, Any] | None:
+    """One persisted narrative, with its provenance stamped in, or None."""
+    import json
+
+    with conn.cursor() as cur:
+        cur.execute(
+            "SELECT fingerprint, blocks, evidence, model, generated_at "
+            "FROM narratives WHERE region_pack = %s AND surface = %s AND subject_id = %s",
+            (region_pack, surface, subject_id),
+        )
+        row = cur.fetchone()
+    if row is None:
+        return None
+    fingerprint, blocks, evidence, model, generated_at = row
+    return {
+        "fingerprint": fingerprint,
+        "blocks": blocks if isinstance(blocks, dict) else json.loads(blocks),
+        "evidence": evidence if isinstance(evidence, dict) else json.loads(evidence),
+        "model": model,
+        "generated_at": generated_at.isoformat(),
+    }
 
 
 def backtest_rows(conn: Any, region_pack: str) -> list[dict[str, Any]]:

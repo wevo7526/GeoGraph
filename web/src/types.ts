@@ -1201,10 +1201,26 @@ export interface ConceptSolution {
   scenarios: Scenario[]
 }
 
+/** The desk's AI-composed narrative for a surface, in three blocks. Every
+ *  figure in the prose was measured/counted upstream and validated against the
+ *  evidence packet before it was persisted (core/reasoning/narrative.py); the
+ *  page falls back to its deterministic prose when this is absent. */
+export interface SurfaceNarrative {
+  history: string | null
+  work: string | null
+  forecast: string | null
+  model: string
+  generated_at: string
+  /** True when the numbers have moved since the prose was written (the narrate
+   *  job rewrites it on the next pass); null when staleness was not checked. */
+  stale: boolean | null
+}
+
 export interface DyadSolution {
   resolving?: boolean
   note?: string
   payload_version?: string
+  narrative?: SurfaceNarrative | null
   region: string
   dyad_id: string
   dyad_name: string
@@ -1307,6 +1323,7 @@ export interface RegionMap {
   /** The shape of a persisted solve; a stored row of another version is a
    *  cache miss, not a payload (core/games/scenarios.py PAYLOAD_VERSION). */
   payload_version?: string
+  narrative?: SurfaceNarrative | null
   region: string
   as_of: string
   horizon: number
@@ -1498,6 +1515,8 @@ export interface MarketsStory {
   computed_at?: string
   persisted?: boolean
   markets: MarketStoryMarket[]
+  /** The desk's AI narrative (History/Work/Forecast); absent → deterministic prose. */
+  narrative?: SurfaceNarrative | null
   strategy?: Record<string, unknown>
   market_impact?: Array<{
     ticker: string

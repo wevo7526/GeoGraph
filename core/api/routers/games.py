@@ -109,10 +109,12 @@ def region_scenarios(
     """
     from core.games import scenarios
     from core.panel import pg_store
+    from core.reasoning import narrative as narrative_module
 
     if not live:
         panel = _panel()
         if panel is not None:
+            narr = None
             try:
                 stored = pg_store.game_solution(
                     panel, region, scope="region", version=scenarios.PAYLOAD_VERSION
@@ -138,10 +140,18 @@ def region_scenarios(
                             "(watch /api/jobs). Add live=true to solve on request."
                         ),
                     }
+                if stored is not None:
+                    narr = narrative_module.served_narrative(
+                        panel, surface="game_region", region=region,
+                        subject_id="", payload=stored,
+                    )
             finally:
                 panel.close()
             if stored is not None:
-                return pricing_module.clip_to_pack(stored, region) or stored
+                out = pricing_module.clip_to_pack(stored, region) or stored
+                if narr is not None:
+                    out["narrative"] = narr
+                return out
     solved = _live_region(request, region, dyads)
     out = solved["region"]
     out["persisted"] = False
@@ -161,10 +171,12 @@ def dyad_solution(
     trajectories, priced courses, named scenarios and the explanation."""
     from core.games import scenarios
     from core.panel import pg_store
+    from core.reasoning import narrative as narrative_module
 
     if not live:
         panel = _panel()
         if panel is not None:
+            narr = None
             try:
                 stored = pg_store.game_solution(
                     panel, region, scope="dyad", dyad_id=dyad,
@@ -186,10 +198,18 @@ def dyad_solution(
                             "live=true to solve on request"
                         ),
                     }
+                if stored is not None:
+                    narr = narrative_module.served_narrative(
+                        panel, surface="game_dyad", region=region,
+                        subject_id=dyad, payload=stored,
+                    )
             finally:
                 panel.close()
             if stored is not None:
-                return pricing_module.clip_to_pack(stored, region) or stored
+                out = pricing_module.clip_to_pack(stored, region) or stored
+                if narr is not None:
+                    out["narrative"] = narr
+                return out
     context = _context(request, region)
     payoffs = solve_module.Payoffs(**_defaults(region))
     solved = scenarios.solve_dyad(

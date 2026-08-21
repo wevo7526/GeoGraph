@@ -156,13 +156,19 @@ def test_the_relationship_timeline_does_not_render_coded_event_names() -> None:
     assert "not a fight between them" in story
 
 
-def test_the_games_method_is_on_the_page_not_in_a_disclosure() -> None:
-    """'How this was solved' is a beat, not a closed <details>."""
+def test_the_games_solve_audit_sits_behind_a_disclosure() -> None:
+    """The games surface reads in three blocks (History / Work / Forecast), and
+    'How this was solved' is now the Work diagnosis: the AI lead argues, and the
+    raw audit (tiles, payoffs, concepts, the fans) sits behind an evidence
+    disclosure rather than being dumped on the page (2026-08-21). The
+    deterministic explanation still shows as the key-less fallback."""
     games = _strip_comments(
         (WEB / "components" / "GamesPage.tsx").read_text(encoding="utf-8")
     )
     assert "How this was solved" in games
-    assert "Disclosure" not in games
+    assert "PhaseSection" in games
+    assert 'phase="Work"' in games
+    assert "Disclosure" in games
 
 
 def test_the_relationship_page_leads_with_three_reads_not_a_hostility_ladder() -> None:

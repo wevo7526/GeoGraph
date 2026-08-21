@@ -210,9 +210,16 @@ def markets_story(region: str = "mena") -> dict[str, Any]:
         panel = pg_store.connect(settings_module.load())
     except pg_store.PanelUnavailable as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
+    from core.reasoning import narrative as narrative_module
+
+    narr = None
     try:
         pg_store.apply_schema(panel)
         stored = pg_store.market_story(panel, region)
+        if stored is not None:
+            narr = narrative_module.served_narrative(
+                panel, surface="markets", region=region, subject_id="", payload=stored
+            )
     finally:
         panel.close()
     if stored is None:
@@ -223,7 +230,10 @@ def markets_story(region: str = "mena") -> dict[str, Any]:
         }
     from core.games import pricing as pricing_module
 
-    return pricing_module.clip_to_pack(stored, region) or stored
+    out = pricing_module.clip_to_pack(stored, region) or stored
+    if narr is not None:
+        out["narrative"] = narr
+    return out
 
 
 @router.get("/trading/forward")

@@ -1324,6 +1324,142 @@ def markets(conn: Any, deadline: float) -> dict[str, Any]:
     return {"note": "every region's markets story is current", "affected": affected}
 
 
+# ── the desk's AI narrative (core/reasoning/narrative.py) ───────────────────
+#
+# Generated here, in the loop, so a page load never waits on a model, and
+# persisted per snapshot beside the numbers (Postgres `narratives`). ONE
+# generation per tick — a model call is the most expensive thing in the loop —
+# and only when the packet's fingerprint has moved, so a routine tick that finds
+# every surface current costs one Postgres read per surface and no tokens. Dark
+# without OPENAI_API_KEY: the surfaces serve their deterministic prose.
+
+#: How many top-ranked pairs per region get a dyad-level narrative (the game and
+#: the relationship). Region-level surfaces (markets, the region map) are always
+#: covered; dyad prose is bounded because there are many pairs and each is a call.
+NARRATE_TOP_DYADS = int(os.getenv("GEOGRAPH_NARRATE_TOP_DYADS", "4"))
+
+
+def _narrate_worklist(panel: Any, conn: Any, name: str) -> list[dict[str, Any]]:
+    """(surface, subject_id, payload) triples for one region, region-level
+    surfaces first, then the top pairs. A payload of None is skipped."""
+    from core.games import scenarios
+    from core.panel import pg_store
+
+    work: list[dict[str, Any]] = []
+    story = pg_store.market_story(panel, name)
+    if story is not None:
+        work.append({"surface": "markets", "subject": "", "payload": story})
+    region_map = pg_store.game_solution(
+        panel, name, scope="region", version=scenarios.PAYLOAD_VERSION
+    )
+    if region_map is not None:
+        work.append({"surface": "game_region", "subject": "", "payload": region_map})
+        ranking = region_map.get("ranking") or []
+        top = [str(r.get("dyad_id")) for r in ranking[:NARRATE_TOP_DYADS] if r.get("dyad_id")]
+        for dyad in top:
+            sol = pg_store.game_solution(
+                panel, name, scope="dyad", dyad_id=dyad,
+                version=scenarios.PAYLOAD_VERSION,
+            )
+            if sol is None:
+                continue
+            work.append({"surface": "game_dyad", "subject": dyad, "payload": sol})
+            work.append({
+                "surface": "relationship", "subject": dyad,
+                "payload": _relationship_bundle(conn, panel, name, dyad, sol),
+            })
+    return work
+
+
+def _relationship_bundle(
+    conn: Any, panel: Any, name: str, dyad: str, sol: dict[str, Any]
+) -> dict[str, Any]:
+    """The relationship packet's inputs, assembled from what the page reads: the
+    solved game (the call), the measured timeline (history) and the region
+    calibration (work). Defensive — a missing piece is simply absent."""
+    from core.reasoning import calibration as calibration_module
+    from core.reasoning import impact as impact_module
+
+    timeline: dict[str, Any] = {}
+    try:
+        timeline = impact_module.dyad_timeline(conn, dyad) or {}
+    except Exception:  # noqa: BLE001 - the bundle is best-effort
+        timeline = {}
+    calibration: dict[str, Any] = {}
+    try:
+        calibration = calibration_module.cached(name) or {}
+    except Exception:  # noqa: BLE001
+        calibration = {}
+    return {
+        "dyad_name": sol.get("dyad_name"),
+        "solution": sol,
+        "timeline": timeline,
+        "calibration": calibration,
+    }
+
+
+def narrate(conn: Any, deadline: float) -> dict[str, Any]:
+    """Regenerate one stale surface's narrative and persist it. Bounded to one
+    model call per tick; dark (and free) without a key."""
+    if not os.getenv("OPENAI_API_KEY", "").strip():
+        return {"skipped": "no OPENAI_API_KEY — narrative dark"}
+    from core.panel import pg_store
+    from core.reasoning import narrative as narrative_module
+
+    panel = _panel()
+    if panel is None:
+        return {"skipped": "no panel"}
+    try:
+        pg_store.apply_schema(panel)
+        for name in _pack_names():
+            if time.monotonic() >= deadline:
+                return {"skipped": "slice spent"}
+            for item in _narrate_worklist(panel, conn, name):
+                payload = item["payload"]
+                if not isinstance(payload, dict):
+                    continue
+                try:
+                    packet = narrative_module.build_packet(item["surface"], payload)
+                except Exception:  # noqa: BLE001 - a malformed payload is not fatal
+                    continue
+                fingerprint = narrative_module.fingerprint_of(packet)
+                stored = pg_store.narrative(
+                    panel, region_pack=name, surface=item["surface"],
+                    subject_id=item["subject"],
+                )
+                if stored is not None and stored.get("fingerprint") == fingerprint:
+                    continue
+                if time.monotonic() >= deadline:
+                    return {"skipped": "slice spent"}
+                try:
+                    composed = narrative_module.compose(item["surface"], payload)
+                except narrative_module.AgentUnavailable as exc:
+                    return {"skipped": str(exc)}
+                except Exception as exc:  # noqa: BLE001 - a bad generation is not fatal
+                    return {
+                        "surface": item["surface"], "region": name,
+                        "subject": item["subject"], "error": str(exc),
+                    }
+                if composed is None:
+                    # Failed numeric-provenance validation (or empty). Do not
+                    # persist — the surface keeps its deterministic prose — and
+                    # move on so one bad packet does not wedge the loop.
+                    continue
+                pg_store.record_narrative(
+                    panel, region_pack=name, surface=item["surface"],
+                    subject_id=item["subject"], fingerprint=fingerprint,
+                    blocks=composed["blocks"], evidence=composed["evidence"],
+                    model=composed["model"],
+                )
+                return {
+                    "wrote": item["surface"], "region": name,
+                    "subject": item["subject"], "model": composed["model"],
+                }
+        return {"note": "every surface's narrative is current"}
+    finally:
+        panel.close()
+
+
 # ── the counts behind /api/stats ───────────────────────────────────────────
 
 

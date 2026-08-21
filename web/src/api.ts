@@ -30,6 +30,7 @@ import type {
   Trajectory,
   RegionMap,
   DyadSolution,
+  SurfaceNarrative,
   ForwardView,
   EventImpact,
   ImpactCoverage,
@@ -329,6 +330,14 @@ export const getRegionMap = (region: string) =>
 export const getDyadSolution = (region: string, dyad: string) =>
   get<DyadSolution>(
     `/api/games/dyad?region=${encodeURIComponent(region)}&dyad=${encodeURIComponent(dyad)}`,
+  )
+
+// The desk's AI narrative for one relationship (History/Work/Forecast), served
+// from the persisted store — absent (available:false) without a key or before
+// the narrate job has written it, in which case the page keeps its own prose.
+export const getRelationshipNarrative = (region: string, dyad: string) =>
+  get<{ available: boolean; narrative?: SurfaceNarrative }>(
+    `/api/relationships/narrative?region=${encodeURIComponent(region)}&dyad=${encodeURIComponent(dyad)}`,
   )
 
 // The markets story: the transmission map, the biggest moves, where the games

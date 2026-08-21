@@ -943,6 +943,64 @@ input[type='range'].timeline:focus-visible {
   color: var(--muted);
 }
 
+/* ── THE THREE-PHASE SPINE (2026-08-21) ──────────────────────────────────────
+   History / Work / Forecast. Each phase is announced by a strong running head
+   (a double rule, print's "new section"), carries the desk's AI lead when there
+   is one, and holds the page's existing beats as its evidence. The phase label
+   is the loudest running head on the page after the masthead, so the reader
+   always knows which of the three questions they are in. */
+.phase {
+  margin-top: 3.5rem;
+}
+.phase:first-of-type {
+  margin-top: 2rem;
+}
+.phase-head {
+  display: flex;
+  align-items: baseline;
+  gap: 0.9rem;
+  flex-wrap: wrap;
+  border-top: 4px double var(--rule-strong);
+  padding-top: 0.6rem;
+  margin-bottom: 1.1rem;
+}
+.phase-label {
+  font-family: ui-monospace, 'Cascadia Code', Consolas, monospace;
+  font-size: 0.8rem;
+  letter-spacing: 0.24em;
+  text-transform: uppercase;
+  color: var(--text);
+}
+.phase-tagline {
+  font-size: var(--type-caption);
+  color: var(--muted);
+  max-width: var(--measure-note);
+}
+
+/* The desk's AI lead for a phase — the argument, set as the reading column it
+   is. A left accent rule marks it as composed prose (the diagnosis), distinct
+   from the deterministic beats below; the provenance line keeps section 17
+   honest. */
+.narrative-lead {
+  border-left: 3px solid var(--accent);
+  padding-left: 1.1rem;
+  margin: 0 0 1.75rem;
+}
+.narrative-lead .prose-body {
+  margin: 0 0 0.85rem;
+}
+.narrative-lead .prose-body:last-of-type {
+  margin-bottom: 0.6rem;
+}
+.narrative-prov {
+  margin: 0;
+  font-family: ui-monospace, 'Cascadia Code', Consolas, monospace;
+  font-size: 10.5px;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+  max-width: var(--measure-prose);
+}
+
 /* A numbered section, ruled off from the last — the working-paper beat. */
 .beat {
   margin-top: 3.25rem;

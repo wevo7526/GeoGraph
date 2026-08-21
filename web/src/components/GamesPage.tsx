@@ -19,7 +19,16 @@ import { useEffect, useMemo, useState } from 'react'
 import { getDyadSolution, getRegionMap, lastFailureFor } from '../api'
 import { useRegionLabel } from '../regions'
 import type { ConceptSolution, DyadSolution, RegionMap, Scenario } from '../types'
-import { Beat, Caption, Empty, Prose, StoryHead } from '../ui'
+import { Beat, Caption, Disclosure, Empty, PhaseSection, Prose, StoryHead } from '../ui'
+import type { SurfaceNarrative } from '../types'
+
+/** The desk's AI lead for one phase of a games surface — the block's prose plus
+ *  the narrative's provenance. Absent → the deterministic beats carry it. */
+function phaseLead(narr: SurfaceNarrative | null | undefined, block: 'history' | 'work' | 'forecast') {
+  return narr
+    ? { prose: narr[block], model: narr.model, generatedAt: narr.generated_at, stale: narr.stale }
+    : null
+}
 import {
   courseInWords,
   courseSentence,
@@ -138,6 +147,8 @@ function RegionGames({ region, onPick }: { region: string; onPick: (dyad: string
   const pressing = map.scenarios_escalatory.filter((s) => s.family?.family !== 'ally')
   const alliances = map.scenarios_escalatory.filter((s) => s.family?.family === 'ally')
   const calming = map.scenarios_calming.filter((s) => s.family?.family !== 'ally')
+  const narr = map.narrative
+  const lead = (block: 'history' | 'work' | 'forecast') => phaseLead(narr, block)
 
   return (
     <div className="desk-page py-8">
@@ -157,6 +168,11 @@ function RegionGames({ region, onPick }: { region: string; onPick: (dyad: string
         <p className="figure-note mt-4">{pricingTrustSentence(map.pricing_trust)}</p>
       )}
 
+      <PhaseSection
+        phase="History"
+        tagline="Who has been pressing whom — the measured coercive record, and how each pair stands."
+        lead={lead('history')}
+      >
       <Beat
         title="Who is pressing whom"
         major
@@ -214,7 +230,57 @@ function RegionGames({ region, onPick }: { region: string; onPick: (dyad: string
             : 'The bar is a measured count of coercive acts, not a forecast.'}
         </p>
       </Beat>
+      </PhaseSection>
 
+      <PhaseSection
+        phase="Work"
+        tagline="What the solve did across the region, and how far to trust it."
+        lead={lead('work')}
+      >
+      <Beat title="How this was solved" aside="How many pairs, the kernel counted from the archive, and the nash-gap audit.">
+        {!narr?.work && map.explanation.map((p, i) => (
+          <Prose key={i} className="mt-3">{p}</Prose>
+        ))}
+        <Disclosure label="the solve, in full — coverage, payoffs, concepts and the fans">
+          <div className="mt-3">
+            <Tiles items={[
+              { label: 'pairs solved', value: String(map.dyads_solved), sub: `${map.dyads_cinc} with a capability estimate` },
+              { label: 'on their own kernel', value: String(map.dyads_tilted), sub: map.model ? `${map.model.name}` : 'no frozen model' },
+              { label: 'nash gap (audit)', value: map.nash_gap.mean !== null ? map.nash_gap.mean.toFixed(3) : '—', sub: map.nash_gap.max !== null ? `0 sat on a Nash point · worst ${map.nash_gap.max.toFixed(3)}` : '0 sat on a Nash point; the play is the fitted QRE' },
+              { label: 'kernel measured', value: pct(map.kernel.share_measured, 0), sub: `${count(map.kernel.observations)} dyad-quarters` },
+            ]} />
+          </div>
+          <dl className="statline mt-4">
+            {Object.entries(map.payoffs ?? {}).map(([k, v]) => (
+              <div key={k}><dt>{k.replace('_', ' ')}</dt><dd>{v.toFixed(3)}</dd></div>
+            ))}
+          </dl>
+          <ul className="mt-3 text-caption space-y-1" style={{ color: 'var(--muted)', maxWidth: 'var(--measure-note)' }}>
+            {Object.entries(map.concepts).map(([k, v]) => (
+              <li key={k}><span className="kicker">{k}</span> {v}</li>
+            ))}
+            <li>
+              <span className="kicker">kernel</span> <span className="num">{map.kernel.measured}</span> of{' '}
+              <span className="num">{map.kernel.cells}</span> cells measured, <span className="num">{map.kernel.fallback}</span> fallback
+            </li>
+          </ul>
+          <div className="mt-6">
+            <div className="kicker mb-2">The region's fan — average mass by band, quarter by quarter</div>
+            <BandHeat rows={map.region_fan.map((r) => r.distribution)} bandLabels={bands} />
+          </div>
+          <div className="mt-6">
+            <div className="kicker mb-2">Expected band by pair and quarter</div>
+            <ExpectedHeat heat={map.heat} bands={bands.length} onPick={onPick} />
+          </div>
+        </Disclosure>
+      </Beat>
+      </PhaseSection>
+
+      <PhaseSection
+        phase="Forecast"
+        tagline="Where the solved games point across the region."
+        lead={lead('forecast')}
+      >
       <Beat
         title="Where the games point"
         aside={`The courses the solved games put the most mass on, pooled by kind across ${map.dyads_solved} pairs. Each pair's kinds sum to one.`}
@@ -239,42 +305,7 @@ function RegionGames({ region, onPick }: { region: string; onPick: (dyad: string
           <ScenarioList rows={alliances.slice(0, 6)} onPick={onPick} />
         </Beat>
       )}
-
-      <Beat title="How this was solved" aside="The concepts, the kernel and the audit paragraphs the numbers above come from.">
-        <div className="mt-3">
-          <Tiles items={[
-            { label: 'pairs solved', value: String(map.dyads_solved), sub: `${map.dyads_cinc} with a capability estimate` },
-            { label: 'on their own kernel', value: String(map.dyads_tilted), sub: map.model ? `${map.model.name}` : 'no frozen model' },
-            { label: 'nash gap (audit)', value: map.nash_gap.mean !== null ? map.nash_gap.mean.toFixed(3) : '—', sub: map.nash_gap.max !== null ? `0 sat on a Nash point · worst ${map.nash_gap.max.toFixed(3)}` : '0 sat on a Nash point; the play is the fitted QRE' },
-            { label: 'kernel measured', value: pct(map.kernel.share_measured, 0), sub: `${count(map.kernel.observations)} dyad-quarters` },
-          ]} />
-        </div>
-        {map.explanation.map((p, i) => (
-          <Prose key={i} className="mt-3">{p}</Prose>
-        ))}
-        <dl className="statline mt-4">
-          {Object.entries(map.payoffs ?? {}).map(([k, v]) => (
-            <div key={k}><dt>{k.replace('_', ' ')}</dt><dd>{v.toFixed(3)}</dd></div>
-          ))}
-        </dl>
-        <ul className="mt-3 text-caption space-y-1" style={{ color: 'var(--muted)', maxWidth: 'var(--measure-note)' }}>
-          {Object.entries(map.concepts).map(([k, v]) => (
-            <li key={k}><span className="kicker">{k}</span> {v}</li>
-          ))}
-          <li>
-            <span className="kicker">kernel</span> <span className="num">{map.kernel.measured}</span> of{' '}
-            <span className="num">{map.kernel.cells}</span> cells measured, <span className="num">{map.kernel.fallback}</span> fallback
-          </li>
-        </ul>
-        <div className="mt-6">
-          <div className="kicker mb-2">The region's fan — average mass by band, quarter by quarter</div>
-          <BandHeat rows={map.region_fan.map((r) => r.distribution)} bandLabels={bands} />
-        </div>
-        <div className="mt-6">
-          <div className="kicker mb-2">Expected band by pair and quarter</div>
-          <ExpectedHeat heat={map.heat} bands={bands.length} onPick={onPick} />
-        </div>
-      </Beat>
+      </PhaseSection>
 
       <p className="page-boundary">{map.boundary_statement}</p>
     </div>
@@ -429,6 +460,7 @@ function DyadGame({
     hasVariance(propensity[types[1]]) || hasVariance(propensity[types[0]])
   const standing = standingPhrase(sol.opening.standing)
   const posture = postureClause(sol.opening.posture)
+  const lead = (block: 'history' | 'work' | 'forecast') => phaseLead(sol.narrative, block)
 
   return (
     <div className="desk-page py-8">
@@ -490,6 +522,11 @@ function DyadGame({
         )}
       </div>
 
+      <PhaseSection
+        phase="History"
+        tagline="What this pair is, where it opens against its own history, and what such courses have done to prices."
+        lead={lead('history')}
+      >
       <Beat title="The matchup" major aside="What the two sides bring, what each believes about the other, and where the pair opens against its own history.">
         <Matchup
           sides={sol.sides}
@@ -509,6 +546,84 @@ function DyadGame({
         />
       </Beat>
 
+      {top && top.market_implications.length > 0 && (
+        <Beat
+          title="What the archive measured after courses like this"
+          aside="Median abnormal return across every measured event of a comparable course — the direction and size markets typically moved beyond what their own estimation window expected."
+        >
+          <Bars
+            rows={top.market_implications.map((m) => ({
+              key: m.market_id, label: m.market_name, value: m.median, sub: `${count(m.n)} events`,
+            }))}
+            signed format={(v) => signedPct(v, 2)}
+          />
+        </Beat>
+      )}
+      </PhaseSection>
+
+      <PhaseSection
+        phase="Work"
+        tagline="The stage game, the kernel counted from the archive, and how far to trust the solve."
+        lead={lead('work')}
+      >
+      <Beat title="How this was solved" aside="The stage game, the payoffs, the kernel, and the estimator's own account of the numbers above.">
+          {!sol.narrative?.work && sol.explanation.map((p, i) => (
+            <Prose key={i} className="mt-3">{p}</Prose>
+          ))}
+          <Disclosure label="the solve, in full — stage game, propensities, payoffs and the audit">
+          <div className="mt-6">
+            <div className="kicker mb-2">The stage game at the opening</div>
+            <div className="toolbar mb-3" style={{ borderTop: 'none' }}>
+              <span className="kicker">own type</span>
+              {([1, 0] as const).map((t) => (
+                <button key={t} className="btn btn--quiet" aria-pressed={t === typeIndex} onClick={() => setTypeIndex(t)}>{types[t]}</button>
+              ))}
+            </div>
+            {concept.opening_matrix[typeName] && <PayoffMatrix matrix={concept.opening_matrix[typeName]} sides={sol.sides} />}
+          </div>
+
+          {propensityWorth && (
+            <div className="mt-6">
+              <div className="kicker mb-2">Propensity to {pressWord}, by departure band and type</div>
+              <MultiLine
+                xLabels={bands}
+                series={[
+                  { name: types[1], values: propensity[types[1]] ?? [], color: 'var(--alert)' },
+                  { name: types[0], values: propensity[types[0]] ?? [], color: 'var(--accent)', dash: '4 3' },
+                ]}
+              />
+            </div>
+          )}
+
+          <dl className="statline mt-6">
+            {Object.entries(sol.payoffs).map(([k, v]) => (<div key={k}><dt>{k.replace('_', ' ')}</dt><dd>{v.toFixed(3)}</dd></div>))}
+          </dl>
+          <Caption className="mt-2">
+            <span className="kicker">kernel</span>{' '}
+            <span className="num">{sol.kernel.measured}/{sol.kernel.cells}</span> measured ({pct(sol.kernel.share_measured, 0)}) over{' '}
+            <span className="num">{count(sol.kernel.observations)}</span> dyad-quarters
+            {concept.pricing ? <> · pricing over <span className="num">{count(concept.pricing.measurements)}</span> measured effects in <span className="num">{concept.pricing.cells}</span> cells</> : ' · no pricing evidence'}
+            {sol.opening.tilt ? <> · <span className="mono">{sol.opening.tilt.model}</span></> : ''}
+          </Caption>
+          <Caption className="mt-1">{concept.concept}</Caption>
+          {lp?.nash_gap && (
+            <Caption className="mt-1">
+              <span className="kicker">nash gap</span>{' '}
+              <span className="num">{lp.nash_gap.mean.toFixed(3)}</span> (worst <span className="num">{lp.nash_gap.max.toFixed(3)}</span>) — 0 sat on a Nash point; the play is the fitted QRE
+            </Caption>
+          )}
+          <Caption className="mt-1">
+            {sol.persisted ? <>solved <span className="num">{sol.computed_at?.slice(0, 16).replace('T', ' ')}</span> UTC</> : 'solved on request'} · archive to <span className="num">{sol.as_of}</span>
+          </Caption>
+          </Disclosure>
+      </Beat>
+      </PhaseSection>
+
+      <PhaseSection
+        phase="Forecast"
+        tagline="The most likely course, and where the fan points."
+        lead={lead('forecast')}
+      >
       <Beat
         title="Where it's heading"
         aside={`Every course the game can take, gathered into a fan. The line is the middle of the game's mass; the shaded bands hold the middle half and the middle four fifths of it.`}
@@ -574,71 +689,7 @@ function DyadGame({
           </div>
         )}
       </Beat>
-
-      {top && top.market_implications.length > 0 && (
-        <Beat
-          title="What the archive measured after courses like this"
-          aside="Median abnormal return across every measured event of a comparable course — the direction and size markets typically moved beyond what their own estimation window expected."
-        >
-          <Bars
-            rows={top.market_implications.map((m) => ({
-              key: m.market_id, label: m.market_name, value: m.median, sub: `${count(m.n)} events`,
-            }))}
-            signed format={(v) => signedPct(v, 2)}
-          />
-        </Beat>
-      )}
-
-      <Beat title="How this was solved" aside="The stage game, the payoffs, the kernel, and the estimator's own account of the numbers above.">
-          {sol.explanation.map((p, i) => (
-            <Prose key={i} className="mt-3">{p}</Prose>
-          ))}
-
-          <div className="mt-6">
-            <div className="kicker mb-2">The stage game at the opening</div>
-            <div className="toolbar mb-3" style={{ borderTop: 'none' }}>
-              <span className="kicker">own type</span>
-              {([1, 0] as const).map((t) => (
-                <button key={t} className="btn btn--quiet" aria-pressed={t === typeIndex} onClick={() => setTypeIndex(t)}>{types[t]}</button>
-              ))}
-            </div>
-            {concept.opening_matrix[typeName] && <PayoffMatrix matrix={concept.opening_matrix[typeName]} sides={sol.sides} />}
-          </div>
-
-          {propensityWorth && (
-            <div className="mt-6">
-              <div className="kicker mb-2">Propensity to {pressWord}, by departure band and type</div>
-              <MultiLine
-                xLabels={bands}
-                series={[
-                  { name: types[1], values: propensity[types[1]] ?? [], color: 'var(--alert)' },
-                  { name: types[0], values: propensity[types[0]] ?? [], color: 'var(--accent)', dash: '4 3' },
-                ]}
-              />
-            </div>
-          )}
-
-          <dl className="statline mt-6">
-            {Object.entries(sol.payoffs).map(([k, v]) => (<div key={k}><dt>{k.replace('_', ' ')}</dt><dd>{v.toFixed(3)}</dd></div>))}
-          </dl>
-          <Caption className="mt-2">
-            <span className="kicker">kernel</span>{' '}
-            <span className="num">{sol.kernel.measured}/{sol.kernel.cells}</span> measured ({pct(sol.kernel.share_measured, 0)}) over{' '}
-            <span className="num">{count(sol.kernel.observations)}</span> dyad-quarters
-            {concept.pricing ? <> · pricing over <span className="num">{count(concept.pricing.measurements)}</span> measured effects in <span className="num">{concept.pricing.cells}</span> cells</> : ' · no pricing evidence'}
-            {sol.opening.tilt ? <> · <span className="mono">{sol.opening.tilt.model}</span></> : ''}
-          </Caption>
-          <Caption className="mt-1">{concept.concept}</Caption>
-          {lp?.nash_gap && (
-            <Caption className="mt-1">
-              <span className="kicker">nash gap</span>{' '}
-              <span className="num">{lp.nash_gap.mean.toFixed(3)}</span> (worst <span className="num">{lp.nash_gap.max.toFixed(3)}</span>) — 0 sat on a Nash point; the play is the fitted QRE
-            </Caption>
-          )}
-          <Caption className="mt-1">
-            {sol.persisted ? <>solved <span className="num">{sol.computed_at?.slice(0, 16).replace('T', ' ')}</span> UTC</> : 'solved on request'} · archive to <span className="num">{sol.as_of}</span>
-          </Caption>
-      </Beat>
+      </PhaseSection>
 
       <p className="page-boundary">{sol.boundary_statement}</p>
     </div>

@@ -234,6 +234,98 @@ export function Empty({ children }: { children: ReactNode }) {
 }
 
 
+/* ── THE THREE-BLOCK NARRATIVE (2026-08-21) ──────────────────────────────────
+ *  Every analytic surface is read in three phases — History (what the record
+ *  shows), Work (what the system did, and how far to trust it) and Forecast
+ *  (where it points next). The AI-composed lead argues; the charts and tables
+ *  beneath it are the evidence it argues from. When no lead is available (no
+ *  key, or not generated yet) the phase still frames its evidence.
+ */
+
+/** Bold only names the model marked with **…**; everything else is plain. */
+function withBold(text: string): ReactNode[] {
+  return text.split(/(\*\*[^*]+\*\*)/g).map((part, i) =>
+    part.startsWith('**') && part.endsWith('**') ? (
+      <strong key={i}>{part.slice(2, -2)}</strong>
+    ) : (
+      <span key={i}>{part}</span>
+    ),
+  )
+}
+
+/** The AI lead for a phase: the desk's prose, then a quiet provenance line so a
+ *  reader knows it was composed (and whether the numbers have since moved). */
+export function NarrativeLead({
+  prose,
+  model,
+  generatedAt,
+  stale,
+}: {
+  prose: string
+  model?: string
+  generatedAt?: string
+  stale?: boolean | null
+}) {
+  const paragraphs = prose.split(/\n\n+/).filter((p) => p.trim())
+  if (!paragraphs.length) return null
+  const when = generatedAt ? generatedAt.slice(0, 10) : null
+  return (
+    <div className="narrative-lead">
+      {paragraphs.map((p, i) => (
+        <p key={i} className="prose-body">{withBold(p)}</p>
+      ))}
+      {(model || when || stale) && (
+        <p className="narrative-prov">
+          composed by the desk{model ? ` · ${model}` : ''}{when ? ` · ${when}` : ''}
+          {stale ? ' · the numbers have moved since; a refresh is queued' : ''}
+          {' '}· argued from the measured figures shown; no number originates here
+        </p>
+      )}
+    </div>
+  )
+}
+
+/** One phase of a page: a labelled head, the optional AI lead, then the evidence
+ *  (existing beats/charts) as children. */
+export function PhaseSection({
+  phase,
+  tagline,
+  lead,
+  children,
+}: {
+  phase: 'History' | 'Work' | 'Forecast'
+  tagline?: string
+  lead?: SurfaceNarrativeLead | null
+  children: ReactNode
+}) {
+  return (
+    <section className="phase">
+      <div className="phase-head">
+        <span className="phase-label">{phase}</span>
+        {tagline && <span className="phase-tagline">{tagline}</span>}
+      </div>
+      {lead?.prose && (
+        <NarrativeLead
+          prose={lead.prose}
+          model={lead.model}
+          generatedAt={lead.generatedAt}
+          stale={lead.stale}
+        />
+      )}
+      {children}
+    </section>
+  )
+}
+
+/** The lead shape a page passes to a PhaseSection — the block's prose plus the
+ *  narrative's shared provenance. */
+export type SurfaceNarrativeLead = {
+  prose: string | null | undefined
+  model?: string
+  generatedAt?: string
+  stale?: boolean | null
+}
+
 /** A state word as a chip: the ABSOLUTE tone of a pair (cooperative … conflictual)
  *  beside a relative departure band, a solver name, a status. Colour is the
  *  diverging pair carrying sign; anything neutral wears ink. */

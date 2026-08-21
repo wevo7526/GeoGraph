@@ -28,6 +28,7 @@ import {
   getEventImpact,
   getImpactCoverage,
   getDyadSolution,
+  getRelationshipNarrative,
   getWhatIf,
   getWhatIfOptions,
 } from '../api'
@@ -54,6 +55,7 @@ import type {
   ImpactCoverage,
   TimelineEvent,
   DyadSolution,
+  SurfaceNarrative,
   WhatIfResult,
 } from '../types'
 import { dyadCall, eventHeadline, postureClause, relationshipStandfirst, standingPhrase, typicalBand } from '../lib/story'
@@ -61,7 +63,7 @@ import { actorsFromPairId } from '../lib/ids'
 import { BoxRow, Fan, LineBand } from './charts/Charts'
 import type { Point } from './charts/Charts'
 import { Bars, FanRibbon, MultiLine, pct } from './charts/Kit'
-import { Beat, Caption, Disclosure, Empty, MoveRow, Prose, StatLine, StoryHead, TensionBadge } from '../ui'
+import { Beat, Caption, Disclosure, Empty, MoveRow, PhaseSection, Prose, StatLine, StoryHead, TensionBadge } from '../ui'
 
 function dyadFromHash(): string {
   const q = window.location.hash.split('?')[1]
@@ -127,6 +129,7 @@ export default function RelationshipPage({ region, onNavigate }: { region: strin
   const [whatIf, setWhatIf] = useState<WhatIfResult | null | undefined>(undefined)
   const [stories, setStories] = useState<WhatIfResult | null | undefined>(undefined)
   const [modelTrajectory, setModelTrajectory] = useState<Array<{ q: string; deviation: number; lo?: number; hi?: number }> | null>(null)
+  const [narrative, setNarrative] = useState<SurfaceNarrative | null>(null)
 
   useEffect(() => {
     let live = true
@@ -177,6 +180,10 @@ export default function RelationshipPage({ region, onNavigate }: { region: strin
     setSolution(undefined)
     setWhatIf(undefined)
     setStories(undefined)
+    setNarrative(null)
+    getRelationshipNarrative(region, selected).then(
+      (r) => live && setNarrative(r?.available ? r.narrative ?? null : null),
+    )
     getDyadSeries(selected, region).then((r) => live && setSeries(r))
     getDyadTimeline(selected).then((r) => live && setTimeline(r))
     exploreGame(region, selected).then((r) => live && setGame(r))
@@ -316,6 +323,18 @@ export default function RelationshipPage({ region, onNavigate }: { region: strin
 
   const dyadsFailed = lastFailureFor('/api/panel/dyads', { exact: true })
 
+  // The desk's AI lead per phase (History / Work / Forecast); absent → the
+  // deterministic beats carry the page unchanged.
+  const lead = (block: 'history' | 'work' | 'forecast') =>
+    narrative
+      ? {
+          prose: narrative[block],
+          model: narrative.model,
+          generatedAt: narrative.generated_at,
+          stale: narrative.stale,
+        }
+      : null
+
   return (
     <div className="desk-page">
       {linkNote && (
@@ -365,87 +384,11 @@ export default function RelationshipPage({ region, onNavigate }: { region: strin
         <Empty>no relationships in this region yet</Empty>
       ) : (
         <>
-          {/* ── THE CALL — the forecast hero ─────────────────────────────── */}
-          <section className={`call mt-8 ${forwardTrend === 'rising' ? 'call--rising' : ''}`}>
-            <div className="flex items-center justify-between gap-3 flex-wrap">
-              <span className="kicker">The call · where it’s going</span>
-              {headingType && <TensionBadge label={headingType} trend={forwardTrend} />}
-            </div>
-
-            {callLede ? (
-              <p className="call-lede">{callLede}</p>
-            ) : game === undefined ? (
-              <p className="call-lede" style={{ color: 'var(--muted)', fontStyle: 'italic' }}>
-                solving the game for this relationship…
-              </p>
-            ) : (
-              <p className="call-lede" style={{ color: 'var(--muted)', fontStyle: 'italic' }}>
-                Not enough comparable play to solve this relationship’s game yet.
-              </p>
-            )}
-
-            {call && <p className="call-odds">{call.odds}</p>}
-            {call?.course && <p className="call-note">{call.course}</p>}
-
-            {/* WHAT THE ARCHIVE MEASURED, said as what it is. This block used
-                to be headed "If it plays out, markets have moved" — which reads
-                as a prediction for THIS pair, while the numbers are medians
-                over every comparable course the region has on record. Same
-                measurement, honest label. */}
-            {moves.length > 0 ? (
-              <div className="mt-4">
-                <div className="kicker mb-1">After courses like this one, across the measured record</div>
-                {moves.map((m) => (
-                  <MoveRow key={m.name} name={m.name} pct={m.pct} sub={`${m.n} events`} />
-                ))}
-              </div>
-            ) : game && marginal.length ? (
-              <p className="call-note" style={{ color: 'var(--muted)' }}>
-                No market has enough comparable measurements to price this course.
-              </p>
-            ) : null}
-
-            {family?.caveat && (
-              <p className="call-note" style={{ color: 'var(--muted)' }}>
-                <em>{family.caveat}</em>
-              </p>
-            )}
-
-            {solution?.opening && (
-              <p className="mt-4">
-                <button className="btn" onClick={() => onNavigate(`/games?dyad=${encodeURIComponent(selected)}&region=${encodeURIComponent(region)}`)}>
-                  Open the solved game →
-                </button>
-              </p>
-            )}
-
-            {/* Show me why — the trajectory fan behind the one-line call. */}
-            {marginal.length > 1 && (
-              <Disclosure label="show me the trajectory">
-                {solution && solvedConcept ? (
-                  <FanRibbon
-                    marginal={solvedConcept.marginal.map((m) => m.distribution)}
-                    bandLabels={solution.band_labels}
-                    openingBand={solution.opening.intensity_band}
-                    typicalBand={typicalBand(solution)}
-                  />
-                ) : (
-                  <TrajectoryStrip marginal={marginal} bands={bands} bandNames={bandNames} />
-                )}
-                {solution && (
-                  <Prose className="mt-3" style={{ color: 'var(--muted)' }}>
-                    {standing ? `${standing.charAt(0).toUpperCase()}${standing.slice(1)}. ` : ''}
-                    {posture ? `Its coded record lately: ${posture}. ` : ''}
-                    {family ? `It plays ${family.label === 'ally pair' ? 'an' : 'a'} ${family.label}'s game — ${family.why}. ` : ''}
-                    {solution.opening.tilt
-                      ? 'Solved on a transition table conditioned on this pair’s own measured record.'
-                      : 'Solved on the region’s counted transition table.'}
-                  </Prose>
-                )}
-              </Disclosure>
-            )}
-          </section>
-
+          <PhaseSection
+            phase="History"
+            tagline="Where this relationship has been — its trajectory against its own baseline, precedent, and what markets did."
+            lead={lead('history')}
+          >
           {/* ── NOW — the tension trajectory ─────────────────────────────── */}
           <div className="desk-grid">
           <Beat
@@ -679,7 +622,13 @@ export default function RelationshipPage({ region, onNavigate }: { region: strin
               </p>
             )}
           </Beat>
+          </PhaseSection>
 
+          <PhaseSection
+            phase="Work"
+            tagline="How well the system has called this before — calibration, the paper book, coverage."
+            lead={lead('work')}
+          >
           {/* ── TRACK RECORD (region-wide) ───────────────────────────────── */}
           {(hasRetro || outlook?.brier_score != null || backtest?.summary || calibration?.brier != null) && (
             <Beat
@@ -837,6 +786,94 @@ export default function RelationshipPage({ region, onNavigate }: { region: strin
               )}
             </Beat>
           )}
+          </PhaseSection>
+
+          <PhaseSection
+            phase="Forecast"
+            tagline="Where tension is heading, and the market move associated with it."
+            lead={lead('forecast')}
+          >
+          {/* ── THE CALL — the forecast hero ─────────────────────────────── */}
+          <section className={`call ${forwardTrend === 'rising' ? 'call--rising' : ''}`}>
+            <div className="flex items-center justify-between gap-3 flex-wrap">
+              <span className="kicker">The call · where it’s going</span>
+              {headingType && <TensionBadge label={headingType} trend={forwardTrend} />}
+            </div>
+
+            {callLede ? (
+              <p className="call-lede">{callLede}</p>
+            ) : game === undefined ? (
+              <p className="call-lede" style={{ color: 'var(--muted)', fontStyle: 'italic' }}>
+                solving the game for this relationship…
+              </p>
+            ) : (
+              <p className="call-lede" style={{ color: 'var(--muted)', fontStyle: 'italic' }}>
+                Not enough comparable play to solve this relationship’s game yet.
+              </p>
+            )}
+
+            {call && <p className="call-odds">{call.odds}</p>}
+            {call?.course && <p className="call-note">{call.course}</p>}
+
+            {/* WHAT THE ARCHIVE MEASURED, said as what it is. This block used
+                to be headed "If it plays out, markets have moved" — which reads
+                as a prediction for THIS pair, while the numbers are medians
+                over every comparable course the region has on record. Same
+                measurement, honest label. */}
+            {moves.length > 0 ? (
+              <div className="mt-4">
+                <div className="kicker mb-1">After courses like this one, across the measured record</div>
+                {moves.map((m) => (
+                  <MoveRow key={m.name} name={m.name} pct={m.pct} sub={`${m.n} events`} />
+                ))}
+              </div>
+            ) : game && marginal.length ? (
+              <p className="call-note" style={{ color: 'var(--muted)' }}>
+                No market has enough comparable measurements to price this course.
+              </p>
+            ) : null}
+
+            {family?.caveat && (
+              <p className="call-note" style={{ color: 'var(--muted)' }}>
+                <em>{family.caveat}</em>
+              </p>
+            )}
+
+            {solution?.opening && (
+              <p className="mt-4">
+                <button className="btn" onClick={() => onNavigate(`/games?dyad=${encodeURIComponent(selected)}&region=${encodeURIComponent(region)}`)}>
+                  Open the solved game →
+                </button>
+              </p>
+            )}
+
+            {/* Show me why — the trajectory fan behind the one-line call. */}
+            {marginal.length > 1 && (
+              <Disclosure label="show me the trajectory">
+                {solution && solvedConcept ? (
+                  <FanRibbon
+                    marginal={solvedConcept.marginal.map((m) => m.distribution)}
+                    bandLabels={solution.band_labels}
+                    openingBand={solution.opening.intensity_band}
+                    typicalBand={typicalBand(solution)}
+                  />
+                ) : (
+                  <TrajectoryStrip marginal={marginal} bands={bands} bandNames={bandNames} />
+                )}
+                {solution && (
+                  <Prose className="mt-3" style={{ color: 'var(--muted)' }}>
+                    {standing ? `${standing.charAt(0).toUpperCase()}${standing.slice(1)}. ` : ''}
+                    {posture ? `Its coded record lately: ${posture}. ` : ''}
+                    {family ? `It plays ${family.label === 'ally pair' ? 'an' : 'a'} ${family.label}'s game — ${family.why}. ` : ''}
+                    {solution.opening.tilt
+                      ? 'Solved on a transition table conditioned on this pair’s own measured record.'
+                      : 'Solved on the region’s counted transition table.'}
+                  </Prose>
+                )}
+              </Disclosure>
+            )}
+          </section>
+          </PhaseSection>
         </>
       )}
     </div>
