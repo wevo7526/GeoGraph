@@ -5,6 +5,10 @@ data/*.kuzu.wal
 data/cache/
 data/raw/
 
+# Runtime state markers written by the harvest/sensor loop — not source.
+data/.gdelt-loaded/
+data/.sensor-watermark
+
 # Generated ontology artifacts (Pydantic + JSON Schema) are BUILD OUTPUTS of
 # scripts/generate_ontology.py. The LinkML YAML is the source of truth; two
 # committed copies of one model drift.
