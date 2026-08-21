@@ -32,11 +32,7 @@ export function pct(v: number | null | undefined, digits = 1): string {
 }
 
 function EmptyNote({ note }: { note: string }) {
-  return (
-    <p className="mono text-[11px] py-6" style={{ color: 'var(--muted)' }}>
-      {note}
-    </p>
-  )
+  return <p className="note-empty">{note}</p>
 }
 
 /** A time series with its OWN domain (an equity curve around $1M is a flat
@@ -437,9 +433,9 @@ export function PayoffMatrix({
           ))}
         </tbody>
       </table>
-      <p className="mono text-[11px] mt-1" style={{ color: 'var(--muted)' }}>
+      <p className="figure-note" style={{ marginTop: '0.5rem' }}>
         cells: {sides[0]}'s payoff , {sides[1]}'s payoff (stage + discounted continuation) for a {matrix.type} type ·
-        value to {sides[0]} {matrix.value.toFixed(3)} · margins: equilibrium mixtures
+        value to {sides[0]} <span className="num">{matrix.value.toFixed(3)}</span> · margins: equilibrium mixtures
       </p>
     </div>
   )

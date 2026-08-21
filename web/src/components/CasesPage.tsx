@@ -8,7 +8,7 @@ import { relationshipName } from '../lib/language'
 import { wireHeadline } from '../lib/story'
 import { useRegionLabel } from '../regions'
 import type { CaseStudyIndexEntry, Dyad, WireFeed, WireItem } from '../types'
-import { Beat, Empty, StoryHead } from '../ui'
+import { Beat, Caption, Empty, StoryHead, SubHead } from '../ui'
 
 /** Card footers show the pack's CAPTION, not its key — 'china' reads ASIA. */
 function PackTag({ pack }: { pack: string }) {
@@ -96,16 +96,12 @@ export default function CasesPage({
                     cursor: 'pointer',
                   }}
                 >
-                  <h2 className="text-xl" style={{ color: 'var(--text)' }}>
-                    {study.title}
-                  </h2>
-                  <p className="mt-2 text-sm leading-relaxed" style={{ color: 'var(--muted)' }}>
-                    {study.dek}
-                  </p>
-                  <p className="mono text-xs mt-3" style={{ color: 'var(--muted)' }}>
-                    {study.events.length} episode event{study.events.length === 1 ? '' : 's'} ·{' '}
-                    <PackTag pack={study.pack} />
-                  </p>
+                  <SubHead>{study.title}</SubHead>
+                  <Caption className="mt-2">{study.dek}</Caption>
+                  <Caption className="mt-3">
+                    <span className="num">{study.events.length}</span> episode event{study.events.length === 1 ? '' : 's'} ·{' '}
+                    <span className="kicker"><PackTag pack={study.pack} /></span>
+                  </Caption>
                 </button>
               </li>
             ))}

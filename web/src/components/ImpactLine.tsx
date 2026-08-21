@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { getEventImpact, lastFailureFor } from '../api'
 import { impactLine } from '../lib/story'
 import type { EventImpact } from '../types'
+import { Caption, Read } from '../ui'
 
 /** Measured vs expected vs surprise, one line. Empty is "not measured". */
 export default function ImpactLine({
@@ -23,19 +24,19 @@ export default function ImpactLine({
   }, [eventId])
 
   if (impact === undefined) {
-    return <p className="figure-note">Reading measured against typical…</p>
+    return <Caption>Reading measured against typical…</Caption>
   }
   if (impact === null) {
     const failure = lastFailureFor(`/api/impact/${encodeURIComponent(eventId)}`)
     return (
-      <p className="figure-note">
+      <Caption>
         {failure?.status === 404 ? 'Not measured.' : (failure?.detail ?? 'The impact read is unavailable.')}
-      </p>
+      </Caption>
     )
   }
 
   return (
-    <p className="figure-note">
+    <Read>
       {impactLine(impact)}
       {onOpenPair && (
         <>
@@ -45,6 +46,6 @@ export default function ImpactLine({
           </button>
         </>
       )}
-    </p>
+    </Read>
   )
 }

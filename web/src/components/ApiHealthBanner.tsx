@@ -22,19 +22,25 @@ export default function ApiHealthBanner() {
   return (
     <div
       role="alert"
-      className="mono text-[11px] px-4 py-2 border-b"
+      className="px-4 py-2 border-b"
       style={{
         background: 'var(--panel)',
         borderColor: 'var(--alert)',
-        color: 'var(--alert)',
+        borderBottomWidth: '2px',
       }}
     >
-      The API did not answer {newest.path.split('?')[0]}
-      {newest.status !== null ? ` (${newest.status})` : ''} — {newest.detail}.
-      {failures.length > 1 && ` ${failures.length - 1} more endpoint${
-        failures.length > 2 ? 's are' : ' is'
-      } failing.`}{' '}
-      Empty panels below may be this outage, not an empty archive.
+      <p
+        className="text-caption"
+        style={{ color: 'var(--alert)', maxWidth: 'var(--measure-prose)', margin: 0 }}
+      >
+        <span className="kicker" style={{ color: 'var(--alert)' }}>API unreachable</span>{' '}
+        The API did not answer <span className="mono">{newest.path.split('?')[0]}</span>
+        {newest.status !== null ? <> (<span className="num">{newest.status}</span>)</> : ''} — {newest.detail}.
+        {failures.length > 1 && ` ${failures.length - 1} more endpoint${
+          failures.length > 2 ? 's are' : ' is'
+        } failing.`}{' '}
+        Empty panels below may be this outage, not an empty archive.
+      </p>
     </div>
   )
 }

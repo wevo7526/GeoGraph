@@ -61,7 +61,7 @@ import { actorsFromPairId } from '../lib/ids'
 import { BoxRow, Fan, LineBand } from './charts/Charts'
 import type { Point } from './charts/Charts'
 import { Bars, FanRibbon, MultiLine, pct } from './charts/Kit'
-import { Beat, Disclosure, Empty, MoveRow, StatLine, StoryHead, TensionBadge } from '../ui'
+import { Beat, Caption, Disclosure, Empty, MoveRow, Prose, StatLine, StoryHead, TensionBadge } from '../ui'
 
 function dyadFromHash(): string {
   const q = window.location.hash.split('?')[1]
@@ -319,7 +319,7 @@ export default function RelationshipPage({ region, onNavigate }: { region: strin
   return (
     <div className="desk-page">
       {linkNote && (
-        <p className="mono text-[11px] mb-3" style={{ color: 'var(--alert)' }}>
+        <p className="figure-note mb-3" style={{ color: 'var(--alert)' }}>
           {linkNote}
         </p>
       )}
@@ -375,11 +375,11 @@ export default function RelationshipPage({ region, onNavigate }: { region: strin
             {callLede ? (
               <p className="call-lede">{callLede}</p>
             ) : game === undefined ? (
-              <p className="call-lede" style={{ color: 'var(--muted)' }}>
+              <p className="call-lede" style={{ color: 'var(--muted)', fontStyle: 'italic' }}>
                 solving the game for this relationship…
               </p>
             ) : (
-              <p className="call-lede" style={{ color: 'var(--muted)' }}>
+              <p className="call-lede" style={{ color: 'var(--muted)', fontStyle: 'italic' }}>
                 Not enough comparable play to solve this relationship’s game yet.
               </p>
             )}
@@ -433,14 +433,14 @@ export default function RelationshipPage({ region, onNavigate }: { region: strin
                   <TrajectoryStrip marginal={marginal} bands={bands} bandNames={bandNames} />
                 )}
                 {solution && (
-                  <p className="text-sm mt-3" style={{ color: 'var(--muted)', maxWidth: '64ch' }}>
+                  <Prose className="mt-3" style={{ color: 'var(--muted)' }}>
                     {standing ? `${standing.charAt(0).toUpperCase()}${standing.slice(1)}. ` : ''}
                     {posture ? `Its coded record lately: ${posture}. ` : ''}
                     {family ? `It plays ${family.label === 'ally pair' ? 'an' : 'a'} ${family.label}'s game — ${family.why}. ` : ''}
                     {solution.opening.tilt
                       ? 'Solved on a transition table conditioned on this pair’s own measured record.'
                       : 'Solved on the region’s counted transition table.'}
-                  </p>
+                  </Prose>
                 )}
               </Disclosure>
             )}
@@ -530,7 +530,7 @@ export default function RelationshipPage({ region, onNavigate }: { region: strin
                       })()}
                     </div>
                   ) : (
-                    <p className="text-xs" style={{ color: 'var(--muted)' }}>{precedent.markets_note ?? 'no measured market effects for this pair'}</p>
+                    <Caption>{precedent.markets_note ?? 'no measured market effects for this pair'}</Caption>
                   )}
                 </div>
               </div>
@@ -548,7 +548,7 @@ export default function RelationshipPage({ region, onNavigate }: { region: strin
               <Empty>reading the archive through this pair…</Empty>
             ) : whatIf && whatIf.analogues.length ? (
               <>
-                <p className="text-sm" style={{ maxWidth: '64ch' }}>
+                <Prose>
                   {whatIf.hypothetical.label} between them would read as{' '}
                   {whatIf.dyad.escalation_direction === 'escalating'
                     ? 'a departure above this pair’s own usual level'
@@ -556,7 +556,7 @@ export default function RelationshipPage({ region, onNavigate }: { region: strin
                       ? 'a step down from this pair’s own usual level'
                       : 'in line with this pair’s own usual level'}
                   .
-                </p>
+                </Prose>
                 <ul className="mt-4 space-y-2">
                   {whatIf.analogues.map((row) => (
                     <li key={row.event_id} className="text-sm">
@@ -698,11 +698,11 @@ export default function RelationshipPage({ region, onNavigate }: { region: strin
                 </div>
               )}
               {hasRetro && retro && (
-                <p className="text-sm">
+                <Prose>
                   When the system flagged a period as likely to run hot, it did{' '}
                   <strong>{Math.round(retro.hit_rate! * 100)}%</strong> of the time — versus{' '}
                   {Math.round(retro.base_rate! * 100)}% for an average period.
-                </p>
+                </Prose>
               )}
 
               {/* THE SCOREBOARD. A near-term call asks a three-year question,
@@ -722,7 +722,7 @@ export default function RelationshipPage({ region, onNavigate }: { region: strin
               {calibration?.brier != null && (
                 <div className="mt-4">
                   {calibration.recent?.brier != null ? (
-                    <p className="text-sm" style={{ maxWidth: '64ch' }}>
+                    <Prose>
                       {calibration.recent.skill != null && calibration.recent.skill > 0 ? (
                         <>
                           Over the last {calibration.recent.years} years these calls have beaten the
@@ -740,11 +740,11 @@ export default function RelationshipPage({ region, onNavigate }: { region: strin
                           answer actually varied, it does.
                         </>
                       )}
-                    </p>
+                    </Prose>
                   ) : (
-                    <p className="text-sm">
+                    <Prose>
                       Scored across {calibration.calls} calls the archive can settle.
-                    </p>
+                    </Prose>
                   )}
                   <p className="figure-note">
                     Brier score {calibration.recent?.brier?.toFixed(3) ?? calibration.brier.toFixed(3)}{' '}
@@ -830,9 +830,10 @@ export default function RelationshipPage({ region, onNavigate }: { region: strin
               )}
 
               {outlook?.brier_score != null && (
-                <p className="mono text-[10px] mt-3" style={{ color: 'var(--muted)' }}>
-                  near-term accuracy score {outlook.brier_score.toFixed(3)} (lower is better)
-                </p>
+                <Caption className="mt-3">
+                  near-term accuracy score{' '}
+                  <span className="num">{outlook.brier_score.toFixed(3)}</span> (lower is better)
+                </Caption>
               )}
             </Beat>
           )}
@@ -881,7 +882,7 @@ function TrajectoryStrip({
                   </td>
                 )
               })}
-              <td className="mono pl-2" style={{ color: 'var(--muted)', whiteSpace: 'nowrap' }}>
+              <td className="pl-2" style={{ color: 'var(--muted)', whiteSpace: 'nowrap' }}>
                 {bandLabel(Math.round(m.expected_band), bands, bandNames)}
               </td>
             </tr>
@@ -933,18 +934,23 @@ function TimelineEntry({ ev }: { ev: TimelineEvent }) {
     <div className="event-row">
       <button className="w-full text-left" onClick={() => setOpen((v) => !v)} aria-expanded={open}>
         <div className="flex items-baseline gap-3 flex-wrap">
-          <span className="mono text-xs" style={{ color: 'var(--muted)' }}>{ev.date}</span>
-          <span className="text-sm" style={{ flex: '1 1 auto', minWidth: 0 }}>{eventHeadline(ev)}</span>
+          <span className="kicker" style={{ flex: 'none' }}>{ev.date}</span>
+          <span className="text-body" style={{ flex: '1 1 auto', minWidth: 0 }}>{eventHeadline(ev)}</span>
           {ev.goldstein != null && (
-            <span className="mono text-[11px]" style={{ color: dirColor }}>
-              {DIRECTION_WORD[dir ?? 'stable'] ?? dir} · {ev.goldstein.toFixed(1)} on the −10…+10 scale
-              {ev.escalation_magnitude != null
-                ? ` · ${ev.escalation_magnitude.toFixed(1)} from this pair’s norm`
-                : ''}
+            <span className="text-caption" style={{ color: dirColor }}>
+              {DIRECTION_WORD[dir ?? 'stable'] ?? dir} ·{' '}
+              <span className="num">{ev.goldstein.toFixed(1)}</span> on the −10…+10 scale
+              {ev.escalation_magnitude != null ? (
+                <>
+                  {' '}· <span className="num">{ev.escalation_magnitude.toFixed(1)}</span> from this pair’s norm
+                </>
+              ) : (
+                ''
+              )}
             </span>
           )}
           {ev.first_mover && (
-            <span className="mono text-[11px]" style={{ color: 'var(--muted)' }}>{ev.first_mover} reacted first</span>
+            <span className="text-caption" style={{ color: 'var(--muted)' }}>{ev.first_mover} reacted first</span>
           )}
         </div>
       </button>
@@ -957,7 +963,7 @@ function TimelineEntry({ ev }: { ev: TimelineEvent }) {
           ))}
         </div>
       ) : (
-        <p className="text-xs mt-1" style={{ color: 'var(--muted)' }}>no measured market move</p>
+        <Caption className="mt-1">no measured market move</Caption>
       )}
       {open && (
         <div className="mt-2 boxed p-3">
@@ -987,7 +993,7 @@ function TimelineEntry({ ev }: { ev: TimelineEvent }) {
                   ))}
                 </tbody>
               </table>
-              <p className="text-[10px] italic mt-2" style={{ color: 'var(--muted)' }}>{impact.boundary_statement}</p>
+              <p className="text-caption italic mt-2" style={{ color: 'var(--muted)' }}>{impact.boundary_statement}</p>
             </div>
           )}
         </div>
