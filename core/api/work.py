@@ -1356,6 +1356,10 @@ def _narrate_worklist(panel: Any, conn: Any, name: str) -> list[dict[str, Any]]:
         panel, name, scope="region", version=scenarios.PAYLOAD_VERSION
     )
     if region_map is not None:
+        # Re-derive standings before narrating so the AI packet (and thus the
+        # regenerated narrative) reflects a standing correction that landed
+        # without a re-solve. Fingerprint moves -> the narrate job rewrites.
+        scenarios.refresh_region_standings(region_map, conn)
         work.append({"surface": "game_region", "subject": "", "payload": region_map})
         ranking = region_map.get("ranking") or []
         top = [str(r.get("dyad_id")) for r in ranking[:NARRATE_TOP_DYADS] if r.get("dyad_id")]
@@ -1366,6 +1370,7 @@ def _narrate_worklist(panel: Any, conn: Any, name: str) -> list[dict[str, Any]]:
             )
             if sol is None:
                 continue
+            scenarios.refresh_dyad_standing(sol, conn, dyad)
             work.append({"surface": "game_dyad", "subject": dyad, "payload": sol})
             work.append({
                 "surface": "relationship", "subject": dyad,
@@ -1435,9 +1440,12 @@ def _narrate_payload(
     if surface == "network":
         return _network_compact(conn, region)
     if surface == "game_region":
-        return pg_store.game_solution(
+        region_map = pg_store.game_solution(
             panel, region, scope="region", version=scenarios.PAYLOAD_VERSION
         )
+        if region_map is not None:
+            scenarios.refresh_region_standings(region_map, conn)
+        return region_map
     if surface in ("game_dyad", "relationship"):
         sol = pg_store.game_solution(
             panel, region, scope="dyad", dyad_id=subject,
@@ -1445,6 +1453,7 @@ def _narrate_payload(
         )
         if sol is None:
             return None
+        scenarios.refresh_dyad_standing(sol, conn, subject)
         return sol if surface == "game_dyad" else _relationship_bundle(
             conn, panel, region, subject, sol
         )

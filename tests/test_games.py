@@ -1238,6 +1238,54 @@ def test_a_pact_between_rivals_does_not_outrank_the_rivalry(monkeypatch):
     assert "allies" in said  # both are named; neither is hidden
 
 
+def test_refresh_region_standings_corrects_a_stale_baked_map(monkeypatch):
+    # PROD SCENARIO: a map persisted by the old code has the stale
+    # "rivalry + alliance" standing baked into its ranking. The read-time
+    # overlay must correct it from the graph WITHOUT a re-solve (a
+    # PAYLOAD_VERSION bump would re-solve everything and OOM the container).
+    from core.games import scenarios
+
+    region_map = {
+        "as_of": "2026-06-30",
+        "ranking": [{
+            "dyad_id": "dyad:cow-365--cow-369",
+            "dyad_name": "Russia–Ukraine",
+            "standing": {"relations": [
+                {"relation_type": "rivalry", "since": "2014-02-27"},
+                {"relation_type": "alliance", "since": "1995-02-10"},
+            ]},
+        }],
+    }
+    monkeypatch.setattr(
+        scenarios.opening_module, "standing",
+        lambda conn, did, as_of: {"relations": [
+            {"relation_type": "rivalry", "since": "2014-02-27"}]},
+    )
+    scenarios.refresh_region_standings(region_map, object())
+    kinds = [r["relation_type"] for r in region_map["ranking"][0]["standing"]["relations"]]
+    assert kinds == ["rivalry"]  # the lapsed alliance is gone, no re-solve
+
+
+def test_refresh_dyad_standing_corrects_a_stale_baked_solution(monkeypatch):
+    from core.games import scenarios
+
+    sol = {
+        "as_of": "2026-06-30",
+        "opening": {"standing": {"relations": [
+            {"relation_type": "rivalry", "since": "2014-02-27"},
+            {"relation_type": "alliance", "since": "1995-02-10"},
+        ]}},
+    }
+    monkeypatch.setattr(
+        scenarios.opening_module, "standing",
+        lambda conn, did, as_of: {"relations": [
+            {"relation_type": "rivalry", "since": "2014-02-27"}]},
+    )
+    scenarios.refresh_dyad_standing(sol, object(), "dyad:cow-365--cow-369")
+    kinds = [r["relation_type"] for r in sol["opening"]["standing"]["relations"]]
+    assert kinds == ["rivalry"]
+
+
 def test_a_rivalry_supersedes_an_alliance_that_predates_it(monkeypatch):
     # RUSSIA-UKRAINE, the launch-blocking lapse. COW records the 1995 CIS defence
     # pact as right-censored (no end year), and the pack declares the pair a

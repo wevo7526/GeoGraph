@@ -141,6 +141,10 @@ def region_scenarios(
                         ),
                     }
                 if stored is not None:
+                    # Standing is a graph fact, re-derived at read so a
+                    # correction reaches this persisted map without a re-solve
+                    # (a PAYLOAD_VERSION bump would re-solve everything and OOM).
+                    scenarios.refresh_region_standings(stored, request.app.state.graph)
                     narr = narrative_module.served_narrative(
                         panel, surface="game_region", region=region,
                         subject_id="", payload=stored,
@@ -199,6 +203,9 @@ def dyad_solution(
                         ),
                     }
                 if stored is not None:
+                    # See the region endpoint: standing is re-derived at read so
+                    # a correction lands without a re-solve.
+                    scenarios.refresh_dyad_standing(stored, request.app.state.graph, dyad)
                     narr = narrative_module.served_narrative(
                         panel, surface="game_dyad", region=region,
                         subject_id=dyad, payload=stored,

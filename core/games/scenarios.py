@@ -23,6 +23,7 @@ Persistence lives in `core/panel/pg_store.py` (`game_solutions`), written by
 
 from __future__ import annotations
 
+import contextlib
 from typing import Any
 
 import numpy as np
@@ -81,7 +82,7 @@ REGION_DYADS = 12
 #: does not change this shape and must not bump the version: a bump makes
 #: every region stale and the games job re-solves them on boot, which is
 #: what OOM-killed the 8 GB container on 2026-08-18 (peak 7.76 GB).
-PAYLOAD_VERSION = "2026-08-21.1"
+PAYLOAD_VERSION = "2026-08-17.2"
 
 #: A step's market row needs this many measurements before the scenario
 #: names it as an implication (the pricing module's own thinness bar).
@@ -1323,3 +1324,71 @@ def explain_region(aggregate: dict[str, Any]) -> list[str]:
         f"dyad-quarters. " + BOUNDARY_STATEMENT
     )
     return out
+
+
+# ── read-time standing overlay ──────────────────────────────────────────────
+#
+# A pair's DECLARED STANDING is a graph fact (the curated RELATES_TO web), not an
+# output of the fitted game, so it is cheap to re-derive and independent of the
+# solve. It is re-derived when a persisted map is SERVED rather than only baked
+# at solve time, for one reason: a standing correction (e.g. a live rivalry that
+# supersedes a lapsed COW alliance) must reach every already-persisted map. The
+# only alternative is bumping PAYLOAD_VERSION, which forces the games job to
+# re-solve every region at once — a full re-solve peaks near 8 GB and OOM-kills
+# the container (2026-08-18, and again on 2026-08-21). The overlay is a handful
+# of graph lookups per request; the re-solve is the whole engine. This is the
+# same read-time pattern the GDELT 2.0 live overlay already uses.
+
+
+def refresh_region_standings(region_map: dict[str, Any], graph_conn: Any) -> dict[str, Any]:
+    """Re-derive each ranked pair's declared standing from the graph and, if any
+    changed, regenerate the deterministic explanation so its prose agrees. No-op
+    without a graph. Mutates and returns the map."""
+    if graph_conn is None or not isinstance(region_map, dict):
+        return region_map
+    as_of = str(region_map.get("as_of") or "")
+    if not as_of:
+        return region_map
+    changed = False
+    for row in region_map.get("ranking") or []:
+        dyad_id = row.get("dyad_id")
+        if not dyad_id:
+            continue
+        try:
+            fresh = opening_module.standing(graph_conn, str(dyad_id), as_of=as_of)
+        except Exception:  # noqa: BLE001 - a standing lookup must never break serving
+            continue
+        if fresh != row.get("standing"):
+            row["standing"] = fresh
+            changed = True
+    if changed:
+        # Keep the (now-corrected) ranking even if the prose rebuild fails.
+        with contextlib.suppress(Exception):
+            region_map["explanation"] = explain_region(region_map)
+    return region_map
+
+
+def refresh_dyad_standing(
+    solution: dict[str, Any], graph_conn: Any, dyad_id: str
+) -> dict[str, Any]:
+    """Re-derive one pair's declared standing from the graph and, if it changed,
+    regenerate the dyad explanation. No-op without a graph. Mutates and returns
+    the solution."""
+    if graph_conn is None or not isinstance(solution, dict):
+        return solution
+    op = solution.get("opening")
+    if not isinstance(op, dict):
+        return solution
+    as_of = str(solution.get("as_of") or op.get("as_of") or "")
+    if not as_of:
+        return solution
+    try:
+        fresh = opening_module.standing(graph_conn, str(dyad_id), as_of=as_of)
+    except Exception:  # noqa: BLE001 - a standing lookup must never break serving
+        return solution
+    if fresh != op.get("standing"):
+        op["standing"] = fresh
+        # Keep the corrected standing even if the prose rebuild fails.
+        with contextlib.suppress(Exception):
+            solution["explanation"] = explain(solution)
+    return solution
