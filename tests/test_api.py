@@ -94,6 +94,27 @@ def test_health_is_200_and_names_what_is_switched_off(client):
     # Security headers on every API response.
     assert client.get("/api/health").headers.get("x-content-type-options") == "nosniff"
 
+
+def test_a_gdelt_404_does_not_take_the_live_wire_down(client, monkeypatch):
+    """The overlay failing is not the archive failing. Intel's banner used to
+    read 'API unreachable' because /wire/live 503'd on GDELT's publish race."""
+    from core.api.routers import events as events_router
+    from core.wire import live as live_overlay
+
+    events_router._live_cache.update({"at": 0.0, "payload": None, "region": None})
+
+    def boom(_pack, **_kwargs):
+        raise RuntimeError("HTTP Error 404: Not Found")
+
+    monkeypatch.setattr(live_overlay, "ensure_pack", boom)
+    response = client.get("/api/wire/live?region=mena")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["rows"] == []
+    assert body["stream_error"]
+    assert "HTTP Error" not in body["stream_error"]
+    assert "404" not in body["stream_error"]
+
 def test_health_survives_a_graph_it_cannot_open(tmp_path, monkeypatch):
     # THE CONTAINER RULE: health must answer even when nothing else can, or a
     # broken graph becomes a restart loop instead of a diagnosis.

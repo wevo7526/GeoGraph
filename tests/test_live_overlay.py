@@ -214,6 +214,8 @@ def test_the_live_feed_does_not_attach_a_strategy_contract():
     assert "measured" in source
     assert "transmission map" in source
     assert "ensure_pack" in source
+    assert "stream_error" in source
+    assert "the GDELT 2.0 stream did not answer:" not in source
 
 
 def test_case_and_impact_read_the_live_overlay_after_graph_and_corpus_miss():

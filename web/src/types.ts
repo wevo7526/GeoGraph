@@ -228,6 +228,8 @@ export interface WireLiveFeed {
   cached: boolean
   rows: WireLiveItem[]
   method: string
+  /** Overlay-only. The archive wire still answers when this is set. */
+  stream_error?: string | null
 }
 
 /** The globe board: three layers that answer three different questions.

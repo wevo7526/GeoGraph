@@ -133,9 +133,10 @@ def score(
 def refresh_pack(pack: Any) -> dict[str, Any]:
     """Poll GDELT 2.0 for one roster, score against the snapshot, cache."""
     global _PUBLISHED
+    previous_payload = _PACK.get(pack.name) or {}
     previous = {
         str(row.get("node_id") or ""): row
-        for row in ((_PACK.get(pack.name) or {}).get("rows") or [])
+        for row in (previous_payload.get("rows") or [])
         if row.get("node_id")
     }
     roster = {
@@ -143,6 +144,12 @@ def refresh_pack(pack: Any) -> dict[str, Any]:
         for a in pack.actors if a.get("iso3")
     }
     polled = stream.poll(pack, roster)
+    if (polled.get("error") or polled.get("skipped")) and previous_payload.get("rows"):
+        kept = dict(previous_payload)
+        kept["stream_error"] = polled.get("error") or polled.get("skipped")
+        _PACK[pack.name] = kept
+        _PACK_AT[pack.name] = time.time()
+        return kept
     published = str(polled.get("published") or "")
     if published:
         _PUBLISHED = published
@@ -156,6 +163,8 @@ def refresh_pack(pack: Any) -> dict[str, Any]:
         if old and old.get("measured"):
             row["measured"] = old["measured"]
     payload = {**polled, "rows": rows}
+    if polled.get("error") or polled.get("skipped"):
+        payload["stream_error"] = polled.get("error") or polled.get("skipped")
     _PACK[pack.name] = payload
     _PACK_AT[pack.name] = time.time()
     return payload

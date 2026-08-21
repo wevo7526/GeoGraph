@@ -811,10 +811,18 @@ def wire_live(region: str = "mena", limit: int = Query(30, ge=1, le=100)) -> dic
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     try:
         polled = live_overlay.ensure_pack(pack)
-    except Exception as exc:  # noqa: BLE001 - a live feed failing is not a 500
-        raise HTTPException(
-            status_code=503, detail=f"the GDELT 2.0 stream did not answer: {exc}"
-        ) from exc
+    except Exception as exc:  # noqa: BLE001 - overlay down is not the archive down
+        from core.ingestion import stream as gdelt_stream
+
+        polled = {
+            "rows": [],
+            "published": None,
+            "fetched_at": None,
+            "scanned": 0,
+            "kept": 0,
+            "stream_error": gdelt_stream.public_error(str(exc))
+            or "GDELT 2.0 did not answer",
+        }
 
     # The measured record, from the persisted market story — no recomputation
     # on a request thread, and no number invented here.
@@ -924,6 +932,7 @@ def wire_live(region: str = "mena", limit: int = Query(30, ge=1, le=100)) -> dic
         "kept": polled.get("kept"),
         "rows": rows,
         "cached": False,
+        "stream_error": polled.get("stream_error") or polled.get("error") or polled.get("skipped"),
         "method": (
             "Newest 15-minute GDELT 2.0 export, scored against each pair's "
             "usual level in the frozen archive. `measured` on a row is this "

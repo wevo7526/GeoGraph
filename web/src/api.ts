@@ -73,6 +73,7 @@ export function onApiFailures(listener: () => void): () => void {
 export function bannerFailures(): ApiFailure[] {
   return [...failures.values()]
     .filter((f) => f.status === null || f.status >= 500)
+    .filter((f) => !f.path.split('?')[0].startsWith('/api/wire/live'))
     .sort((a, b) => b.at - a.at)
 }
 

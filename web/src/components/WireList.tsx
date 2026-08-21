@@ -261,6 +261,14 @@ export function WireFeedBeats({
           ))}
           {liveFeed.method && <p className="figure-note">{liveFeed.method}</p>}
         </Beat>
+      ) : liveFeed?.stream_error ? (
+        <Beat
+          title="What just arrived"
+          major
+          aside="The live overlay is waiting on GDELT 2.0. The archive below is the scored record, not an empty desk."
+        >
+          <p className="figure-note">{liveFeed.stream_error}</p>
+        </Beat>
       ) : null}
 
       <div className="mt-8">
