@@ -357,7 +357,7 @@ export default function RelationshipPage({ region, onNavigate }: { region: strin
           <div className="flex flex-col items-end gap-2">
             {dyads && dyads.length > 0 && (
               <select
-                className="region-select mono text-xs"
+                className="region-select mono text-caption"
                 value={selected}
                 onChange={(e) => {
                   setSelected(e.target.value)
@@ -384,6 +384,29 @@ export default function RelationshipPage({ region, onNavigate }: { region: strin
         <Empty>no relationships in this region yet</Empty>
       ) : (
         <>
+          {/* ANSWER-FIRST — the page's hero is a forecast, so it opens with a
+              compact call (heading + trend + one line + the key market move)
+              above the History/Work/Forecast argument. The full plate lives in
+              the Forecast phase below. */}
+          {callLede && (
+            <section
+              className={`answer-first ${forwardTrend === 'rising' ? 'answer-first--rising' : ''}`}
+              aria-label="The call"
+            >
+              <div className="flex items-center justify-between gap-3 flex-wrap">
+                <span className="kicker">The call · where it’s going</span>
+                {headingType && <TensionBadge label={headingType} trend={forwardTrend} />}
+              </div>
+              <p className="call-lede">{callLede}</p>
+              {call?.odds && <p className="call-odds">{call.odds}</p>}
+              {moves[0] && (
+                <div className="mt-2">
+                  <MoveRow name={moves[0].name} pct={moves[0].pct} sub={`${moves[0].n} events`} />
+                </div>
+              )}
+            </section>
+          )}
+
           <PhaseSection
             phase="History"
             tagline="Where this relationship has been — its trajectory against its own baseline, precedent, and what markets did."
@@ -502,13 +525,13 @@ export default function RelationshipPage({ region, onNavigate }: { region: strin
                 </Prose>
                 <ul className="mt-4 space-y-2">
                   {whatIf.analogues.map((row) => (
-                    <li key={row.event_id} className="text-sm">
-                      <span className="mono text-xs" style={{ color: 'var(--muted)' }}>
+                    <li key={row.event_id} className="text-caption">
+                      <span className="mono text-label" style={{ color: 'var(--muted)' }}>
                         {String(row.event_time).slice(0, 10)}
                       </span>
                       {' '}
                       {row.name}
-                      <span className="mono text-xs" style={{ color: 'var(--muted)' }}>
+                      <span className="mono text-label" style={{ color: 'var(--muted)' }}>
                         {' '}· match {Math.round(row.similarity * 100)}
                       </span>
                     </li>
@@ -534,7 +557,7 @@ export default function RelationshipPage({ region, onNavigate }: { region: strin
                   {stories === undefined ? (
                     <button
                       type="button"
-                      className="article-link text-sm"
+                      className="article-link text-caption"
                       onClick={() => {
                         const pair = actorsFromPairId(selected)
                         const cameo = whatIf.hypothetical.cameo
@@ -555,8 +578,8 @@ export default function RelationshipPage({ region, onNavigate }: { region: strin
                   ) : stories && (stories.proposed?.length ?? 0) > 0 ? (
                     <ul className="space-y-2">
                       {stories.proposed!.map((row) => (
-                        <li key={row.event_id} className="text-sm">
-                          <span className="mono text-xs" style={{ color: 'var(--muted)' }}>
+                        <li key={row.event_id} className="text-caption">
+                          <span className="mono text-label" style={{ color: 'var(--muted)' }}>
                             {String(row.event_time).slice(0, 10)}
                           </span>
                           {' '}
@@ -565,7 +588,7 @@ export default function RelationshipPage({ region, onNavigate }: { region: strin
                       ))}
                     </ul>
                   ) : (
-                    <p className="text-sm" style={{ color: 'var(--muted)' }}>
+                    <p className="text-caption" style={{ color: 'var(--muted)' }}>
                       {stories?.proposed_note ?? 'No additional stories cleared the era gate.'}
                     </p>
                   )}
@@ -702,7 +725,7 @@ export default function RelationshipPage({ region, onNavigate }: { region: strin
                   </p>
                   {(calibration.recent?.reliability ?? calibration.reliability ?? []).length > 0 && (
                     <div className="mt-2 scroll-x">
-                      <table className="text-xs mono">
+                      <table className="text-label mono">
                         <thead>
                           <tr style={{ color: 'var(--muted)' }}>
                             <th className="text-left pr-3 font-normal">when it said</th>
@@ -895,7 +918,7 @@ function TrajectoryStrip({
 }) {
   return (
     <div className="scroll-x">
-      <table className="text-xs" style={{ borderCollapse: 'collapse' }}>
+      <table className="text-label" style={{ borderCollapse: 'collapse' }}>
         <tbody>
           {marginal.map((m) => (
             <tr key={m.period}>
@@ -1009,7 +1032,7 @@ function TimelineEntry({ ev }: { ev: TimelineEvent }) {
           {impact && (
             <div>
               <div className="kicker mb-1">Measured · expected (base rate over {impact.precedents.n} precedents) · surprise</div>
-              <table className="mono text-[11px] w-full" style={{ borderCollapse: 'collapse' }}>
+              <table className="mono text-label w-full" style={{ borderCollapse: 'collapse' }}>
                 <thead>
                   <tr style={{ color: 'var(--muted)' }}>
                     <th className="text-left font-normal">market</th><th className="text-right font-normal">measured</th>

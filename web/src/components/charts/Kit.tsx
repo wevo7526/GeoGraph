@@ -239,7 +239,7 @@ export function Bars({
         const share = Math.min(1, Math.abs(r.value) / top)
         const color = signed ? (r.value >= 0 ? 'var(--accent)' : 'var(--alert)') : 'var(--accent)'
         return (
-          <div key={r.key} className={`flex items-center gap-3 text-xs ${onPick ? 'cursor-pointer' : ''}`}
+          <div key={r.key} className={`flex items-center gap-3 text-caption ${onPick ? 'cursor-pointer' : ''}`}
                onClick={onPick ? () => onPick(r.key) : undefined} title={r.sub ?? r.label}>
             <span className="w-44 shrink-0 truncate">{r.label}</span>
             <span className="relative flex-1 h-3" style={{ background: 'var(--panel)' }}>
@@ -277,7 +277,7 @@ export function BandHeat({
   const bands = bandLabels.length
   return (
     <div className="scroll-x">
-      <table className="text-[11px] mono" style={{ borderCollapse: 'separate', borderSpacing: 2, minWidth: 420 }}>
+      <table className="text-label mono" style={{ borderCollapse: 'separate', borderSpacing: 2, minWidth: 420 }}>
         <thead>
           <tr>
             <th className="text-left font-normal pr-2" style={{ color: 'var(--muted)' }}></th>
@@ -378,7 +378,7 @@ export function MultiLine({
           </g>
         )}
       </svg>
-      <div className="flex flex-wrap gap-4 mono text-[11px] mt-1" style={{ color: 'var(--muted)' }}>
+      <div className="flex flex-wrap gap-4 mono text-label mt-1" style={{ color: 'var(--muted)' }}>
         {series.map((s) => (
           <span key={s.name} className="inline-flex items-center gap-2">
             <span style={{ width: 18, height: 0, borderTop: `2px ${s.dash ? 'dashed' : 'solid'} ${s.color}` }} />
@@ -404,7 +404,7 @@ export function PayoffMatrix({
   const weight = (p: number) => `color-mix(in srgb, var(--accent) ${Math.round(p * 70)}%, var(--ground))`
   return (
     <div className="scroll-x">
-      <table className="text-[11px] mono" style={{ borderCollapse: 'separate', borderSpacing: 2 }}>
+      <table className="text-label mono" style={{ borderCollapse: 'separate', borderSpacing: 2 }}>
         <thead>
           <tr>
             <th className="font-normal text-left pr-2" style={{ color: 'var(--muted)' }}>{sides[0]} ↓ / {sides[1]} →</th>
@@ -840,13 +840,13 @@ export function Tiles({ items }: { items: Array<{ label: string; value: string; 
     <div className="grid grid-cols-2 sm:grid-cols-4 gap-x-6 gap-y-4">
       {items.map((it) => (
         <div key={it.label} className="flex flex-col">
-          <span className="kicker">{it.label}</span>
+          <span className="tile-label">{it.label}</span>
           <span className="figure text-2xl leading-tight" style={{
             color: it.tone === 'gain' ? 'var(--accent)' : it.tone === 'loss' ? 'var(--alert)' : 'var(--text)',
           }}>
             {it.value}
           </span>
-          {it.sub && <span className="mono text-[11px]" style={{ color: 'var(--muted)' }}>{it.sub}</span>}
+          {it.sub && <span className="tile-sub">{it.sub}</span>}
         </div>
       ))}
     </div>

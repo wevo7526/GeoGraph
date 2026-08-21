@@ -298,11 +298,15 @@ export function PhaseSection({
   lead?: SurfaceNarrativeLead | null
   children: ReactNode
 }) {
+  // When the AI lead is present it IS the section's opening line, so the static
+  // tagline would just restate it — one tier of the meta-data wall. Show the
+  // tagline only as the fallback framing when there is no lead.
+  const hasLead = Boolean(lead?.prose)
   return (
     <section className="phase">
       <div className="phase-head">
         <span className="phase-label">{phase}</span>
-        {tagline && <span className="phase-tagline">{tagline}</span>}
+        {tagline && !hasLead && <span className="phase-tagline">{tagline}</span>}
       </div>
       {lead?.prose && (
         <NarrativeLead

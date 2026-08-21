@@ -544,6 +544,29 @@ body {
 .kicker--gain { color: var(--accent); }
 .kicker--loss { color: var(--alert); }
 
+/* Tile label — the page's secondary anchor beneath the big figure, so it reads
+   a shade stronger than a passing kicker: same mono-caps register, but full ink
+   and slightly tighter tracking. Its sub sits on the type floor. */
+.tile-label {
+  font-family: ui-monospace, 'Cascadia Code', Consolas, monospace;
+  font-size: var(--type-kicker);
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--text);
+  font-weight: 600;
+}
+.tile-sub {
+  font-family: ui-monospace, 'Cascadia Code', Consolas, monospace;
+  font-size: var(--type-micro);
+  color: var(--muted);
+}
+/* The event count trailing a figure in the market-in-full table — quiet, on the
+   type floor, so the median stays the anchor. */
+.cell-count {
+  font-size: var(--type-micro);
+  color: var(--muted);
+}
+
 /* ── TEXT-HIERARCHY HELPERS (2026-08-21) ─────────────────────────────────────
    The serif-register primitives every page composes, so prose stops reaching
    for `text-sm`, an unclassed <p>, or an inline maxWidth. Each is a rung of the
@@ -822,12 +845,16 @@ input[type='range'].timeline:focus-visible {
   margin-top: 1.5rem;
   align-items: start;
 }
+/* The grid's own gap spaces its beats at every width. Beats keep their large
+   top margin only when they stack in normal flow, not inside this grid — so a
+   grid beat's margin is zeroed at ALL widths (it used to be zeroed only >=880px,
+   which double-spaced the top row on narrow viewports). */
+.desk-grid > .beat {
+  margin-top: 0;
+}
 @media (min-width: 880px) {
   .desk-grid {
     grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
-  }
-  .desk-grid > .beat {
-    margin-top: 0;
   }
 }
 /* Intel's globe wants a narrow rail, not a 50/50 split. */
@@ -977,27 +1004,28 @@ input[type='range'].timeline:focus-visible {
   max-width: var(--measure-note);
 }
 
-/* The desk's AI lead for a phase — the argument, set as the reading column it
-   is. A left accent rule marks it as composed prose (the diagnosis), distinct
-   from the deterministic beats below; the provenance line keeps section 17
-   honest. */
+/* The desk's AI lead for a phase — the argument, set as the section's opening
+   prose. It reads as prose, not a boxed alert: a thin accent hairline marks it
+   as composed (the diagnosis) without a heavy left rule competing with the
+   heading beside it. The provenance line keeps section 17 honest, demoted to a
+   single quiet line. */
 .narrative-lead {
-  border-left: 3px solid var(--accent);
-  padding-left: 1.1rem;
-  margin: 0 0 1.75rem;
+  border-left: 2px solid color-mix(in srgb, var(--accent) 55%, transparent);
+  padding-left: 1rem;
+  margin: 0 0 1.5rem;
 }
 .narrative-lead .prose-body {
   margin: 0 0 0.85rem;
 }
 .narrative-lead .prose-body:last-of-type {
-  margin-bottom: 0.6rem;
+  margin-bottom: 0.5rem;
 }
 .narrative-prov {
   margin: 0;
   font-family: ui-monospace, 'Cascadia Code', Consolas, monospace;
-  font-size: 10.5px;
+  font-size: var(--type-micro);
   letter-spacing: 0.04em;
-  color: var(--muted);
+  color: var(--faint, var(--muted));
   max-width: var(--measure-prose);
 }
 
@@ -1008,6 +1036,26 @@ input[type='range'].timeline:focus-visible {
   border-top: 1px solid var(--line);
 }
 .beat--major { border-top: 2px solid var(--rule-strong); }
+
+/* ONE RULE PER SECTION. The phase already draws a double rule at its head; the
+   first beat (or grid of beats, or lead) inside a phase must not stack a second
+   rule or repeat the large beat top-margin under it — that double furniture is
+   the "meta-data wall" the H/W/F reorg introduced. Everything after the first
+   beat keeps its own rule as a working-paper divider. */
+.phase > .beat:first-child,
+.phase-head + .beat,
+.phase-head + .desk-grid,
+.narrative-lead + .beat,
+.narrative-lead + .desk-grid {
+  margin-top: 0.75rem;
+  padding-top: 0;
+  border-top: none;
+}
+.phase .beat:first-child.beat--major,
+.phase-head + .beat.beat--major,
+.narrative-lead + .beat.beat--major {
+  border-top: none;
+}
 /* THE ASIDE IS A SUBHEAD, NOT A MARGIN NOTE (2026-08-17). It shared the
    headline's row with `margin-left:auto`, and any aside longer than a few
    words squeezed the h2 into two lines — on the game, markets and paper-book
@@ -1051,6 +1099,21 @@ input[type='range'].timeline:focus-visible {
   line-height: 1.3;
   margin: 0.25rem 0 0;
 }
+
+/* ANSWER-FIRST — a compact restatement of the call at the very top of the hero
+   page, so it opens with the forecast rather than context. The full plate still
+   lives in the Forecast phase; this is the one-line lift above the argument. */
+.answer-first {
+  border-top: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+  border-left: 3px solid var(--accent);
+  padding: 1rem 1.25rem;
+  margin-top: 1.5rem;
+}
+.answer-first--rising { border-left-color: var(--alert); }
+.answer-first .call-lede { font-size: clamp(1.05rem, 2.4vw, 1.3rem); }
+.answer-first .call-odds { margin-top: 0.35rem; }
+.answer-first .move-row { padding: 0.2rem 0; }
 
 /* A market-move ledger row: name, dot leader, signed tabular figure. The
    figure takes accent for a gain, alert for a loss — the diverging pair. */

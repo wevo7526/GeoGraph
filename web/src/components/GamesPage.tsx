@@ -155,7 +155,11 @@ function RegionGames({ region, onPick }: { region: string; onPick: (dyad: string
       <StoryHead
         kicker={`Game theory · ${label.toUpperCase()}`}
         title={lede?.headline ?? 'The next four quarters, solved'}
-        standfirst={lede?.support}
+        standfirst={
+          narr?.history
+            ? "This region's pairs, solved at their opening states — where the pressure has been, how the games were solved, and where they point next."
+            : lede?.support
+        }
         action={
           <span className="figure-note" style={{ textAlign: 'right', margin: 0 }}>
             <span className="num">{map.dyads_solved}</span> pairs solved<br />
@@ -317,7 +321,7 @@ function ExpectedHeat({
 }: { heat: RegionMap['heat']; bands: number; onPick: (dyad: string) => void }) {
   return (
     <div className="scroll-x">
-      <table className="text-[11px] mono" style={{ borderCollapse: 'separate', borderSpacing: 2 }}>
+      <table className="text-label mono" style={{ borderCollapse: 'separate', borderSpacing: 2 }}>
         <thead>
           <tr>
             <th className="font-normal text-left pr-2" style={{ color: 'var(--muted)' }}>pair</th>
@@ -369,7 +373,7 @@ function ScenarioList({ rows, onPick }: { rows: Scenario[]; onPick?: (dyad: stri
       {rows.map((sc) => {
         const priced = sc.market_implications[0]
         return (
-          <li key={sc.scenario_name + sc.course} className={`text-sm ${onPick ? 'cursor-pointer' : ''}`}
+          <li key={sc.scenario_name + sc.course} className={`text-caption ${onPick ? 'cursor-pointer' : ''}`}
               onClick={onPick ? () => onPick(sc.dyad_id) : undefined}>
             <div className="flex items-baseline gap-2">
               <span className="figure w-12 shrink-0" style={{ color: sc.delta_band > 0 ? 'var(--alert)' : sc.delta_band < 0 ? 'var(--accent)' : 'var(--text)' }}>
@@ -479,7 +483,7 @@ function DyadGame({
         }
         action={
           <div className="flex flex-col items-end gap-2">
-            <select className="region-select text-sm" value={dyad} onChange={(e) => onPick(e.target.value)}>
+            <select className="region-select text-caption" value={dyad} onChange={(e) => onPick(e.target.value)}>
               {(map?.ranking ?? [{ dyad_id: dyad, dyad_name: sol.dyad_name }]).map((r) => (
                 <option key={r.dyad_id} value={r.dyad_id}>{r.dyad_name}</option>
               ))}
@@ -683,7 +687,7 @@ function DyadGame({
             <div className="kicker mb-2">The other courses</div>
             <ol className="space-y-2">
               {concept.scenarios.slice(1).map((sc, i) => (
-                <li key={sc.course + i} className="text-sm flex items-baseline gap-3">
+                <li key={sc.course + i} className="text-caption flex items-baseline gap-3">
                   <span className="figure w-12 shrink-0" style={{ color: sc.delta_band > 0 ? 'var(--alert)' : sc.delta_band < 0 ? 'var(--accent)' : 'var(--text)' }}>
                     {pct(sc.likelihood, 0)}
                   </span>

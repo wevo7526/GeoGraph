@@ -121,7 +121,11 @@ export default function MarketsPage({ region }: { region: string; onNavigate: (r
       <StoryHead
         kicker={`Markets · ${name.toUpperCase()}`}
         title={lede?.headline ?? `How ${name} moves markets`}
-        standfirst={lede?.support}
+        standfirst={
+          narr?.history
+            ? `How ${name}'s geopolitics has moved markets — the record, the transmission skill, and where the solved games point prices next.`
+            : lede?.support
+        }
       />
 
       <div className="mt-8">
@@ -247,7 +251,7 @@ export default function MarketsPage({ region }: { region: string; onNavigate: (r
                             title={`middle half ${signedPct(c.p25, 2)} to ${signedPct(c.p75, 2)} · ${pct(c.share_positive, 0)} positive`}
                             style={{ color: c.thin ? 'var(--muted)' : c.median >= 0 ? 'var(--accent)' : 'var(--alert)' }}>
                           {signedPct(c.median, 2)}{' '}
-                          <span style={{ color: 'var(--muted)' }}>{c.n}{c.thin ? ' · thin' : ''}</span>
+                          <span className="cell-count">{c.n}{c.thin ? ' · thin' : ''}</span>
                         </td>
                       )
                     })}
@@ -395,7 +399,7 @@ export default function MarketsPage({ region }: { region: string; onNavigate: (r
             )}
             <Disclosure label={`the ledger, quarter by quarter · ${rows.length} quarters`}>
               <div className="scroll-x mt-2">
-                <table className="mono text-[11px] w-full" style={{ borderCollapse: 'collapse' }}>
+                <table className="mono text-label w-full" style={{ borderCollapse: 'collapse' }}>
                   <thead>
                     <tr style={{ color: 'var(--muted)', borderBottom: '1px solid var(--rule-strong)' }}>
                       <th className="text-left font-normal py-1">quarter</th><th className="text-right font-normal">call</th>
@@ -476,7 +480,7 @@ export default function MarketsPage({ region }: { region: string; onNavigate: (r
               signed format={(v) => signedPct(v, 2)}
             />
             {forwardCourses.length > 0 && (
-              <ul className="mt-5 space-y-2 text-sm">
+              <ul className="mt-5 space-y-2 text-caption">
                 {forwardCourses.slice(0, 4).map((c, i) => (
                   <li key={i}>
                     <b>{c.dyad_name}</b> — {courseSentence(c, c.family) ?? c.kind_label ?? c.kind.replace(/_/g, ' ')} at {pct(c.likelihood, 0)}
