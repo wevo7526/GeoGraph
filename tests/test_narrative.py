@@ -69,9 +69,62 @@ def test_validator_rejects_an_originated_number():
     assert "77.7" in offending
 
 
-def test_validator_allows_years_as_factual_dates():
+def test_validator_rejects_a_year_not_in_the_packet():
+    # The blanket 1900-2100 "it's a year" allow is the hole "formal allies since
+    # 1995" slipped through. A year must be earned like any other figure.
     pkt = narrative.markets_packet(_markets_story())
     blocks = {"history": "The archive runs from 1972 to the present.",
+              "work": "", "forecast": ""}
+    ok, offending = narrative.validate(blocks, pkt)
+    assert not ok
+    assert "1972" in offending
+
+
+def test_validator_accepts_a_year_present_in_the_packet():
+    # 2025 is in the packet (a biggest-move date), so citing it is legitimate.
+    pkt = narrative.markets_packet(_markets_story())
+    blocks = {"history": "The record's largest move landed in 2025.",
+              "work": "", "forecast": ""}
+    ok, offending = narrative.validate(blocks, pkt)
+    assert ok, offending
+
+
+def _game_dyad_solution(*, alliance: bool) -> dict:
+    relations = [{"relation_type": "rivalry", "since": "2014-02-27"}]
+    if alliance:
+        relations.append({"relation_type": "alliance", "since": "1995-02-10"})
+    return {
+        "dyad_name": "Russia-Ukraine",
+        "sides": ["Russia", "Ukraine"],
+        "as_of": "2026-06-30",
+        "primary_solver": "qre",
+        "opening": {
+            "standing": {"relations": relations},
+            "posture": {"label": "mostly coercive"},
+            "intensity_band": 4,
+        },
+        "concepts": {"qre": {"scenarios": [
+            {"kind_label": "probe and retreat", "likelihood": 0.53,
+             "market_implications": [{"market_name": "Brent", "median": -0.05}]},
+        ]}},
+        "kernel": {"share_measured": 1.0, "observations": 18324},
+    }
+
+
+def test_validator_rejects_an_alliance_claim_the_packet_does_not_declare():
+    # After the substrate fix RUS-UKR carries only a rivalry; the desk must not
+    # call them allies (the exact launch-blocking lapse).
+    pkt = narrative.game_dyad_packet(_game_dyad_solution(alliance=False))
+    blocks = {"history": "Russia and Ukraine are formal allies since 1995.",
+              "work": "", "forecast": ""}
+    ok, offending = narrative.validate(blocks, pkt)
+    assert not ok
+    assert any("alliance" in o for o in offending)
+
+
+def test_validator_accepts_a_rivalry_claim_the_packet_declares():
+    pkt = narrative.game_dyad_packet(_game_dyad_solution(alliance=False))
+    blocks = {"history": "Russia and Ukraine are a declared rivalry since 2014.",
               "work": "", "forecast": ""}
     ok, offending = narrative.validate(blocks, pkt)
     assert ok, offending

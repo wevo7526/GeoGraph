@@ -21,6 +21,37 @@ MAX_ROWS = 2000
 _RANK_METRICS = ("betweenness", "constraint", "degree", "eigenvector")
 
 
+def _snapshot_narrative(
+    region: str, label: str, window_start: Any, window_end: Any,
+    brokers: list[dict[str, Any]], eigenvector: list[dict[str, Any]],
+    communities: int,
+) -> dict[str, Any] | None:
+    """The AI read for the web, if the narrate job has composed one. Read-only,
+    best-effort: the page never waits on the model, and a missing panel just
+    means no read yet."""
+    from core import settings as settings_module
+    from core.panel import pg_store
+    from core.reasoning import narrative as narrative_module
+
+    try:
+        panel = pg_store.connect(settings_module.load())
+    except pg_store.PanelUnavailable:
+        return None
+    try:
+        pg_store.apply_schema(panel)
+        compact = {
+            "region": label, "window_start": window_start, "window_end": window_end,
+            "brokers": brokers, "eigenvector": eigenvector, "communities": communities,
+        }
+        return narrative_module.served_narrative(
+            panel, surface="network", region=region, subject_id="", payload=compact
+        )
+    except Exception:  # noqa: BLE001 - the read is a garnish, not the page
+        return None
+    finally:
+        panel.close()
+
+
 def _empty_snapshot(region: str, pack: Any, note: str) -> dict[str, Any]:
     return {
         "region": region,
@@ -221,7 +252,7 @@ def snapshot(
 
     decades, brokerage_over_time = _decade_read(conn, names, roster)
 
-    return {
+    out: dict[str, Any] = {
         "region": region,
         "region_label": pack.label,
         "window_start": window_start,
@@ -245,6 +276,11 @@ def snapshot(
             "actors. Nothing here is computed on request."
         ),
     }
+    out["narrative"] = _snapshot_narrative(
+        region, pack.label, window_start, window_end,
+        out["brokers"], out["eigenvector"], len(communities),
+    )
+    return out
 
 
 def _decade_read(

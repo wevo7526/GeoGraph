@@ -5,7 +5,7 @@ import { getNetworkSnapshot, lastFailureFor } from '../api'
 import { count, networkLede } from '../lib/story'
 import { useRegionLabel } from '../regions'
 import type { NetworkSnapshot } from '../types'
-import { Beat, Empty, Prose, StoryHead } from '../ui'
+import { Beat, Empty, NarrativeLead, Prose, StoryHead } from '../ui'
 import { Bars, SeriesLine, Tiles } from './charts/Kit'
 
 const fig = (value: number | null | undefined, digits = 3) =>
@@ -75,6 +75,17 @@ export default function NetworkPage({
           ) : null
         }
       />
+
+      {snap.narrative && (
+        <NarrativeLead
+          prose={[snap.narrative.history, snap.narrative.work, snap.narrative.forecast]
+            .filter(Boolean)
+            .join('\n\n')}
+          model={snap.narrative.model}
+          generatedAt={snap.narrative.generated_at}
+          stale={snap.narrative.stale}
+        />
+      )}
 
       {!snap.brokers.length ? (
         <Prose className="mt-8" style={{ color: 'var(--muted)' }}>

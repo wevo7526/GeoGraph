@@ -570,8 +570,13 @@ function DyadGame({
           {!sol.narrative?.work && sol.explanation.map((p, i) => (
             <Prose key={i} className="mt-3">{p}</Prose>
           ))}
-          <Disclosure label="the solve, in full — stage game, propensities, payoffs and the audit">
-          <div className="mt-6">
+
+          {/* THE SOLVE IS THE POINT — the stage game, the payoffs and the
+              propensity are the parameters a reader came for, so they lead the
+              Work block rather than hiding behind a disclosure. Only the dense
+              provenance audit (kernel coverage, nash gap, timestamps) folds
+              away below. */}
+          <div className="mt-4">
             <div className="kicker mb-2">The stage game at the opening</div>
             <div className="toolbar mb-3" style={{ borderTop: 'none' }}>
               <span className="kicker">own type</span>
@@ -598,23 +603,25 @@ function DyadGame({
           <dl className="statline mt-6">
             {Object.entries(sol.payoffs).map(([k, v]) => (<div key={k}><dt>{k.replace('_', ' ')}</dt><dd>{v.toFixed(3)}</dd></div>))}
           </dl>
-          <Caption className="mt-2">
-            <span className="kicker">kernel</span>{' '}
-            <span className="num">{sol.kernel.measured}/{sol.kernel.cells}</span> measured ({pct(sol.kernel.share_measured, 0)}) over{' '}
-            <span className="num">{count(sol.kernel.observations)}</span> dyad-quarters
-            {concept.pricing ? <> · pricing over <span className="num">{count(concept.pricing.measurements)}</span> measured effects in <span className="num">{concept.pricing.cells}</span> cells</> : ' · no pricing evidence'}
-            {sol.opening.tilt ? <> · <span className="mono">{sol.opening.tilt.model}</span></> : ''}
-          </Caption>
-          <Caption className="mt-1">{concept.concept}</Caption>
-          {lp?.nash_gap && (
-            <Caption className="mt-1">
-              <span className="kicker">nash gap</span>{' '}
-              <span className="num">{lp.nash_gap.mean.toFixed(3)}</span> (worst <span className="num">{lp.nash_gap.max.toFixed(3)}</span>) — 0 sat on a Nash point; the play is the fitted QRE
+
+          <Disclosure label="the audit — kernel coverage, nash gap, provenance">
+            <Caption className="mt-2">
+              <span className="kicker">kernel</span>{' '}
+              <span className="num">{sol.kernel.measured}/{sol.kernel.cells}</span> measured ({pct(sol.kernel.share_measured, 0)}) over{' '}
+              <span className="num">{count(sol.kernel.observations)}</span> dyad-quarters
+              {concept.pricing ? <> · pricing over <span className="num">{count(concept.pricing.measurements)}</span> measured effects in <span className="num">{concept.pricing.cells}</span> cells</> : ' · no pricing evidence'}
+              {sol.opening.tilt ? <> · <span className="mono">{sol.opening.tilt.model}</span></> : ''}
             </Caption>
-          )}
-          <Caption className="mt-1">
-            {sol.persisted ? <>solved <span className="num">{sol.computed_at?.slice(0, 16).replace('T', ' ')}</span> UTC</> : 'solved on request'} · archive to <span className="num">{sol.as_of}</span>
-          </Caption>
+            <Caption className="mt-1">{concept.concept}</Caption>
+            {lp?.nash_gap && (
+              <Caption className="mt-1">
+                <span className="kicker">nash gap</span>{' '}
+                <span className="num">{lp.nash_gap.mean.toFixed(3)}</span> (worst <span className="num">{lp.nash_gap.max.toFixed(3)}</span>) — 0 sat on a Nash point; the play is the fitted QRE
+              </Caption>
+            )}
+            <Caption className="mt-1">
+              {sol.persisted ? <>solved <span className="num">{sol.computed_at?.slice(0, 16).replace('T', ' ')}</span> UTC</> : 'solved on request'} · archive to <span className="num">{sol.as_of}</span>
+            </Caption>
           </Disclosure>
       </Beat>
       </PhaseSection>

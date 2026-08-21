@@ -1657,4 +1657,5 @@ export interface NetworkSnapshot {
   n?: number
   note?: string
   method?: string
+  narrative?: SurfaceNarrative | null
 }

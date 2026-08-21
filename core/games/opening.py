@@ -134,6 +134,34 @@ def standing(conn: Any | None, dyad_id: str, *, as_of: str) -> dict[str, Any]:
         if str(row["valid_from"] or "") <= as_of
         and (not row["valid_to"] or str(row["valid_to"]) >= as_of)
     ]
+    # A RIVALRY SUPERSEDES AN ALLIANCE THAT PREDATES IT. Two states bound by a
+    # pact who then became rivals are no longer meaningfully allied. Russia and
+    # Ukraine signed the CIS defence pact in 1995 and became a declared rivalry
+    # in 2014; COW never records the pact's lapse (it is right-censored), so the
+    # archive read them as "formal allies since 1995" beside the largest war it
+    # holds — the lapse a reader cannot see because the data does not encode it.
+    #
+    # THE DATE IS THE TELL, and it is exactly what separates this from the Korean
+    # peninsula. There the rivalry (1948) PREDATES the 1991 Basic Agreement, so
+    # the pact is a de-escalation gesture WITHIN an ongoing rivalry and both
+    # genuinely coexist (the standing names both). Russia–Ukraine is the reverse:
+    # the rivalry began AFTER the alliance, which means the rivalry replaced it.
+    # So an alliance/membership is dropped only when a live rivalry began
+    # strictly after it. ISO-8601 dates sort lexically at any resolution, which
+    # is what makes the comparison valid across year-only and full dates.
+    latest_rivalry = max(
+        (str(row["valid_from"] or "") for row in live
+         if str(row["relation_type"]) == "rivalry"),
+        default="",
+    )
+    if latest_rivalry:
+        live = [
+            row for row in live
+            if not (
+                str(row["relation_type"]) in {"alliance", "membership"}
+                and str(row["valid_from"] or "") < latest_rivalry
+            )
+        ]
     # ANTAGONISM OUTRANKS AGREEMENT WHEN BOTH ARE IN FORCE, and the Korean
     # peninsula is why. COW codes the 1991 Basic Agreement between North and
     # South Korea as an alliance (its dataset folds non-aggression pacts in),

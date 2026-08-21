@@ -253,7 +253,7 @@ export function regionLede(map: RegionMap, label: string): Lede | null {
     ? `${lead.dyad_name} carries more coercion than any other pair in ${label}`
     : `${lead.dyad_name} leads ${label}'s solved games`
   const facts: string[] = []
-  if (acts) facts.push(`${count(acts)} coercive acts in the last year`)
+  if (acts) facts.push(`${count(acts)} coercive acts over the last four quarters`)
   if (standing) facts.push(standing)
   const support = [
     facts.length ? facts.join(', ') : null,

@@ -81,7 +81,7 @@ REGION_DYADS = 12
 #: does not change this shape and must not bump the version: a bump makes
 #: every region stale and the games job re-solves them on boot, which is
 #: what OOM-killed the 8 GB container on 2026-08-18 (peak 7.76 GB).
-PAYLOAD_VERSION = "2026-08-17.2"
+PAYLOAD_VERSION = "2026-08-21.1"
 
 #: A step's market row needs this many measurements before the scenario
 #: names it as an implication (the pricing module's own thinness bar).
@@ -1216,6 +1216,17 @@ def explain_region(aggregate: dict[str, Any]) -> list[str]:
         return ["No dyad in this region cleared the panel's modelling bar; nothing was solved."]
     hot = [r for r in ranking if (r["sharp_departure_probability"] or 0) >= 0.5]
     lead = ranking[0]
+    # THE SENTENCE MUST NAME THE ACTUAL SORT KEY. The board ranks by the trained
+    # militarised-dispute read (`hostility`) where a model ships, and falls back
+    # to the measured coercive count otherwise — so the prose said "ranked by
+    # coercive events" even when it was ranked by hostility. Say which.
+    ranked_by_model = lead.get("hostility") is not None
+    ranking_basis = (
+        "Ranked by how strongly each pair's recent record reads as a militarised "
+        "dispute (a model trained on the Correlates of War dispute archive)"
+        if ranked_by_model
+        else "Ranked by coercive events measured over the last four quarters"
+    )
     # THE CONCEPTS ARE NAMED ONCE, AND FROM `solvers` — what actually ran. An
     # aggregate frozen before that field existed falls back to its primary.
     solvers = aggregate.get("solvers") or [aggregate["primary_solver"]]
@@ -1228,7 +1239,7 @@ def explain_region(aggregate: dict[str, Any]) -> list[str]:
         # departure probability beside it is not: it is relative to each
         # pair's own baseline, which is why it once put three alliances above
         # a declared rivalry.
-        f"Ranked by coercive events measured in the last four quarters, the pair carrying "
+        f"{ranking_basis}, the pair carrying "
         f"the most is {lead['dyad_name']} "
         f"({lead.get('coercive_events') or 0} coercive events, "
         f"{describe_standing(lead)}, {describe_posture(lead)}, opening at a "

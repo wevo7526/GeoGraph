@@ -1349,6 +1349,9 @@ def _narrate_worklist(panel: Any, conn: Any, name: str) -> list[dict[str, Any]]:
     story = pg_store.market_story(panel, name)
     if story is not None:
         work.append({"surface": "markets", "subject": "", "payload": story})
+    net = _network_compact(conn, name)
+    if net is not None:
+        work.append({"surface": "network", "subject": "", "payload": net})
     region_map = pg_store.game_solution(
         panel, name, scope="region", version=scenarios.PAYLOAD_VERSION
     )
@@ -1390,17 +1393,163 @@ def _relationship_bundle(
         calibration = calibration_module.cached(name) or {}
     except Exception:  # noqa: BLE001
         calibration = {}
+    # The pair's own quarterly trajectory (peak / active quarters / span) so the
+    # relationship History has depth beyond the timeline. Read from the cached
+    # corpus table the dyads router uses, not the graph, so it stays cheap.
+    series: dict[str, Any] = {}
+    try:
+        from core.models import panel as panel_module
+        from core.wire import serving
+
+        table = serving.table(name)
+        if table is not None:
+            rows = panel_module.series_for(table, dyad)
+            if rows:
+                active = [r for r in rows if r["intensity"] > 0.0]
+                series = {
+                    "peak": max(r["intensity"] for r in rows),
+                    "active_quarters": len(active),
+                    "span": [rows[0]["date"], rows[-1]["date"]],
+                }
+    except Exception:  # noqa: BLE001 - trajectory is best-effort
+        series = {}
     return {
         "dyad_name": sol.get("dyad_name"),
         "solution": sol,
         "timeline": timeline,
         "calibration": calibration,
+        "series": series,
+    }
+
+
+def _narrate_payload(
+    panel: Any, conn: Any, region: str, surface: str, subject: str
+) -> dict[str, Any] | None:
+    """Load the current payload for one (surface, subject), used to satisfy a
+    reader's viewed-pair request that is not in the standard top-N worklist."""
+    from core.games import scenarios
+    from core.panel import pg_store
+
+    if surface == "markets":
+        return pg_store.market_story(panel, region)
+    if surface == "network":
+        return _network_compact(conn, region)
+    if surface == "game_region":
+        return pg_store.game_solution(
+            panel, region, scope="region", version=scenarios.PAYLOAD_VERSION
+        )
+    if surface in ("game_dyad", "relationship"):
+        sol = pg_store.game_solution(
+            panel, region, scope="dyad", dyad_id=subject,
+            version=scenarios.PAYLOAD_VERSION,
+        )
+        if sol is None:
+            return None
+        return sol if surface == "game_dyad" else _relationship_bundle(
+            conn, panel, region, subject, sol
+        )
+    return None
+
+
+def _generate_one(
+    panel: Any, region: str, surface: str, subject: str,
+    payload: Any, deadline: float,
+) -> dict[str, Any] | None:
+    """Generate + persist one surface's narrative if its numbers moved. Returns
+    a result dict when the tick should end (wrote / error / dark / slice spent),
+    or None to move on (already current, or a generation that failed validation
+    and left the deterministic prose in place)."""
+    from core.panel import pg_store
+    from core.reasoning import narrative as narrative_module
+
+    if not isinstance(payload, dict):
+        return None
+    try:
+        packet = narrative_module.build_packet(surface, payload)
+    except Exception:  # noqa: BLE001 - a malformed payload is not fatal
+        return None
+    fingerprint = narrative_module.fingerprint_of(packet)
+    stored = pg_store.narrative(
+        panel, region_pack=region, surface=surface, subject_id=subject
+    )
+    if stored is not None and stored.get("fingerprint") == fingerprint:
+        return None
+    if time.monotonic() >= deadline:
+        return {"skipped": "slice spent"}
+    try:
+        composed = narrative_module.compose(surface, payload)
+    except narrative_module.AgentUnavailable as exc:
+        return {"skipped": str(exc)}
+    except Exception as exc:  # noqa: BLE001 - a bad generation is not fatal
+        return {"surface": surface, "region": region, "subject": subject, "error": str(exc)}
+    if composed is None:
+        # Failed numeric/qualitative provenance (or empty). Keep the
+        # deterministic prose and move on so one bad packet does not wedge.
+        return None
+    pg_store.record_narrative(
+        panel, region_pack=region, surface=surface, subject_id=subject,
+        fingerprint=fingerprint, blocks=composed["blocks"],
+        evidence=composed["evidence"], model=composed["model"],
+    )
+    return {"wrote": surface, "region": region, "subject": subject, "model": composed["model"]}
+
+
+def _network_compact(conn: Any, region: str) -> dict[str, Any] | None:
+    """A lean structural snapshot for the network narrative packet: the top
+    brokers and structurally central actors and the coalition count at the
+    latest computed window. Roster-only, like the network endpoint."""
+    from core.graph import kuzu_store
+
+    try:
+        pack = packs.load(region)
+    except Exception:  # noqa: BLE001 - a broken pack is not the narrator's problem
+        return None
+    names = {str(a["id"]): str(a["name"]) for a in pack.actors}
+    roster = set(names)
+    latest = kuzu_store.query(
+        conn,
+        "MATCH (m:NetworkMetric) RETURN m.window_start AS s, m.window_end AS e "
+        "ORDER BY m.window_end DESC LIMIT 1",
+    )
+    if not latest:
+        return None
+    ws, we = latest[0]["s"], latest[0]["e"]
+    rows = kuzu_store.query(
+        conn,
+        "MATCH (m:NetworkMetric) WHERE m.window_start = $s AND m.window_end = $e "
+        "RETURN m.subject_id AS subject_id, m.metric_name AS metric_name, "
+        "m.value AS value",
+        {"s": ws, "e": we},
+    )
+
+    def top(metric: str, n: int = 5) -> list[dict[str, Any]]:
+        picked = [
+            r for r in rows
+            if r["metric_name"] == metric and r["subject_id"] in roster
+            and r.get("value") is not None
+        ]
+        picked.sort(key=lambda r: float(r["value"]), reverse=True)
+        return [{"name": names[r["subject_id"]], "value": float(r["value"])} for r in picked[:n]]
+
+    communities = {
+        int(float(r["value"])) for r in rows
+        if r["metric_name"] == "community" and r["subject_id"] in roster
+        and r.get("value") is not None
+    }
+    brokers = top("betweenness")
+    if not brokers:
+        return None
+    return {
+        "region": getattr(pack, "label", region),
+        "window_start": ws, "window_end": we,
+        "brokers": brokers, "eigenvector": top("eigenvector"),
+        "communities": len(communities),
     }
 
 
 def narrate(conn: Any, deadline: float) -> dict[str, Any]:
-    """Regenerate one stale surface's narrative and persist it. Bounded to one
-    model call per tick; dark (and free) without a key."""
+    """Regenerate one stale surface's narrative and persist it, viewed pairs
+    first. Bounded per tick; dark (and free) without a key."""
     if not os.getenv("OPENAI_API_KEY", "").strip():
         return {"skipped": "no OPENAI_API_KEY — narrative dark"}
     from core.panel import pg_store
@@ -1411,50 +1560,29 @@ def narrate(conn: Any, deadline: float) -> dict[str, Any]:
         return {"skipped": "no panel"}
     try:
         pg_store.apply_schema(panel)
+        names = set(_pack_names())
+        # PRIORITY: what a reader has actually opened, newest first, so a pair
+        # outside the top-ranked few is narrated the moment someone looks at it.
+        for region, surface, subject in narrative_module.requested():
+            if region not in names:
+                continue
+            if time.monotonic() >= deadline:
+                return {"skipped": "slice spent"}
+            payload = _narrate_payload(panel, conn, region, surface, subject)
+            result = _generate_one(panel, region, surface, subject, payload, deadline)
+            if result is not None:
+                return result
+        # STANDARD: region-level surfaces + the top-N ranked pairs per region.
         for name in _pack_names():
             if time.monotonic() >= deadline:
                 return {"skipped": "slice spent"}
             for item in _narrate_worklist(panel, conn, name):
-                payload = item["payload"]
-                if not isinstance(payload, dict):
-                    continue
-                try:
-                    packet = narrative_module.build_packet(item["surface"], payload)
-                except Exception:  # noqa: BLE001 - a malformed payload is not fatal
-                    continue
-                fingerprint = narrative_module.fingerprint_of(packet)
-                stored = pg_store.narrative(
-                    panel, region_pack=name, surface=item["surface"],
-                    subject_id=item["subject"],
+                result = _generate_one(
+                    panel, name, item["surface"], item["subject"],
+                    item["payload"], deadline,
                 )
-                if stored is not None and stored.get("fingerprint") == fingerprint:
-                    continue
-                if time.monotonic() >= deadline:
-                    return {"skipped": "slice spent"}
-                try:
-                    composed = narrative_module.compose(item["surface"], payload)
-                except narrative_module.AgentUnavailable as exc:
-                    return {"skipped": str(exc)}
-                except Exception as exc:  # noqa: BLE001 - a bad generation is not fatal
-                    return {
-                        "surface": item["surface"], "region": name,
-                        "subject": item["subject"], "error": str(exc),
-                    }
-                if composed is None:
-                    # Failed numeric-provenance validation (or empty). Do not
-                    # persist — the surface keeps its deterministic prose — and
-                    # move on so one bad packet does not wedge the loop.
-                    continue
-                pg_store.record_narrative(
-                    panel, region_pack=name, surface=item["surface"],
-                    subject_id=item["subject"], fingerprint=fingerprint,
-                    blocks=composed["blocks"], evidence=composed["evidence"],
-                    model=composed["model"],
-                )
-                return {
-                    "wrote": item["surface"], "region": name,
-                    "subject": item["subject"], "model": composed["model"],
-                }
+                if result is not None:
+                    return result
         return {"note": "every surface's narrative is current"}
     finally:
         panel.close()

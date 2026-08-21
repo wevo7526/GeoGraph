@@ -30,9 +30,11 @@ import json
 import math
 import os
 import re
+import time
 from typing import Any
 
-from core.reasoning.agent import AgentUnavailable
+# Re-exported (explicit alias) so callers can catch narrative.AgentUnavailable.
+from core.reasoning.agent import AgentUnavailable as AgentUnavailable
 
 #: Same default and override as the desk agent — narration, not a reasoning loop.
 _DEFAULT_MODEL = "gpt-4.1"
@@ -46,7 +48,32 @@ _REQUEST_TIMEOUT = float(os.getenv("GEOGRAPH_NARRATE_TIMEOUT", "45"))
 _MAX_RETRIES = int(os.getenv("GEOGRAPH_NARRATE_RETRIES", "1"))
 
 #: The surfaces this module narrates. Region-scoped surfaces carry subject "".
-SURFACES = ("markets", "game_region", "game_dyad", "relationship")
+SURFACES = ("markets", "game_region", "game_dyad", "relationship", "network")
+
+#: WHAT A READER ACTUALLY OPENED, so the `narrate` job covers it next. The job
+#: otherwise narrates only the top few ranked pairs; a reader who opens the
+#: fortieth pair would never see AI prose there. The read endpoints record the
+#: (region, surface, subject) here, the job drains it FIRST, and generation
+#: stays in the loop (a page load never waits on the model). Bounded and in
+#: process (the job runs in the same process), newest-first.
+_REQUESTED: dict[tuple[str, str, str], float] = {}
+_REQUEST_CAP = 64
+
+
+def note_request(*, region: str, surface: str, subject: str = "") -> None:
+    """Record that a reader is looking at this surface, so the job narrates it
+    on its next tick if it has not already."""
+    key = (region, surface, subject or "")
+    _REQUESTED.pop(key, None)
+    _REQUESTED[key] = time.time()
+    while len(_REQUESTED) > _REQUEST_CAP:
+        _REQUESTED.pop(next(iter(_REQUESTED)))
+
+
+def requested() -> list[tuple[str, str, str]]:
+    """The recorded requests, newest first — a just-opened pair is the most
+    worth narrating."""
+    return list(reversed(list(_REQUESTED.keys())))
 
 _SYSTEM = (
     "You are GeoGraph's desk: an applied-history analyst over a 1972-present "
@@ -73,6 +100,13 @@ _SYSTEM = (
     "around it in words.\n"
     "- Distinguish what was measured from what you are inferring. State "
     "uncertainty plainly.\n"
+    "- STANDINGS ARE FACTS, NOT INFERENCES. Only describe a pair as allies, "
+    "rivals, adversaries or partners, or state a 'since &lt;year&gt;', if the "
+    "packet's `standing` for that pair declares it. Never call a pair allies "
+    "unless the packet lists an alliance relation for them; a rivalry that "
+    "began after a lapsed pact means they are NOT currently allied. When a "
+    "`standing_phrase` is provided, use it verbatim - do not re-word what the "
+    "pair is.\n"
     "- Rankings and analogues were produced by the deterministic engine; "
     "interpret them, never re-rank or invent them.\n"
     "- Nothing you write is financial advice; say so when market implications "
@@ -112,6 +146,14 @@ _BRIEF: dict[str, str] = {
         "(calibration, the paper book, coverage). Forecast: the call - where "
         "tension is heading and the market move associated with it."
     ),
+    "network": (
+        "Surface: NETWORK, the region's web of relations. History: who sits "
+        "between the others now - the brokers (betweenness), the structurally "
+        "central (eigenvector), and how the roster clusters. Work: how the "
+        "structure is measured (windowed centrality on this roster only). "
+        "Forecast: where influence sits and consolidates - read the structure "
+        "as a standing map, never a dated prediction."
+    ),
 }
 
 
@@ -135,6 +177,37 @@ def _cap(rows: Any, n: int) -> list[Any]:
     return list(rows or [])[:n]
 
 
+#: The one canonical wording for what a pair IS, mirroring the backend audit
+#: (core/games/scenarios.describe_standing). The packet carries this string and
+#: the prompt tells the model to use it verbatim, so the desk cannot re-word a
+#: standing into an inaccuracy. The substrate fix (opening.standing) already
+#: drops a lapsed alliance a rivalry replaced, so this phrase is now correct.
+_STANDING_WORDS = {
+    "rivalry": "a declared rivalry",
+    "proxy": "a proxy relationship",
+    "alliance": "formal allies",
+    "membership": "shared-bloc members",
+    "trade": "trade partners",
+    "non_aggression": "a non-aggression pact",
+    "entente": "an entente",
+}
+
+
+def _standing_phrase(standing: Any) -> str:
+    """One phrase naming a pair's live declared relations (up to two), e.g.
+    'a declared rivalry since 2014'. Empty when the archive declares nothing."""
+    relations = (standing or {}).get("relations") if isinstance(standing, dict) else None
+    parts: list[str] = []
+    for rel in (relations or [])[:2]:
+        if not isinstance(rel, dict):
+            continue
+        kind = str(rel.get("relation_type") or "")
+        words = _STANDING_WORDS.get(kind, kind.replace("_", " "))
+        since = str(rel.get("since") or "")[:4]
+        parts.append(f"{words}{f' since {since}' if since else ''}")
+    return " and ".join(parts)
+
+
 def markets_packet(story: dict[str, Any]) -> dict[str, Any]:
     markets = story.get("markets") or []
     ranked = sorted(
@@ -151,10 +224,13 @@ def markets_packet(story: dict[str, Any]) -> dict[str, Any]:
             "p25": (m.get("headline") or {}).get("p25"),
             "p75": (m.get("headline") or {}).get("p75"),
             "n": (m.get("headline") or {}).get("n"),
+            # NO RAW EVENT NAME. `name` is often machine vocabulary ("Slovakia
+            # interacted with Czech Republic"); handing it to the model invites
+            # it to quote GDELT's phrasing. The pair, date and kind are enough
+            # to describe the move in plain words.
             "biggest_moves": [
                 {
                     "date": e.get("date"),
-                    "name": e.get("name"),
                     "pair": e.get("pair"),
                     "abnormal_return": e.get("abnormal_return"),
                     "kind": e.get("kind"),
@@ -204,10 +280,16 @@ def game_region_packet(region_map: dict[str, Any]) -> dict[str, Any]:
         {
             "dyad_name": r.get("dyad_name"),
             "standing": r.get("standing"),
+            "standing_phrase": _standing_phrase(r.get("standing")),
+            "posture": (r.get("posture") or {}).get("label")
+            if isinstance(r.get("posture"), dict) else None,
+            "family": (r.get("family") or {}).get("family")
+            if isinstance(r.get("family"), dict) else None,
             "coercive_events": r.get("coercive_events"),
             "hostility": r.get("hostility"),
             "sharp_departure_probability": r.get("sharp_departure_probability"),
-            "top_course": (r.get("top_scenario") or {}).get("kind")
+            "top_course": (r.get("top_scenario") or {}).get("kind_label")
+            or (r.get("top_scenario") or {}).get("kind")
             if isinstance(r.get("top_scenario"), dict) else None,
         }
         for r in _cap(region_map.get("ranking"), 8)
@@ -236,9 +318,18 @@ def game_region_packet(region_map: dict[str, Any]) -> dict[str, Any]:
         "nash_gap": region_map.get("nash_gap"),
         "kernel": region_map.get("kernel"),
         "ranking": ranking,
+        "ranking_basis": (
+            "hostility: how strongly each pair's recent record reads as a "
+            "militarised dispute (a trained model)"
+            if any(r.get("hostility") is not None for r in ranking)
+            else "coercive events measured over the last four quarters"
+        ),
         "escalatory": _scn(region_map.get("scenarios_escalatory")),
         "calming": _scn(region_map.get("scenarios_calming")),
-        "note": "Ranking and courses are the solver's. Do not re-rank or originate a number.",
+        "note": (
+            "Ranking and courses are the solver's; the board is ordered by "
+            "`ranking_basis`. Do not re-rank or originate a number."
+        ),
     }
 
 
@@ -262,9 +353,18 @@ def game_dyad_packet(sol: dict[str, Any]) -> dict[str, Any]:
         "as_of": sol.get("as_of"),
         "opening": {
             "standing": opening.get("standing"),
-            "posture": opening.get("posture"),
-            "family": opening.get("family"),
+            "standing_phrase": _standing_phrase(opening.get("standing")),
+            # Clean labels, not the raw structured objects: the model gets a
+            # posture word and a family word, plus the family's own one-line
+            # reason - not the estimator's nested fields to quote out of context.
+            "posture": (opening.get("posture") or {}).get("label")
+            if isinstance(opening.get("posture"), dict) else opening.get("posture"),
+            "family": (opening.get("family") or {}).get("family")
+            if isinstance(opening.get("family"), dict) else opening.get("family"),
+            "family_note": (opening.get("family") or {}).get("why")
+            if isinstance(opening.get("family"), dict) else None,
             "intensity_band": opening.get("intensity_band"),
+            "intensity_label": opening.get("intensity_label"),
             "latest_intensity": opening.get("latest_intensity"),
             "scale": opening.get("scale"),
             "capability": opening.get("capability"),
@@ -325,11 +425,33 @@ def relationship_packet(bundle: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def network_packet(snapshot: dict[str, Any]) -> dict[str, Any]:
+    """The region's structural web: the brokers, the structurally central, and
+    how many coalitions the roster splits into, at the latest computed window."""
+    return {
+        "region": snapshot.get("region"),
+        "window": [snapshot.get("window_start"), snapshot.get("window_end")],
+        "brokers": [
+            {"name": b.get("name"), "betweenness": b.get("value")}
+            for b in _cap(snapshot.get("brokers"), 5)
+            if isinstance(b, dict)
+        ],
+        "central": [
+            {"name": b.get("name"), "eigenvector": b.get("value")}
+            for b in _cap(snapshot.get("eigenvector"), 5)
+            if isinstance(b, dict)
+        ],
+        "coalitions": snapshot.get("communities"),
+        "note": "Structural metrics from the latest computed window. Do not originate a number.",
+    }
+
+
 _PACKET_BUILDERS = {
     "markets": markets_packet,
     "game_region": game_region_packet,
     "game_dyad": game_dyad_packet,
     "relationship": relationship_packet,
+    "network": network_packet,
 }
 
 
@@ -384,10 +506,13 @@ def _packet_values(packet: Any) -> list[float]:
 def _covered(x: float, values: list[float]) -> bool:
     """Does some packet value explain the prose number x? Tolerant of the
     fraction/percent duality (medians are stored as fractions, shown as %) and
-    of display rounding. Four-digit years are always allowed (factual dates,
-    and typically present in packet strings anyway)."""
-    if x == int(x) and 1900 <= x <= 2100:
-        return True
+    of display rounding.
+
+    YEARS ARE NOT SPECIAL ANYMORE. The blanket allow of any 1900-2100 integer is
+    exactly the hole "formal allies since 1995" slipped through: 1995 was not in
+    the packet, yet it validated as a "year". A year must be earned like any
+    other figure — present in the packet (a `since` date is parsed into 1995,
+    2014, ... by `_packet_values`), or it falls back."""
     for v in values:
         for candidate in (v, v * 100.0, v / 100.0, -v, -v * 100.0):
             if math.isclose(x, candidate, rel_tol=0.01, abs_tol=0.011):
@@ -395,12 +520,51 @@ def _covered(x: float, values: list[float]) -> bool:
     return False
 
 
+#: Relation words in prose -> the `relation_type` the packet must carry for the
+#: claim to be legitimate. This is the qualitative half of provenance: the model
+#: may only call a pair allies/rivals/adversaries when the packet's standing
+#: actually declares it. "adversary" is a hostile rivalry, so it requires a
+#: rivalry in the packet.
+_RELATION_CLAIMS: dict[str, re.Pattern[str]] = {
+    "alliance": re.compile(r"\b(?:all(?:y|ies|ied)|alliances?)\b", re.IGNORECASE),
+    "rivalry": re.compile(r"\b(?:rival(?:s|ry|ries)?|adversar(?:y|ies))\b", re.IGNORECASE),
+}
+
+
+def _relation_types(packet: Any) -> set[str]:
+    """Every `relation_type` declared anywhere in the packet's standings."""
+    found: set[str] = set()
+
+    def walk(node: Any) -> None:
+        if isinstance(node, dict):
+            rtype = node.get("relation_type")
+            if isinstance(rtype, str) and rtype:
+                found.add(rtype)
+            for value in node.values():
+                walk(value)
+        elif isinstance(node, (list, tuple)):
+            for value in node:
+                walk(value)
+
+    walk(packet)
+    return found
+
+
 def validate(blocks: dict[str, Any], packet: dict[str, Any]) -> tuple[bool, list[str]]:
-    """True when every number in the prose is explained by the packet. On
-    False, the offending tokens are returned and the caller falls back to the
-    deterministic templates — strict on purpose: a rogue figure is worse than a
-    wooden sentence, and the whole product rests on it."""
+    """True when every FIGURE and every RELATIONSHIP CLAIM in the prose is
+    explained by the packet. On False, the offending tokens are returned and the
+    caller falls back to the deterministic templates — strict on purpose: a
+    rogue figure or a fabricated alliance is worse than a wooden sentence, and
+    the whole product rests on it.
+
+    Two provenance checks:
+      - numbers: every number in the prose matches a packet value (see _covered)
+      - relationships: the model may only call a pair allies/rivals/adversaries
+        when the packet's standing declares that relation_type. This is what
+        stops the desk repeating "formal allies since 1995" for a pair the
+        substrate no longer (or never) declared allied."""
     values = _packet_values(packet)
+    present = _relation_types(packet)
     offending: list[str] = []
     for key in ("history", "work", "forecast"):
         text = blocks.get(key)
@@ -414,6 +578,9 @@ def validate(blocks: dict[str, Any], packet: dict[str, Any]) -> tuple[bool, list
                 continue
             if not _covered(x, values):
                 offending.append(token)
+        for rtype, pattern in _RELATION_CLAIMS.items():
+            if rtype not in present and pattern.search(text):
+                offending.append(f"claims '{rtype}' absent from the packet")
     return (not offending), offending
 
 
@@ -485,6 +652,9 @@ def served_narrative(
     to its deterministic prose."""
     from core.panel import pg_store
 
+    # A reader is on this surface: put it at the front of the narrate queue so a
+    # pair outside the top-ranked few still gets AI prose on the next pass.
+    note_request(region=region, surface=surface, subject=subject_id)
     stored = pg_store.narrative(
         panel, region_pack=region, surface=surface, subject_id=subject_id
     )

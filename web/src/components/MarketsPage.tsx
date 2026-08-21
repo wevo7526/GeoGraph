@@ -433,7 +433,7 @@ export default function MarketsPage({ region }: { region: string; onNavigate: (r
       {/* 6 — THE METHOD */}
       <Beat title="How this was measured" aside="The archive's own account of every number above.">
         <Disclosure label="the method, and the story in the estimator's words">
-          {story.explanation.map((p, i) => (
+          {!narr?.work && story.explanation.map((p, i) => (
             <Prose key={i} className="mt-3">{p}</Prose>
           ))}
           <Caption className="mt-4">{story.method}</Caption>
