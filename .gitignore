@@ -44,3 +44,6 @@ CLAUDE.md
 
 # Design specs and audits stay local — the public repo is the software
 docs/
+
+# Kuzu WAL recovery artifacts (written when a killed write is replayed).
+data/*.kuzu.wal.broken-*
