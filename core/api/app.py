@@ -310,7 +310,7 @@ def _start_jobs(app: FastAPI, settings: Any) -> None:
             # without OPENAI_API_KEY, in which case every surface serves its
             # deterministic prose.
             jobs_module.Job(
-                name="narrate", every=900.0, run=work.narrate,
+                name="narrate", every=300.0, run=work.narrate,
                 enabled=jobs_module._enabled("narrate"),
                 slice_seconds=150.0,
             ),

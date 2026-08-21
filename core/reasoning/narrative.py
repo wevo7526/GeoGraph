@@ -37,6 +37,14 @@ from core.reasoning.agent import AgentUnavailable
 #: Same default and override as the desk agent — narration, not a reasoning loop.
 _DEFAULT_MODEL = "gpt-4.1"
 
+#: THE LOOP MUST NOT HANG ON THE MODEL. `narrate` runs inside the serial
+#: convergence loop, so a slow or unresponsive OpenAI call would stall every
+#: other job behind it. Bound each request and cap retries so a bad minute
+#: costs one skipped generation, not a frozen loop. Overridable for a slower
+#: model.
+_REQUEST_TIMEOUT = float(os.getenv("GEOGRAPH_NARRATE_TIMEOUT", "45"))
+_MAX_RETRIES = int(os.getenv("GEOGRAPH_NARRATE_RETRIES", "1"))
+
 #: The surfaces this module narrates. Region-scoped surfaces carry subject "".
 SURFACES = ("markets", "game_region", "game_dyad", "relationship")
 
@@ -431,7 +439,7 @@ def _narrate(surface: str, packet: dict[str, Any]) -> dict[str, str]:
             'the `openai` package is not installed — pip install -e ".[reasoning]"'
         ) from exc
 
-    client = OpenAI(api_key=key)
+    client = OpenAI(api_key=key, timeout=_REQUEST_TIMEOUT, max_retries=_MAX_RETRIES)
     response = client.chat.completions.create(
         model=_model(),
         max_tokens=1400,
