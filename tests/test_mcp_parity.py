@@ -68,6 +68,7 @@ def test_mcp_http_lists_tools_on_bare_post(tmp_path, monkeypatch):
     monkeypatch.setenv("KUZU_DB_PATH", str(tmp_path / "mcp.kuzu"))
     monkeypatch.setenv("GEOGRAPH_JOBS", "0")
     monkeypatch.delenv("DATABASE_URL", raising=False)
+    monkeypatch.delenv("GEOGRAPH_MCP_TOKEN", raising=False)
     from core.api.app import create_app
 
     with TestClient(create_app()) as client:
@@ -91,3 +92,24 @@ def test_mcp_http_lists_tools_on_bare_post(tmp_path, monkeypatch):
         })
         assert slashed.status_code == 200
         assert slashed.json()["result"]["serverInfo"]["name"] == "geograph"
+
+
+def test_mcp_http_requires_bearer_when_token_set(tmp_path, monkeypatch):
+    from fastapi.testclient import TestClient
+
+    monkeypatch.setenv("KUZU_DB_PATH", str(tmp_path / "mcp-auth.kuzu"))
+    monkeypatch.setenv("GEOGRAPH_JOBS", "0")
+    monkeypatch.setenv("GEOGRAPH_MCP_TOKEN", "test-mcp-secret")
+    monkeypatch.delenv("DATABASE_URL", raising=False)
+    from core.api.app import create_app
+
+    with TestClient(create_app()) as client:
+        assert client.get("/mcp").status_code == 401
+        assert client.get(
+            "/mcp", headers={"Authorization": "Bearer wrong"}
+        ).status_code == 401
+        ok = client.get(
+            "/mcp", headers={"Authorization": "Bearer test-mcp-secret"}
+        )
+        assert ok.status_code == 200
+        assert ok.json()["auth"] == "bearer"

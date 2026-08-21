@@ -80,14 +80,19 @@ def client(tmp_path, monkeypatch):
 
 def test_health_is_200_and_names_what_is_switched_off(client):
     body = client.get("/api/health").json()
-    assert body["status"] == "ok"
+    # status may be "degraded" when leftover production flags (GEOGRAPH_JOBS=0
+    # in the test fixture) or missing MCP/ops tokens are present — the check
+    # itself must still be 200 so Railway does not restart-loop.
+    assert body["status"] in {"ok", "degraded"}
     assert body["graph"] == "open"
     # A capability that is unconfigured is REPORTED, not silently missing.
     assert "panel" in body["disabled"]
     assert isinstance(body["leftover"], dict)
     assert "sk-" not in " ".join(body["leftover"].values())
+    assert isinstance(body["alerts"], list)
     assert body["boot"] is None
-
+    # Security headers on every API response.
+    assert client.get("/api/health").headers.get("x-content-type-options") == "nosniff"
 
 def test_health_survives_a_graph_it_cannot_open(tmp_path, monkeypatch):
     # THE CONTAINER RULE: health must answer even when nothing else can, or a
@@ -101,9 +106,9 @@ def test_health_survives_a_graph_it_cannot_open(tmp_path, monkeypatch):
 
     with TestClient(create_app()) as broken:
         body = broken.get("/api/health").json()
-        assert body["status"] == "ok"
+        assert body["status"] in {"ok", "degraded"}
         assert body["graph"] == "unavailable"
-        assert "boom" in body["graphError"]
+        assert "boom" in (body["graphError"] or "")
         # And a data endpoint says 503 rather than pretending the graph is empty.
         assert broken.get("/api/events").status_code == 503
 

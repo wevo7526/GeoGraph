@@ -161,6 +161,10 @@ def leftover_variables() -> dict[str, str]:
             "GEOGRAPH_BACKTEST_ON_BOOT",
             "opt-in paper backtest; unset — the ledger persists in Postgres",
         ),
+        (
+            "GEOGRAPH_EXPOSE_DOCS",
+            "OpenAPI UI is public; unset for production (docs default off)",
+        ),
     ):
         if _truthy(name):
             out[name] = note

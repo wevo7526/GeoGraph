@@ -22,7 +22,7 @@ from pathlib import Path
 from typing import Any
 
 try:
-    from fastapi import FastAPI, HTTPException, Response
+    from fastapi import FastAPI, HTTPException, Request, Response
     from fastapi.responses import FileResponse
     from fastapi.staticfiles import StaticFiles
 except ModuleNotFoundError as exc:
@@ -49,6 +49,7 @@ except ModuleNotFoundError as exc:
     ) from exc
 
 from core import settings as settings_module
+from core.api import security as security_module
 from core.api.routers import (
     case_studies,
     dyads,
@@ -415,7 +416,16 @@ def create_app() -> FastAPI:
             kuzu_store.close(app.state.graph)
             app.state.graph = None
 
-    app = FastAPI(title="GeoGraph", version="0.0.1", lifespan=lifespan)
+    expose = security_module.expose_docs()
+    app = FastAPI(
+        title="GeoGraph",
+        version="0.0.1",
+        lifespan=lifespan,
+        docs_url="/docs" if expose else None,
+        redoc_url="/redoc" if expose else None,
+        openapi_url="/openapi.json" if expose else None,
+    )
+    app.add_middleware(security_module.ProductionGuardMiddleware)
     app.state.settings = settings
     # Set BEFORE startup runs, so a handler reached during startup — or after a
     # failed one — reads a defined state instead of raising AttributeError.
@@ -428,16 +438,28 @@ def create_app() -> FastAPI:
 
     @app.get("/api/health")
     def health() -> dict[str, Any]:
+        boot_raw = getattr(app.state, "boot", None) or _boot_status()
+        boot = security_module.sanitize_boot(boot_raw)
+        jobs_running = getattr(app.state, "jobs", None) is not None
+        alerts = security_module.operational_alerts(
+            settings=settings,
+            boot=boot_raw,
+            jobs_running=jobs_running,
+        )
+        status = "ok"
+        if any(a["severity"] in {"critical", "high"} for a in alerts):
+            status = "degraded"
         return {
-            "status": "ok",
+            "status": status,
             "graph": "unavailable" if app.state.graph is None else "open",
-            "graphError": app.state.graph_error,
-            "corpusError": app.state.corpus_error,
+            "graphError": security_module.sanitize_error(app.state.graph_error),
+            "corpusError": security_module.sanitize_error(app.state.corpus_error),
             "disabled": settings.missing_capabilities(),
             "leftover": settings_module.leftover_variables(),
+            "alerts": alerts,
             # Live state when the boot runs behind this API (api-first),
             # else whatever the serialised boot handed over in the env.
-            "boot": getattr(app.state, "boot", None) or _boot_status(),
+            "boot": boot,
             # The boot is now a small part of the story: the archive converges
             # in the background (core/api/jobs.py) rather than per deploy.
             "jobs": (
@@ -447,7 +469,7 @@ def create_app() -> FastAPI:
         }
 
     @app.get("/api/storage")
-    def storage() -> dict[str, Any]:
+    def storage(request: Request) -> dict[str, Any]:
         """WHERE THE BYTES ACTUALLY ARE — both volumes, table by table.
 
         Every storage decision on this project so far was made against a guess,
@@ -459,8 +481,10 @@ def create_app() -> FastAPI:
         "plenty" if you know what is in them.
 
         Reads only counts and catalogue sizes; touches no data and takes no
-        write lock.
+        write lock. When GEOGRAPH_OPS_TOKEN is set, requires Bearer auth.
         """
+        if not security_module.bearer_matches(request, security_module.ops_token()):
+            raise HTTPException(status_code=401, detail="ops token required")
         from core.graph import kuzu_store as store
         from core.panel import pg_store
 
@@ -534,7 +558,7 @@ def create_app() -> FastAPI:
         return {
             "ready": open_ or ignore,
             "graph": "open" if open_ else "unavailable",
-            "graphError": app.state.graph_error,
+            "graphError": security_module.sanitize_error(app.state.graph_error),
         }
 
     for router in (graph.router, events.router, case_studies.router, network.router,
@@ -567,6 +591,10 @@ def create_app() -> FastAPI:
         def spa(path: str) -> FileResponse:
             if path.startswith("api/"):
                 raise HTTPException(status_code=404, detail=f"no such API route: /{path}")
+            # When docs are off, do not let the SPA catch-all resurrect /docs
+            # as index.html — that looked like "docs are public" in probes.
+            if path in {"docs", "redoc", "openapi.json", "openapi.yaml"}:
+                raise HTTPException(status_code=404, detail=f"no such route: /{path}")
             # Containment check: a percent-encoded '..' (%2e%2e) survives HTTP
             # normalisation and reaches this handler literally, so a bare
             # `_WEB_DIST / path` would serve any file the process can read —

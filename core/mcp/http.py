@@ -232,12 +232,23 @@ def attach(app: FastAPI) -> None:
     """Register GET+POST `/mcp` and `/mcp/` on the app, before the SPA."""
 
     async def mcp_endpoint(request: Request) -> Any:
+        from core.api import security as security_module
+
+        # Optional shared secret: when GEOGRAPH_MCP_TOKEN is set, every
+        # method (including discovery GET) requires Bearer auth so the
+        # tool catalogue is not free reconnaissance.
+        if not security_module.bearer_matches(request, security_module.mcp_token()):
+            return JSONResponse(
+                {"detail": "mcp token required"},
+                status_code=401,
+            )
         if request.method == "GET":
             return {
                 "name": SERVER_NAME,
                 "transport": "jsonrpc",
                 "protocolVersion": PROTOCOL_VERSION,
                 "endpoint": "/mcp",
+                "auth": "bearer" if security_module.mcp_token() else "none",
             }
         try:
             body = await request.json()

@@ -47,6 +47,7 @@ __all__ = [
     "merge_edges",
     "merge_nodes",
     "query",
+    "write_edges",
 ]
 
 
@@ -745,43 +746,21 @@ def merge_nodes(conn: kuzu.Connection, table: str, rows: list[dict[str, Any]]) -
 
 
 def merge_edges(conn: kuzu.Connection, rel: str, rows: list[dict[str, Any]]) -> int:
-    """Upsert edges. THE ONLY EDGE-WRITE PATH.
+    """Upsert edges. THE ONLY EDGE-WRITE PATH for ordinary callers.
 
     Each row: {"src": node_id, "dst": node_id, **props}. Key slots — read from
-    the ontology, never from a hardcoded rel-name test — go into the MERGE
-    pattern so two key values are two edges; the rest are SET.
+    the ontology, never from a hardcoded rel-name test — identify the edge so
+    two key values are two edges; the rest are SET.
+
+    Implementation: delegates to `write_edges`. A Cypher `MERGE` on a rel
+    forces Kuzu to scan the destination's CSR adjacency inside a write
+    transaction, and that scan dies with `csr_node_group.cpp KU_UNREACHABLE`
+    once Actor/Market adjacency lists grow — measured on AFFECTED (2026-08-16)
+    and again on RELATES_TO during every pack seed + deep-tier load on
+    production (2026-08-21). `write_edges` keeps the same upsert contract with
+    an ordinary forward-adjacency read + CREATE/SET instead.
     """
-    spec = ontology.edges().get(rel)
-    if spec is None:
-        raise ontology.OntologyError(f"{rel!r} is not an edge table.")
-    for row in rows:
-        ontology.validate_edge(rel, {k: v for k, v in row.items() if k not in ("src", "dst")})
-    written = 0
-    # EXCLUSIVE PER BATCH — see `merge_nodes`. Rel writes are where the
-    # checkpoint race bit first (the CSR assertion that took the study job
-    # down), and where a whole-call lock starved readers worst.
-    for batch in _batches(
-        rows, lambda r: tuple(sorted(k for k in r if k not in ("src", "dst")))
-    ):
-        props = [k for k in batch[0] if k not in ("src", "dst")]
-        keys = [k for k in spec.key_slots if k in props]
-        rest = [k for k in props if k not in keys]
-        key_pattern = (
-            (" {" + ", ".join(f"{k}: row.{k}" for k in keys) + "}") if keys else ""
-        )
-        sets = ", ".join(f"r.{k} = row.{k}" for k in rest)
-        cypher = (
-            f"UNWIND $rows AS row "
-            f"MATCH (a:{spec.src} {{node_id: row.src}}), "
-            f"(b:{spec.dst} {{node_id: row.dst}}) "
-            f"MERGE (a)-[r:{rel}{key_pattern}]->(b)"
-        )
-        if sets:
-            cypher += f" ON CREATE SET {sets} ON MATCH SET {sets}"
-        with ACCESS.write():
-            conn.execute(cypher, parameters={"rows": batch})
-        written += len(batch)
-    return written
+    return write_edges(conn, rel, rows, check_existing=True)
 
 
 def write_edges(

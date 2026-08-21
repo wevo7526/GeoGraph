@@ -31,6 +31,9 @@ def _isolated_corpus(tmp_path, monkeypatch):
     scheduler loose on a fixture.
     """
     monkeypatch.setenv("GEOGRAPH_JOBS", "0")
+    # Rate limits are for the live origin; under pytest the suite would burn
+    # the /api/ budget across fixtures. Production default stays on.
+    monkeypatch.setenv("GEOGRAPH_RATE_LIMIT", "0")
     # A fixture that writes effects and reads them back must not see the
     # previous test's memo (core/transmission/effects.py caches a dyad's
     # measured effects for 30s, because the base rate re-read it per event).
