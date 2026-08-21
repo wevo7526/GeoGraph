@@ -19,7 +19,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { getDyadSolution, getRegionMap, lastFailureFor } from '../api'
 import { useRegionLabel } from '../regions'
 import type { ConceptSolution, DyadSolution, RegionMap, Scenario } from '../types'
-import { Beat, Empty, StoryHead } from '../ui'
+import { Beat, Caption, Empty, Prose, StoryHead } from '../ui'
 import {
   courseInWords,
   courseSentence,
@@ -146,9 +146,9 @@ function RegionGames({ region, onPick }: { region: string; onPick: (dyad: string
         title={lede?.headline ?? 'The next four quarters, solved'}
         standfirst={lede?.support}
         action={
-          <span className="mono text-[11px] text-right" style={{ color: 'var(--muted)' }}>
-            {map.dyads_solved} pairs solved<br />
-            archive to {map.as_of}
+          <span className="figure-note" style={{ textAlign: 'right', margin: 0 }}>
+            <span className="num">{map.dyads_solved}</span> pairs solved<br />
+            archive to <span className="num">{map.as_of}</span>
           </span>
         }
       />
@@ -221,11 +221,11 @@ function RegionGames({ region, onPick }: { region: string; onPick: (dyad: string
       >
         <div className="desk-split">
           <div>
-            <div className="kicker mb-2" style={{ color: 'var(--alert)' }}>Toward pressure</div>
+            <div className="kicker kicker--loss mb-2">Toward pressure</div>
             <ScenarioList rows={pressing} onPick={onPick} />
           </div>
           <div>
-            <div className="kicker mb-2" style={{ color: 'var(--accent)' }}>Toward a step down</div>
+            <div className="kicker kicker--gain mb-2">Toward a step down</div>
             <ScenarioList rows={calming.slice(0, 6)} onPick={onPick} />
           </div>
         </div>
@@ -250,16 +250,21 @@ function RegionGames({ region, onPick }: { region: string; onPick: (dyad: string
           ]} />
         </div>
         {map.explanation.map((p, i) => (
-          <p key={i} className="text-sm leading-relaxed mt-3" style={{ maxWidth: '68ch' }}>{p}</p>
+          <Prose key={i} className="mt-3">{p}</Prose>
         ))}
         <dl className="statline mt-4">
           {Object.entries(map.payoffs ?? {}).map(([k, v]) => (
             <div key={k}><dt>{k.replace('_', ' ')}</dt><dd>{v.toFixed(3)}</dd></div>
           ))}
         </dl>
-        <ul className="mt-3 text-xs space-y-1" style={{ color: 'var(--muted)' }}>
-          {Object.entries(map.concepts).map(([k, v]) => <li key={k}><b>{k.toUpperCase()}</b>: {v}</li>)}
-          <li>kernel: {map.kernel.measured} of {map.kernel.cells} cells measured, {map.kernel.fallback} fallback</li>
+        <ul className="mt-3 text-caption space-y-1" style={{ color: 'var(--muted)', maxWidth: 'var(--measure-note)' }}>
+          {Object.entries(map.concepts).map(([k, v]) => (
+            <li key={k}><span className="kicker">{k}</span> {v}</li>
+          ))}
+          <li>
+            <span className="kicker">kernel</span> <span className="num">{map.kernel.measured}</span> of{' '}
+            <span className="num">{map.kernel.cells}</span> cells measured, <span className="num">{map.kernel.fallback}</span> fallback
+          </li>
         </ul>
         <div className="mt-6">
           <div className="kicker mb-2">The region's fan — average mass by band, quarter by quarter</div>
@@ -314,7 +319,7 @@ function ExpectedHeat({
           ))}
         </tbody>
       </table>
-      <p className="mono text-[11px] mt-1" style={{ color: 'var(--muted)' }}>
+      <p className="figure-note" style={{ marginTop: '0.5rem' }}>
         oxblood: above the opening band · blue: below · grey: holding. Ink weight = level.
       </p>
     </div>
@@ -347,7 +352,7 @@ function ScenarioList({ rows, onPick }: { rows: Scenario[]; onPick?: (dyad: stri
                 background: sc.delta_band > 0 ? 'var(--alert)' : sc.delta_band < 0 ? 'var(--accent)' : 'var(--muted)',
               }} />
             </div>
-            <div className="ml-14 mt-1 text-xs" style={{ color: 'var(--muted)' }}>
+            <div className="ml-14 mt-1 text-caption" style={{ color: 'var(--muted)' }}>
               {courseSentence(sc, sc.family) ?? kindName(sc)}
               {priced
                 ? ` · historically moved ${priced.market_name} ${signedPct(priced.median)} over ${count(priced.n)} events`
@@ -516,9 +521,9 @@ function DyadGame({
             </button>
           ))}
           {lp && qre && (
-            <span className="text-xs" style={{ color: 'var(--muted)', marginLeft: 'auto' }}>
-              {word} above the usual band: {pct(qre.sharp_departure_probability, 0)} play,{' '}
-              {pct(lp.sharp_departure_probability, 0)} CE audit
+            <span className="text-caption" style={{ color: 'var(--muted)', marginLeft: 'auto' }}>
+              {word} above the usual band: <span className="num">{pct(qre.sharp_departure_probability, 0)}</span> play,{' '}
+              <span className="num">{pct(lp.sharp_departure_probability, 0)}</span> CE audit
             </span>
           )}
         </div>
@@ -586,7 +591,7 @@ function DyadGame({
 
       <Beat title="How this was solved" aside="The stage game, the payoffs, the kernel, and the estimator's own account of the numbers above.">
           {sol.explanation.map((p, i) => (
-            <p key={i} className="text-sm leading-relaxed mt-3" style={{ maxWidth: '68ch' }}>{p}</p>
+            <Prose key={i} className="mt-3">{p}</Prose>
           ))}
 
           <div className="mt-6">
@@ -616,20 +621,23 @@ function DyadGame({
           <dl className="statline mt-6">
             {Object.entries(sol.payoffs).map(([k, v]) => (<div key={k}><dt>{k.replace('_', ' ')}</dt><dd>{v.toFixed(3)}</dd></div>))}
           </dl>
-          <p className="mono text-[11px] mt-2" style={{ color: 'var(--muted)' }}>
-            kernel {sol.kernel.measured}/{sol.kernel.cells} measured ({pct(sol.kernel.share_measured, 0)}) over {count(sol.kernel.observations)} dyad-quarters
-            {concept.pricing ? ` · pricing over ${count(concept.pricing.measurements)} measured effects in ${concept.pricing.cells} cells` : ' · no pricing evidence'}
-            {sol.opening.tilt ? ` · ${sol.opening.tilt.model}` : ''}
-          </p>
-          <p className="mono text-[11px] mt-1" style={{ color: 'var(--muted)' }}>{concept.concept}</p>
+          <Caption className="mt-2">
+            <span className="kicker">kernel</span>{' '}
+            <span className="num">{sol.kernel.measured}/{sol.kernel.cells}</span> measured ({pct(sol.kernel.share_measured, 0)}) over{' '}
+            <span className="num">{count(sol.kernel.observations)}</span> dyad-quarters
+            {concept.pricing ? <> · pricing over <span className="num">{count(concept.pricing.measurements)}</span> measured effects in <span className="num">{concept.pricing.cells}</span> cells</> : ' · no pricing evidence'}
+            {sol.opening.tilt ? <> · <span className="mono">{sol.opening.tilt.model}</span></> : ''}
+          </Caption>
+          <Caption className="mt-1">{concept.concept}</Caption>
           {lp?.nash_gap && (
-            <p className="mono text-[11px] mt-1" style={{ color: 'var(--muted)' }}>
-              nash gap {lp.nash_gap.mean.toFixed(3)} (worst {lp.nash_gap.max.toFixed(3)}) — 0 sat on a Nash point; the play is the fitted QRE
-            </p>
+            <Caption className="mt-1">
+              <span className="kicker">nash gap</span>{' '}
+              <span className="num">{lp.nash_gap.mean.toFixed(3)}</span> (worst <span className="num">{lp.nash_gap.max.toFixed(3)}</span>) — 0 sat on a Nash point; the play is the fitted QRE
+            </Caption>
           )}
-          <p className="mono text-[11px] mt-1" style={{ color: 'var(--muted)' }}>
-            {sol.persisted ? `solved ${sol.computed_at?.slice(0, 16).replace('T', ' ')} UTC` : 'solved on request'} · archive to {sol.as_of}
-          </p>
+          <Caption className="mt-1">
+            {sol.persisted ? <>solved <span className="num">{sol.computed_at?.slice(0, 16).replace('T', ' ')}</span> UTC</> : 'solved on request'} · archive to <span className="num">{sol.as_of}</span>
+          </Caption>
       </Beat>
 
       <p className="page-boundary">{sol.boundary_statement}</p>

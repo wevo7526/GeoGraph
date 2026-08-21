@@ -3,6 +3,7 @@ import { getCaseStudy, getDynamicCaseStudy, postCaseNarrate } from '../api'
 import { eventHeadline } from '../lib/story'
 import { useRegionLabel } from '../regions'
 import type { CaseStudy, CaseStudyEpisode, Effect } from '../types'
+import { Caption, Prose } from '../ui'
 
 /** The pack KEY is not its caption (packs/china is captioned Asia) — every
  *  reader surface routes through the label layer. */
@@ -29,10 +30,10 @@ function significance(p: number | null | undefined) {
 function EffectsTable({ effects }: { effects: Effect[] }) {
   if (effects.length === 0) {
     return (
-      <p className="text-sm mt-4" style={{ color: 'var(--muted)' }}>
+      <Caption className="mt-4">
         Nothing measured for this event yet. That is not the same as no effect —
         the transmission engine has not run, or every market was skipped.
-      </p>
+      </Caption>
     )
   }
   const windows = [...new Set(effects.map((e) => e.window))].sort()
@@ -99,14 +100,14 @@ function EffectsTable({ effects }: { effects: Effect[] }) {
           })}
         </tbody>
       </table>
-      <p className="mt-3 text-xs leading-relaxed" style={{ color: 'var(--muted)' }}>
+      <Caption className="mt-3">
         Abnormal return against a constant-mean baseline estimated over the 120
         sessions before the event, with a five-session gap. Windows count
         sessions from each market's own first tradable session after the event —
         which is why the Gulf and New York do not share a column meaning.
         <span className="mono"> overlap</span> marks a window another event falls
         inside; those figures are flagged rather than averaged away.
-      </p>
+      </Caption>
     </div>
   )
 }
@@ -115,10 +116,8 @@ function Episode({ episode }: { episode: CaseStudyEpisode }) {
   if (episode.missing) {
     return (
       <section className="mt-12">
-        <h3 className="text-xl">{episode.node_id}</h3>
-        <p className="text-sm mt-2" style={{ color: 'var(--alert)' }}>
-          {episode.missing}
-        </p>
+        <h3 className="doc-episode-title">{episode.node_id}</h3>
+        <Prose style={{ color: 'var(--alert)', marginTop: '0.5rem' }}>{episode.missing}</Prose>
       </section>
     )
   }
@@ -127,42 +126,32 @@ function Episode({ episode }: { episode: CaseStudyEpisode }) {
 
   return (
     <section className="mt-14">
-      <div className="mono text-xs uppercase tracking-widest" style={{ color: 'var(--accent)' }}>
-        {episode.event_time}
-      </div>
-      <h3 className="text-2xl mt-1">{eventHeadline(episode)}</h3>
+      <div className="kicker">{episode.event_time}</div>
+      <h3 className="doc-episode-title">{eventHeadline(episode)}</h3>
       {episode.note && (
-        <p className="mt-3 text-base leading-relaxed" style={{ color: 'var(--muted)', maxWidth: '68ch' }}>
+        <p className="prose-lede" style={{ marginTop: '0.75rem' }}>
           {episode.note}
         </p>
       )}
 
       <dl
-        className="mt-6 grid grid-cols-2 sm:grid-cols-4 gap-5 py-4 border-y text-sm"
+        className="mt-6 grid grid-cols-2 sm:grid-cols-4 gap-5 py-4 border-y"
         style={{ borderColor: 'var(--line)' }}
       >
         <div>
-          <dt className="mono text-xs uppercase tracking-widest" style={{ color: 'var(--muted)' }}>
-            CAMEO
-          </dt>
+          <dt className="kicker">CAMEO</dt>
           <dd className="mono mt-1">{episode.cameo_code}</dd>
         </div>
         <div>
-          <dt className="mono text-xs uppercase tracking-widest" style={{ color: 'var(--muted)' }}>
-            Goldstein
-          </dt>
+          <dt className="kicker">Goldstein</dt>
           <dd className="mono mt-1">{num(episode.goldstein, 1)}</dd>
         </div>
         <div>
-          <dt className="mono text-xs uppercase tracking-widest" style={{ color: 'var(--muted)' }}>
-            Dyad
-          </dt>
+          <dt className="kicker">Dyad</dt>
           <dd className="mt-1">{episode.dyad?.name ?? '—'}</dd>
         </div>
         <div>
-          <dt className="mono text-xs uppercase tracking-widest" style={{ color: 'var(--muted)' }}>
-            Escalation
-          </dt>
+          <dt className="kicker">Escalation</dt>
           <dd className="mt-1">
             {/* A first observation has no history to depart from. Rendering that
                 as "stable" without saying so would read as calm. */}
@@ -247,52 +236,39 @@ export default function CaseStudyView({
 
   if (missing) {
     return (
-      <div className="px-6 py-16 max-w-3xl mx-auto">
-        <p style={{ color: 'var(--alert)' }}>
+      <div className="reading-column">
+        <Prose style={{ color: 'var(--alert)' }}>
           No case study named <span className="mono">{slug}</span> is available.
+        </Prose>
+        <p className="mt-6">
+          <button type="button" className="article-link" onClick={() => onNavigate('/')}>
+            Back to the front
+          </button>
         </p>
-        <button
-          type="button"
-          className="mt-6 underline"
-          style={{ color: 'var(--accent)', background: 'none', border: 'none' }}
-          onClick={() => onNavigate('/')}
-        >
-          Back to the front
-        </button>
       </div>
     )
   }
 
   if (!study) {
     return (
-      <p className="px-6 py-16 text-center" style={{ color: 'var(--muted)' }}>
+      <p className="note-empty" style={{ textAlign: 'center', padding: '4rem 1.5rem' }}>
         Loading {slug.startsWith('dynamic') ? 'the record' : 'the case study'}…
       </p>
     )
   }
 
   return (
-    <article className="px-6 py-14 max-w-4xl mx-auto">
-      <nav className="mb-10 flex gap-6 text-sm">
-        <button
-          type="button"
-          onClick={() => onNavigate('/')}
-          className="underline underline-offset-4"
-          style={{ color: 'var(--muted)', background: 'none', border: 'none' }}
-        >
+    <article className="reading-column">
+      <nav className="mb-10 flex gap-6">
+        <button type="button" onClick={() => onNavigate('/')} className="article-link">
           GeoGraph
         </button>
-        <button
-          type="button"
-          onClick={() => onNavigate('/explore')}
-          className="underline underline-offset-4"
-          style={{ color: 'var(--muted)', background: 'none', border: 'none' }}
-        >
+        <button type="button" onClick={() => onNavigate('/explore')} className="article-link">
           Explore the network
         </button>
       </nav>
 
-      <p className="mono text-xs uppercase tracking-[0.3em]" style={{ color: 'var(--muted)' }}>
+      <p className="kicker">
         {study.dynamic ? 'Measured record' : 'Case study'}
         {study.pack ? (
           <>
@@ -300,15 +276,13 @@ export default function CaseStudyView({
           </>
         ) : null}
       </p>
-      <h1 className="text-5xl mt-4 leading-tight">{study.title}</h1>
-      <p className="mt-5 text-xl leading-snug" style={{ color: 'var(--text)', maxWidth: '54ch' }}>
-        {study.dek}
-      </p>
+      <h1 className="doc-title">{study.title}</h1>
+      <p className="doc-dek">{study.dek}</p>
 
       {study.status !== 'measured' && (
         <p
-          className="mt-8 p-4 text-sm"
-          style={{ border: '1px solid var(--alert)', color: 'var(--alert)' }}
+          className="mt-8 p-4"
+          style={{ border: '1px solid var(--alert)', color: 'var(--alert)', maxWidth: 'var(--measure-prose)' }}
         >
           The transmission engine has not run for this episode, so the figures
           below are absent. The narrative is stated as an expectation, not as a
@@ -316,25 +290,20 @@ export default function CaseStudyView({
         </p>
       )}
 
-      <p className="mt-10 text-lg leading-relaxed" style={{ maxWidth: '68ch' }}>
-        {study.summary}
-      </p>
+      <Prose className="mt-10">{study.summary}</Prose>
 
       {study.episodes.map((episode) => (
         <Episode key={episode.node_id} episode={episode} />
       ))}
 
       <section className="mt-16 pt-8 border-t" style={{ borderColor: 'var(--line)' }}>
-        <h2 className="mono text-xs uppercase tracking-[0.3em]" style={{ color: 'var(--accent)' }}>
-          Reading the measurements
-        </h2>
-        <p className="mt-4 text-lg leading-relaxed" style={{ maxWidth: '68ch' }}>
-          {study.reading}
-        </p>
+        <p className="kicker" style={{ color: 'var(--accent)' }}>The reading</p>
+        <h2 className="doc-section-title" style={{ marginTop: '0.35rem' }}>Reading the measurements</h2>
+        <Prose className="mt-4">{study.reading}</Prose>
         {study.caveat && (
           <p
-            className="mt-6 pl-5 text-base leading-relaxed"
-            style={{ color: 'var(--muted)', borderLeft: '2px solid var(--line)', maxWidth: '68ch' }}
+            className="prose-body mt-6 pl-5"
+            style={{ color: 'var(--muted)', borderLeft: '2px solid var(--line)' }}
           >
             {study.caveat}
           </p>
@@ -342,13 +311,12 @@ export default function CaseStudyView({
       </section>
 
       <section className="mt-16 pt-8 border-t" style={{ borderColor: 'var(--line)' }}>
-        <h2 className="mono text-xs uppercase tracking-[0.3em]" style={{ color: 'var(--accent)' }}>
-          Ask the desk to read this
-        </h2>
-        <p className="mt-3 text-sm leading-relaxed" style={{ color: 'var(--muted)', maxWidth: '68ch' }}>
+        <p className="kicker" style={{ color: 'var(--accent)' }}>The desk</p>
+        <h2 className="doc-section-title" style={{ marginTop: '0.35rem' }}>Ask the desk to read this</h2>
+        <Caption className="mt-3">
           The figures above are the archive&rsquo;s. A reading argues from them; it
           does not originate a number.
-        </p>
+        </Caption>
         <p className="mt-5">
           <button
             type="button"
@@ -359,28 +327,16 @@ export default function CaseStudyView({
             Read this
           </button>
         </p>
-        {narrating && (
-          <p className="mt-4 text-sm" style={{ color: 'var(--muted)' }}>
-            Reading…
-          </p>
-        )}
+        {narrating && <Caption className="mt-4">Reading…</Caption>}
         {narrateError && (
-          <p className="mt-4 text-sm" style={{ color: 'var(--alert)' }}>
-            {narrateError}
-          </p>
+          <Prose className="mt-4" style={{ color: 'var(--alert)' }}>{narrateError}</Prose>
         )}
         {deskReading && (
           <>
             {deskReading.split(/\n\n+/).map((graf, index) => (
-              <p key={index} className="mt-4 text-lg leading-relaxed" style={{ maxWidth: '68ch' }}>
-                {graf}
-              </p>
+              <Prose key={index} className="mt-4">{graf}</Prose>
             ))}
-            {deskMethod && (
-              <p className="mt-4 text-xs leading-relaxed" style={{ color: 'var(--muted)', maxWidth: '72ch' }}>
-                {deskMethod}
-              </p>
-            )}
+            {deskMethod && <Caption className="mt-4">{deskMethod}</Caption>}
           </>
         )}
       </section>

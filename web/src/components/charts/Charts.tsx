@@ -21,11 +21,7 @@ function scale(value: number, lo: number, hi: number, size: number): number {
 /** Nothing to draw is a state, not a blank: an empty chart that looks like a
  *  broken chart is the reason a reader stops trusting the ones that work. */
 export function Empty({ note }: { note: string }) {
-  return (
-    <p className="mono text-[11px] py-6" style={{ color: 'var(--muted)' }}>
-      {note}
-    </p>
-  )
+  return <p className="note-empty">{note}</p>
 }
 
 export type Point = { x: number; y: number; lo?: number; hi?: number }

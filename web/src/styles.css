@@ -1,5 +1,30 @@
 @import "tailwindcss";
 
+/* ── SEMANTIC TYPE UTILITIES (2026-08-21) ────────────────────────────────────
+   Tailwind v4 turns each --text-* here into a font-size utility, so a component
+   writes `text-body` / `text-caption` / `text-subhead` instead of an ad-hoc
+   `text-[13px]` or a `text-sm` borrowed from a different scale. These MIRROR the
+   :root --type-* rungs (kept in sync by hand — five numbers) and add a
+   line-height so the utility carries its own rhythm. The default Tailwind sizes
+   (text-xs/sm/base/lg/xl…) are deliberately left in place, not overridden: they
+   remain for one-offs, but working-page prose uses the semantic names below. */
+@theme {
+  --text-label: 11px;
+  --text-label--line-height: 1.3;
+  --text-caption: 0.88rem;
+  --text-caption--line-height: 1.45;
+  --text-figure: 0.95rem;
+  --text-figure--line-height: 1.4;
+  --text-body: 1.05rem;
+  --text-body--line-height: 1.55;
+  --text-subhead: 1.12rem;
+  --text-subhead--line-height: 1.25;
+  --text-lede: 1.15rem;
+  --text-lede--line-height: 1.45;
+  --text-section: 1.4rem;
+  --text-section--line-height: 1.15;
+}
+
 /* THE ARCHIVE IS SET ON WHITE (2026-08-15).
    ---------------------------------------------------------------------------
    A DELIBERATE, USER-DIRECTED DEVIATION FROM BUILD-SPEC §15 (near-black
@@ -31,15 +56,56 @@
   --accent: #2a5fa8;      /* the one flourish: links, active nav, gains */
   --alert: #9e3418;       /* loss, escalation, the thing that needs saying */
 
-  /* One type scale. Working pages inherit these; the landing keeps its own
-     hero clamp because it is the cover, not a desk. */
-  --type-kicker: 11px;
-  --type-display: clamp(2rem, 4.5vw, 2.75rem);
-  --type-lede: 1.15rem;
-  --type-section: 1.4rem;
-  --type-body: 1.05rem;
-  --type-caption: 0.88rem;
-  --type-figure: 0.95rem;
+  /* ── ONE TYPE SCALE, ONE REGISTER SYSTEM (2026-08-21) ──────────────────────
+     The surface has exactly three registers and one scale. A page that reaches
+     for an ad-hoc size or the wrong register is the drift this block exists to
+     stop — the charts and tables read as one instrument because their type is
+     disciplined, and the prose around them now uses the same discipline.
+
+       REGISTER 1 · SERIF (Georgia)  — every heading and every sentence.
+       REGISTER 2 · MONO CAPS        — LABELS ONLY (a kicker, a column head, a
+                                       stat name). Never a sentence, a caveat,
+                                       a timestamp or an explanation.
+       REGISTER 3 · TABULAR FIGURES  — any number a reader might compare down a
+                                       column; sign carried by --accent/--alert.
+
+     The rungs below are the ONLY font sizes on a working page. `--type-micro`
+     is the floor: nothing prints smaller, because an 10px caption read as a
+     rendering bug rather than a footnote. Working pages inherit these; the
+     landing keeps its own hero clamp because it is the cover, not a desk. */
+  --type-kicker: 11px;      /* mono-caps LABEL — the tracked subhead of print   */
+  --type-micro: 11px;       /* the floor: the smallest label the surface prints */
+  --type-caption: 0.88rem;  /* captions, asides, figure notes — serif, muted    */
+  --type-figure: 0.95rem;   /* a tabular figure sitting inside prose            */
+  --type-body: 1.05rem;     /* body prose — the default reading size            */
+  --type-subhead: 1.12rem;  /* an in-beat subsection title — serif, NOT a label */
+  --type-lede: 1.15rem;     /* standfirst / desk lede                           */
+  --type-section: 1.4rem;   /* a beat's h2                                       */
+  --type-display: clamp(2rem, 4.5vw, 2.75rem);  /* the page h1                  */
+
+  /* Weight. Georgia carries regular and bold cleanly; --w-medium is the
+     emphasis weight for a subhead or a figure that must lead, not a third face. */
+  --w-regular: 400;
+  --w-medium: 600;
+  --w-strong: 700;
+
+  /* Line height, by role. Headings set tight; prose breathes. */
+  --lh-tight: 1.1;          /* display and section headings                     */
+  --lh-subhead: 1.25;
+  --lh-body: 1.55;          /* reading prose                                    */
+  --lh-caption: 1.45;       /* captions, ledes, notes                           */
+
+  /* Tracking. LABELS are the only tracked type, and they all track the same:
+     0.22em is the kicker's, and the outliers (0.3em, 0.16em, 0.15em) are pulled
+     to it. Large serif headings close up slightly instead. */
+  --track-label: 0.22em;
+  --track-tight: -0.01em;
+
+  /* Measure — the reading-column caps, so no line runs past what the eye can
+     track back. Replaces the ad-hoc 54ch/58ch/64ch/72ch inline maxWidths. */
+  --measure-prose: 68ch;
+  --measure-lede: 52ch;
+  --measure-note: 62ch;
 
   /* Categorical series for the network view — actor types. Validated as a set
      (lightness band, chroma floor, CVD and normal-vision separation, contrast)
@@ -182,7 +248,7 @@ body {
 }
 .sidebar-hit-kind {
   font-family: ui-monospace, 'Cascadia Code', Consolas, monospace;
-  font-size: 10px;
+  font-size: var(--type-micro);
   letter-spacing: 0.16em;
   text-transform: uppercase;
   color: var(--muted);
@@ -237,12 +303,16 @@ body {
   margin: 0.5rem 0 0;
   max-width: 68ch;
 }
+/* The reading's opening line — the desk's ANSWER, so it takes full ink. It used
+   to be muted like the user's question above it, and the two competed at the
+   same weight; the question stays italic-muted (.desk-ask-line), the answer
+   leads. */
 .desk-lede {
   margin: 0 0 0.85rem;
   font-size: var(--type-lede);
   line-height: 1.45;
-  color: var(--muted);
-  max-width: 68ch;
+  color: var(--text);
+  max-width: var(--measure-prose);
 }
 .desk-graf {
   margin: 0 0 0.85rem;
@@ -458,13 +528,80 @@ body {
   color: var(--text);
 }
 
-/* A kicker: the small-caps tracked label above a section. Print's subhead. */
+/* A kicker: the small-caps tracked label above a section. Print's subhead, and
+   the one canonical LABEL — anything that was `mono text-xs uppercase
+   tracking-[0.3em]` by hand is this class now. */
 .kicker {
   font-family: ui-monospace, 'Cascadia Code', Consolas, monospace;
   font-size: var(--type-kicker);
-  letter-spacing: 0.22em;
+  letter-spacing: var(--track-label);
   text-transform: uppercase;
   color: var(--muted);
+}
+/* A kicker that carries sign, for the two-sided subheads (toward pressure /
+   toward a step down). The colour is the diverging pair, nothing else about a
+   label changes. */
+.kicker--gain { color: var(--accent); }
+.kicker--loss { color: var(--alert); }
+
+/* ── TEXT-HIERARCHY HELPERS (2026-08-21) ─────────────────────────────────────
+   The serif-register primitives every page composes, so prose stops reaching
+   for `text-sm`, an unclassed <p>, or an inline maxWidth. Each is a rung of the
+   one scale with its measure already capped. `ui.tsx` wraps these as <Prose>,
+   <Lede>, <Caption>, <SubHead>, <Num>. */
+
+/* Body prose — the default reading size, measure-capped. Replaces `text-sm`
+   and the unclassed <p> that fell back to the browser's 16px. */
+.prose-body {
+  font-size: var(--type-body);
+  line-height: var(--lh-body);
+  max-width: var(--measure-prose);
+}
+.prose-body--wide { max-width: none; }
+
+/* A standfirst-weight lede used mid-page (not the page header's). Serif, muted,
+   a touch larger than body. */
+.prose-lede {
+  font-size: var(--type-lede);
+  line-height: var(--lh-caption);
+  color: var(--muted);
+  max-width: var(--measure-lede);
+}
+
+/* An in-beat subsection title. A SERIF small heading — the thing a kicker was
+   being misused as. Sits above a table or a list to name it, reads as a title
+   rather than a label. */
+.subhead {
+  font-size: var(--type-subhead);
+  font-weight: var(--w-medium);
+  line-height: var(--lh-subhead);
+  letter-spacing: var(--track-tight);
+  margin: 0 0 0.6rem;
+}
+
+/* Measure caps as standalone utilities, for prose that already has a size. */
+.measure-prose { max-width: var(--measure-prose); }
+.measure-lede { max-width: var(--measure-lede); }
+.measure-note { max-width: var(--measure-note); }
+
+/* A number set inside a sentence: tabular so it aligns if repeated, and able to
+   carry the sign colours. `--emph` gives a figure that leads its sentence a
+   little weight without changing register. */
+.num {
+  font-variant-numeric: tabular-nums;
+}
+.num--emph { font-weight: var(--w-medium); }
+.num--gain { color: var(--accent); }
+.num--loss { color: var(--alert); }
+
+/* The important READ — a measured finding that must not sit at the same level
+   as a loading or error note. Serif body, full ink, measure-capped. Used where
+   `.figure-note` was carrying the key sentence (the impact line). */
+.read {
+  font-size: var(--type-body);
+  line-height: var(--lh-body);
+  color: var(--text);
+  max-width: var(--measure-note);
 }
 
 /* Boxed content — a ruled block, never a raised card. Paper has no elevation,
@@ -632,6 +769,40 @@ input[type='range'].timeline:focus-visible {
   .reading-column { padding: 1.25rem 1rem 4rem; }
 }
 
+/* The long-form article's own heads, on the one scale (2026-08-21). The case
+   study is set as a broadsheet feature: a document kicker, a display title, a
+   dek, then episodes and closing sections. These replace the ad-hoc
+   text-5xl/text-2xl/text-xl and the mono `<h2>` labels that read as captions
+   below the episode headlines. */
+.doc-title {
+  font-size: var(--type-display);
+  line-height: var(--lh-tight);
+  letter-spacing: var(--track-tight);
+  margin: 0.75rem 0 0;
+}
+.doc-dek {
+  margin: 1.1rem 0 0;
+  font-size: var(--type-lede);
+  line-height: var(--lh-caption);
+  max-width: var(--measure-lede);
+}
+/* An episode headline — a serif feature head, not a label. */
+.doc-episode-title {
+  font-size: var(--type-section);
+  line-height: var(--lh-tight);
+  letter-spacing: var(--track-tight);
+  margin: 0.2rem 0 0;
+}
+/* A closing meta-section head (the reading, the desk): a serif subhead that
+   reads as a title, kept modest so it does not outshout the episodes above. */
+.doc-section-title {
+  font-size: var(--type-subhead);
+  font-weight: var(--w-medium);
+  line-height: var(--lh-subhead);
+  letter-spacing: var(--track-tight);
+  margin: 0;
+}
+
 /* Working-page shell: lede full width, then a two-column desk. Intel's
    `.intel-*` names are aliases so the briefing does not regress. */
 .desk-page,
@@ -739,9 +910,14 @@ input[type='range'].timeline:focus-visible {
 .desk-pick:hover {
   background: color-mix(in srgb, var(--text) 4%, var(--panel));
 }
+/* A picker headline carries the same weight as a wire headline — it is the
+   same kind of content (an event, named), so it should not read weaker. */
 .desk-pick-head {
   display: block;
   margin-top: 0.2rem;
+  font-size: var(--type-body);
+  font-weight: var(--w-medium);
+  line-height: 1.3;
 }
 
 /* A page header set as a story head: kicker, headline, standfirst, and a
@@ -1417,6 +1593,9 @@ input[type='range'].timeline:focus-visible {
      the globe; the text block's margin-bottom is the minimum air when it
      is not. */
   margin-top: auto;
+  /* The hero door is a rung larger than body — sized by token, not an ad-hoc
+     text-lg. */
+  font-size: var(--type-lede);
 }
 
 .landing-foot {

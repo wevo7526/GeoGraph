@@ -5,7 +5,7 @@ import { getNetworkSnapshot, lastFailureFor } from '../api'
 import { count, networkLede } from '../lib/story'
 import { useRegionLabel } from '../regions'
 import type { NetworkSnapshot } from '../types'
-import { Beat, Empty, StoryHead } from '../ui'
+import { Beat, Empty, Prose, StoryHead } from '../ui'
 import { Bars, SeriesLine, Tiles } from './charts/Kit'
 
 const fig = (value: number | null | undefined, digits = 3) =>
@@ -69,12 +69,7 @@ export default function NetworkPage({
         standfirst={lede?.support ?? snap.note}
         action={
           onNavigate ? (
-            <button
-              type="button"
-              className="mono text-xs underline underline-offset-2"
-              style={{ color: 'var(--accent)', background: 'none', border: 'none', cursor: 'pointer' }}
-              onClick={() => onNavigate('/explore')}
-            >
+            <button type="button" className="article-link" onClick={() => onNavigate('/explore')}>
               watch the web move →
             </button>
           ) : null
@@ -82,11 +77,11 @@ export default function NetworkPage({
       />
 
       {!snap.brokers.length ? (
-        <p className="mt-8 text-sm leading-relaxed" style={{ color: 'var(--muted)', maxWidth: '58ch' }}>
+        <Prose className="mt-8" style={{ color: 'var(--muted)' }}>
           No structural window has been computed yet. Centrality and brokerage
           are persisted by the metrics job; until it has run, this page has
           names and no ranks.
-        </p>
+        </Prose>
       ) : (
         <>
           <p className="figure-note mt-4">

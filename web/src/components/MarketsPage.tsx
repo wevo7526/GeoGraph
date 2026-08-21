@@ -11,7 +11,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { getBacktest, getCalibration, getForward, getJobs, getMarketsStory, getTradeableEdge, lastFailureFor } from '../api'
 import { useRegionLabel } from '../regions'
 import type { BacktestLedger, CalibrationWalk, ForwardView, JobsStatus, MarketStoryMarket, MarketsStory, TradeableEdge } from '../types'
-import { Beat, Chip, Disclosure, Empty, StoryHead } from '../ui'
+import { Beat, Caption, Chip, Disclosure, Empty, Prose, StoryHead } from '../ui'
 import { count, courseSentence, eventHeadline, marketsLede, pctWord, signedPct, skillSentence, strategyWord } from '../lib/story'
 import { Bars, DotWhisker, Drawdown, EquityCurve, SeriesLine, Tiles, pct } from './charts/Kit'
 
@@ -149,7 +149,7 @@ export default function MarketsPage({ region, onNavigate }: { region: string; on
           title="How the map has scored"
           aside="Leave-one-out of stored reactions — the archive already measured; this only asks whether those measurements predicted the next one. Not a new event study."
         >
-          <p>{scored}</p>
+          <Prose>{scored}</Prose>
         </Beat>
       )}
 
@@ -502,7 +502,7 @@ export default function MarketsPage({ region, onNavigate }: { region: string; on
                   </tbody>
                 </table>
                 {rows.length > 12 && (
-                  <button className="article-link mono text-[11px] mt-2" onClick={() => setShowAll((v) => !v)}>
+                  <button className="article-link text-caption mt-2" onClick={() => setShowAll((v) => !v)}>
                     {showAll ? 'show the latest 12' : `show all ${rows.length} quarters`}
                   </button>
                 )}
@@ -510,19 +510,19 @@ export default function MarketsPage({ region, onNavigate }: { region: string; on
             </Disclosure>
           </>
         )}
-        {ledger && !summary && <p className="text-sm" style={{ maxWidth: '62ch' }}>{ledger.note}</p>}
+        {ledger && !summary && <Prose>{ledger.note}</Prose>}
       </Beat>
 
       {/* 6 — THE METHOD */}
       <Beat title="How this was measured" aside="The archive's own account of every number above.">
         <Disclosure label="the method, and the story in the estimator's words">
           {story.explanation.map((p, i) => (
-            <p key={i} className="text-sm leading-relaxed mt-3" style={{ maxWidth: '68ch' }}>{p}</p>
+            <Prose key={i} className="mt-3">{p}</Prose>
           ))}
-          <p className="text-xs leading-relaxed mt-4" style={{ color: 'var(--muted)', maxWidth: '72ch' }}>{story.method}</p>
-          {ledger?.method && <p className="text-xs leading-relaxed mt-2" style={{ color: 'var(--muted)', maxWidth: '72ch' }}>Paper book: {ledger.method}</p>}
+          <Caption className="mt-4">{story.method}</Caption>
+          {ledger?.method && <Caption className="mt-2">Paper book: {ledger.method}</Caption>}
           {story.duration?.calibration && (
-            <p className="text-xs leading-relaxed mt-2" style={{ color: 'var(--muted)', maxWidth: '72ch' }}>Duration: {story.duration.calibration}</p>
+            <Caption className="mt-2">Duration: {story.duration.calibration}</Caption>
           )}
           {forward?.pressure && (
             <div className="mt-5">
@@ -531,7 +531,7 @@ export default function MarketsPage({ region, onNavigate }: { region: string; on
                 points={Object.entries(forward.pressure.trajectory).sort(([a], [b]) => a.localeCompare(b)).map(([x, y]) => ({ x, y }))}
                 height={120} format={(v) => v.toFixed(2)} label="structural pressure"
               />
-              <p className="text-xs italic mt-2" style={{ color: 'var(--muted)', maxWidth: '68ch' }}>{forward.pressure.boundary_statement}</p>
+              <Caption className="italic mt-2">{forward.pressure.boundary_statement}</Caption>
             </div>
           )}
         </Disclosure>

@@ -67,7 +67,7 @@ export default function Landing({ onEnter }: { onEnter: (route: string) => void 
             </div>
             <button
               type="button"
-              className="ink-button landing-enter text-lg"
+              className="ink-button landing-enter"
               onClick={() => onEnter('/intel')}
             >
               Enter
@@ -78,7 +78,7 @@ export default function Landing({ onEnter }: { onEnter: (route: string) => void 
       </main>
 
       <footer className="landing-foot">
-        <span className="mono text-[11px] tracking-[0.15em]">
+        <span className="kicker">
           GRAPH: {(health ? health.graph : 'offline').toUpperCase()}
         </span>
       </footer>

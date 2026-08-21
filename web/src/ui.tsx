@@ -6,6 +6,100 @@
  */
 import type { ReactNode } from 'react'
 
+/* ── TEXT-REGISTER PRIMITIVES (2026-08-21) ───────────────────────────────────
+ *  The serif/label/figure registers as components, so a page composes the one
+ *  type scale instead of hand-rolling `text-sm`, an unclassed <p>, `mono
+ *  text-[11px]`, or an inline maxWidth. Each maps to a helper class in
+ *  styles.css. Presentational only.
+ */
+
+/** Body prose — the default reading register, measure-capped. Replaces the
+ *  `text-sm` / unclassed <p> that carried working-page sentences. */
+export function Prose({
+  children,
+  wide,
+  className,
+  style,
+}: {
+  children: ReactNode
+  wide?: boolean
+  className?: string
+  style?: React.CSSProperties
+}) {
+  return (
+    <p className={`prose-body${wide ? ' prose-body--wide' : ''}${className ? ` ${className}` : ''}`} style={style}>
+      {children}
+    </p>
+  )
+}
+
+/** A mid-page lede: serif, muted, a rung above body (not the page header's
+ *  standfirst, which StoryHead owns). */
+export function Lede({ children, className }: { children: ReactNode; className?: string }) {
+  return <p className={`prose-lede${className ? ` ${className}` : ''}`}>{children}</p>
+}
+
+/** A caption / figure note — the ONE caption tier. Everything that was a
+ *  `text-xs` or `mono text-[11px]` caption is this. */
+export function Caption({
+  children,
+  className,
+  style,
+}: {
+  children: ReactNode
+  className?: string
+  style?: React.CSSProperties
+}) {
+  return <p className={`figure-note${className ? ` ${className}` : ''}`} style={style}>{children}</p>
+}
+
+/** The canonical LABEL: mono caps, one tracking, muted (or sign-coloured).
+ *  Anything that was `mono uppercase tracking-[…]` by hand is this. Inline by
+ *  default so it can lead a line; pass `as="div"` for a block label. */
+export function Label({
+  children,
+  tone,
+  as: Tag = 'span',
+  className,
+}: {
+  children: ReactNode
+  tone?: 'gain' | 'loss'
+  as?: 'span' | 'div'
+  className?: string
+}) {
+  const toneCls = tone === 'gain' ? ' kicker--gain' : tone === 'loss' ? ' kicker--loss' : ''
+  return <Tag className={`kicker${toneCls}${className ? ` ${className}` : ''}`}>{children}</Tag>
+}
+
+/** A serif in-beat subsection title — NOT a label. The thing a kicker was being
+ *  misused as when it sat above a table or a list to name it. */
+export function SubHead({ children, className }: { children: ReactNode; className?: string }) {
+  return <h3 className={`subhead${className ? ` ${className}` : ''}`}>{children}</h3>
+}
+
+/** A number set inside a sentence: tabular, optional emphasis and sign colour.
+ *  The figure still comes from the payload — this only styles it. */
+export function Num({
+  children,
+  emph,
+  tone,
+  className,
+}: {
+  children: ReactNode
+  emph?: boolean
+  tone?: 'gain' | 'loss'
+  className?: string
+}) {
+  const toneCls = tone === 'gain' ? ' num--gain' : tone === 'loss' ? ' num--loss' : ''
+  return <span className={`num${emph ? ' num--emph' : ''}${toneCls}${className ? ` ${className}` : ''}`}>{children}</span>
+}
+
+/** The important READ — a measured finding lifted out of the caption tier so it
+ *  does not sit at the same level as a loading or error note. */
+export function Read({ children, className }: { children: ReactNode; className?: string }) {
+  return <p className={`read${className ? ` ${className}` : ''}`}>{children}</p>
+}
+
 /** A page header set as a story head: kicker over a headline over a standfirst,
  *  with a right-hand slot for the page's one action. */
 export function StoryHead({
