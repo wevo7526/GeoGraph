@@ -1238,6 +1238,32 @@ def test_a_pact_between_rivals_does_not_outrank_the_rivalry(monkeypatch):
     assert "allies" in said  # both are named; neither is hidden
 
 
+def test_a_rivalry_supersedes_an_alliance_that_predates_it(monkeypatch):
+    # RUSSIA-UKRAINE, the launch-blocking lapse. COW records the 1995 CIS defence
+    # pact as right-censored (no end year), and the pack declares the pair a
+    # rivalry from 2014 — so the archive read them as "formal allies since 1995"
+    # beside the largest war it holds. A rivalry that BEGAN AFTER the alliance
+    # replaced it, so the standing must name only the rivalry.
+    from core.games import opening, scenarios
+    from core.graph import kuzu_store
+
+    rows = [
+        {"relation_type": "alliance", "valid_from": "1995-02-10", "valid_to": "",
+         "source_id": "source:cow-alliances", "from_id": "actor:cow-365",
+         "to_id": "actor:cow-369"},
+        {"relation_type": "rivalry", "valid_from": "2014-02-27", "valid_to": "",
+         "source_id": "source:packs-eurasia", "from_id": "actor:cow-365",
+         "to_id": "actor:cow-369"},
+    ]
+    monkeypatch.setattr(kuzu_store, "query", lambda *a, **k: rows)
+    out = opening.standing(object(), "dyad:cow-365--cow-369", as_of="2026-07-01")
+    assert [r["relation_type"] for r in out["relations"]] == ["rivalry"]
+
+    said = scenarios.describe_standing({"standing": out})
+    assert said == "a declared rivalry since 2014"
+    assert "allies" not in said and "1995" not in said
+
+
 def test_a_region_does_not_price_another_lens_markets():
     """Deep-tier events are measured against every pack. Without a clip,
     Eurasia's games pointed at Hang Seng, TAIEX, Nikkei and KOSPI — Asia's
