@@ -39,12 +39,12 @@ _LIMITS: tuple[tuple[str, int, float], ...] = (
 
 _SECURITY_HEADERS = {
     "X-Content-Type-Options": "nosniff",
-    "X-Frame-Options": "DENY",
+    # WordPress embed on l4global.com — CSP frame-ancestors (not X-Frame-Options).
+    "Content-Security-Policy": "frame-ancestors 'self' https://l4global.com",
     "Referrer-Policy": "strict-origin-when-cross-origin",
     "Permissions-Policy": "camera=(), microphone=(), geolocation=()",
     # API + SPA on one origin; scripts are our own hashed bundles.
     "Cross-Origin-Opener-Policy": "same-origin",
-    "Cross-Origin-Resource-Policy": "same-origin",
 }
 
 

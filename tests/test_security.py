@@ -96,6 +96,22 @@ def test_ops_token_gates_storage(tmp_path, monkeypatch):
         assert "graph_volume" in ok.json()
 
 
+def test_security_headers_allow_l4global_embed(tmp_path, monkeypatch):
+    monkeypatch.setenv("KUZU_DB_PATH", str(tmp_path / "embed.kuzu"))
+    monkeypatch.delenv("DATABASE_URL", raising=False)
+    from core.api.app import create_app
+
+    with TestClient(create_app()) as client:
+        response = client.get("/api/health")
+        assert response.status_code == 200
+        assert response.headers.get("x-frame-options") is None
+        csp = response.headers.get("content-security-policy", "")
+        assert "frame-ancestors" in csp
+        assert "https://l4global.com" in csp
+        assert "'self'" in csp
+        assert response.headers.get("cross-origin-resource-policy") is None
+
+
 def test_alerts_flag_jobs_off_and_oneshot(monkeypatch, tmp_path):
     monkeypatch.setenv("GEOGRAPH_JOBS", "0")
     monkeypatch.setenv("GEOGRAPH_RESET_GRAPH", "yes")
